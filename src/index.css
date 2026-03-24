@@ -1,0 +1,880 @@
+:root {
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: #18202b;
+  background: #f4f7fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #f4f7fb;
+}
+
+.authBootScreen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.loginScreen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: linear-gradient(165deg, #f8fafc 0%, #eef2f7 100%);
+}
+
+.loginCard {
+  width: 100%;
+  max-width: 400px;
+  background: #fff;
+  border: 1px solid #e8edf4;
+  border-radius: 16px;
+  padding: 2rem 1.75rem;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.06);
+}
+
+.loginTitle {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 0.5rem;
+}
+
+.loginSubtitle {
+  font-size: 0.88rem;
+  color: #64748b;
+  line-height: 1.5;
+  margin: 0 0 1.25rem;
+}
+
+.loginMessage {
+  font-size: 0.85rem;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  padding: 0.6rem 0.75rem;
+  margin: 0 0 1rem;
+}
+
+.loginGoogleBtn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  border-radius: 10px;
+  border: 1px solid #dadce0;
+  background: #fff;
+  color: #3c4043;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.loginGoogleBtn:hover {
+  background: #f8f9fa;
+  border-color: #d0d4da;
+}
+
+.loginGoogleIcon {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #4285f4, #34a853 40%, #fbbc05 65%, #ea4335);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loginOfflineBtn {
+  width: 100%;
+  margin-top: 0.75rem;
+}
+
+.topUserEmail {
+  font-size: 0.82rem;
+  color: #475569;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topBarLead {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.topBarTitles {
+  min-width: 0;
+}
+
+.topBarTitle {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 0.15rem;
+  color: #0f172a;
+}
+
+.topBarSubtitle {
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.menuToggle {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid #d4deeb;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+}
+
+.menuToggle:hover {
+  background: #f8fafc;
+}
+
+.menuToggleIcon {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: #334155;
+  border-radius: 1px;
+  box-shadow: 0 -6px 0 #334155, 0 6px 0 #334155;
+}
+
+.sidebarBackdrop {
+  display: none;
+}
+
+.topLogoutBtn {
+  flex-shrink: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.queueTag {
+  padding-inline: 0.45rem;
+}
+
+#root {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.appShell {
+  display: flex;
+  min-height: 100vh;
+  background: #eef2f7;
+}
+
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: #ffffff;
+  color: #1e293b;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #e8edf4;
+}
+
+.sidebarBrand {
+  padding: 1.1rem 1rem;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.sidebarBrand h1 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #0f172a;
+  margin: 0 0 0.2rem;
+}
+
+.sidebarBrand p {
+  font-size: 0.72rem;
+  color: #64748b;
+  margin: 0;
+  line-height: 1.35;
+}
+
+.sidebarNav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.65rem 0;
+}
+
+.navSectionLabel {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+  padding: 0.5rem 1rem 0.35rem;
+}
+
+.navItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 1rem;
+  margin: 0.1rem 0;
+  border: none;
+  background: transparent;
+  color: #334155;
+  font-size: 0.88rem;
+  cursor: pointer;
+  border-radius: 0;
+  border-left: 3px solid transparent;
+}
+
+.navItem:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.navItem.active {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-left-color: #2b6cd4;
+  font-weight: 600;
+}
+
+.mainArea {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topBar {
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid #dbe3ee;
+}
+
+.contentArea {
+  flex: 1;
+  padding: 1rem 1.25rem 1.5rem;
+  overflow: auto;
+}
+
+.contentArea .panel {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.app {
+  display: grid;
+  gap: 1rem;
+}
+
+.topBar {
+  background: #ffffff;
+  border: 1px solid #dbe3ee;
+  border-radius: 12px;
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.topBar h1 {
+  font-size: 1.35rem;
+  margin-bottom: 0.25rem;
+}
+
+.topBar p {
+  color: #5f6f82;
+  font-size: 0.92rem;
+}
+
+.topControls {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: #2b3b50;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+input,
+textarea,
+select {
+  border: 1px solid #d4deeb;
+  border-radius: 8px;
+  background: #fff;
+  color: #18202b;
+  padding: 0.5rem 0.55rem;
+}
+
+textarea {
+  min-height: 72px;
+}
+
+button {
+  border: 1px solid #245bb8;
+  background: #2b6cd4;
+  color: #fff;
+  border-radius: 8px;
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+}
+
+button.secondary {
+  border-color: #c7d2e2;
+  background: #fff;
+  color: #1f2e43;
+}
+
+.message {
+  margin: 0;
+  background: #e9f2ff;
+  color: #1f4f9f;
+  border: 1px solid #c6dcff;
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem;
+}
+
+.panel {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.panel h2 {
+  font-size: 1.05rem;
+  color: #21344d;
+}
+
+.grid.two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.grid.single {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+  max-width: 760px;
+}
+
+.card {
+  border: 1px solid #dbe3ee;
+  background: #fff;
+  border-radius: 12px;
+  padding: 0.8rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.card h3 {
+  font-size: 0.98rem;
+}
+
+.muted {
+  color: #617288;
+  font-size: 0.85rem;
+}
+
+.rowBetween {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.inlineFilters,
+.inlineActions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.formGrid {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.statusTag {
+  padding: 0.32rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid #cdd8e8;
+  background: #f4f8ff;
+  font-size: 0.74rem;
+  color: #2f4563;
+}
+
+.statusTag.ok {
+  background: #e7faef;
+  border-color: #c0edcf;
+  color: #226f45;
+}
+
+.statusTag.warning {
+  background: #fff5e9;
+  border-color: #ffe0be;
+  color: #a45e15;
+}
+
+.list,
+.miniList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.list li {
+  border: 1px solid #e4ebf5;
+  border-radius: 10px;
+  padding: 0.55rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.miniList li {
+  padding: 0.35rem 0;
+  color: #44556b;
+  border-bottom: 1px solid #eff3f8;
+}
+
+.scrollArea {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 620px;
+}
+
+th,
+td {
+  border-bottom: 1px solid #e9eef6;
+  padding: 0.45rem 0.35rem;
+  font-size: 0.82rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: #3b4c63;
+  background: #f8fbff;
+}
+
+a {
+  color: #245bb8;
+}
+
+.photoPreview {
+  width: min(280px, 100%);
+  border-radius: 10px;
+  border: 1px solid #d4deeb;
+}
+
+.visit-camera-block {
+  grid-column: 1 / -1;
+  border: 1px solid #e4ebf5;
+  border-radius: 12px;
+  padding: 0.85rem;
+  background: #f8fbff;
+}
+
+.visit-camera-title {
+  font-size: 0.92rem;
+  margin: 0 0 0.35rem;
+  color: #1e3a5f;
+}
+
+.visit-camera-warn {
+  color: #b45309;
+  font-weight: 500;
+  margin: 0.35rem 0 0.5rem;
+}
+
+.visit-camera-video {
+  width: 100%;
+  max-height: min(360px, 50vh);
+  border-radius: 10px;
+  background: #0f172a;
+  margin-bottom: 0.65rem;
+  object-fit: cover;
+}
+
+.visit-camera-actions {
+  margin-top: 0.25rem;
+}
+
+.visit-camera-primary {
+  min-width: 200px;
+  padding: 0.6rem 1.25rem;
+  font-weight: 600;
+}
+
+.visit-camera-capture-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.capture-photo-btn {
+  width: 100%;
+  max-width: 420px;
+  padding: 0.85rem 1.5rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  border: 1px solid #1d4ed8;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+}
+
+.capture-photo-btn:hover {
+  filter: brightness(1.05);
+}
+
+.capture-hint {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.dealer-map-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  min-height: min(70vh, 620px);
+}
+
+.dealer-map {
+  flex: 1;
+  min-height: 420px;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #dbe3ee;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.mapColorKey {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.78rem;
+  color: #475569;
+  margin-bottom: 0.25rem;
+}
+
+.mapColorKeyItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.mapColorSwatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  flex-shrink: 0;
+}
+
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.78rem;
+  color: #475569;
+}
+
+.map-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.legend-pin,
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.legend-pin.dealer {
+  background: #2563eb;
+  border-radius: 2px;
+  width: 8px;
+  height: 12px;
+}
+
+.legend-dot.live {
+  background: #ef4444;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #fecaca;
+}
+
+.legend-dot.visit {
+  background: #16a34a;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #bbf7d0;
+}
+
+.visit-marker-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+.visit-marker-dot {
+  display: block;
+  width: 12px;
+  height: 12px;
+  background: #16a34a;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+@media (max-width: 900px) {
+  .menuToggle {
+    display: inline-flex;
+  }
+
+  .appShell {
+    flex-direction: row;
+    position: relative;
+  }
+
+  .appShell--navOpen .sidebarBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 190;
+    background: rgba(15, 23, 42, 0.45);
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: min(288px, 88vw);
+    height: 100dvh;
+    max-height: 100vh;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    z-index: 200;
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: none;
+    border-right: 1px solid #e8edf4;
+  }
+
+  .sidebar.sidebar--open {
+    transform: translateX(0);
+    box-shadow: 8px 0 32px rgba(15, 23, 42, 0.15);
+  }
+
+  .sidebarBrand {
+    flex-shrink: 0;
+  }
+
+  .sidebarNav {
+    display: block;
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 0.5rem 0 1rem;
+  }
+
+  .navSectionLabel {
+    width: auto;
+  }
+
+  .navItem {
+    width: 100%;
+    border-radius: 0;
+    border-left: 3px solid transparent;
+    padding: 0.6rem 1rem;
+  }
+
+  .navItem.active {
+    border-left-color: #2b6cd4;
+    background: #f1f5f9;
+    color: #0f172a;
+  }
+
+  .mainArea {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .topBar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    padding: 0.65rem 0.75rem;
+  }
+
+  .topBarLead {
+    width: 100%;
+  }
+
+  .topControls {
+    width: 100%;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 0.35rem 0.5rem;
+  }
+
+  .topUserEmail {
+    flex: 1 1 100%;
+    max-width: 100%;
+    order: -1;
+    white-space: normal;
+    word-break: break-all;
+    font-size: 0.76rem;
+    line-height: 1.35;
+  }
+
+  .statusTag {
+    font-size: 0.68rem;
+    padding: 0.28rem 0.45rem;
+  }
+
+  .contentArea {
+    padding: 0.65rem 0.75rem 1.25rem;
+  }
+
+  .contentArea .panel {
+    max-width: none;
+  }
+
+  .dealer-map-wrap {
+    min-height: min(52dvh, 420px);
+  }
+
+  .dealer-map {
+    min-height: 240px;
+    border-radius: 10px;
+  }
+
+  .list li {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .list li button {
+    align-self: flex-start;
+  }
+
+  table {
+    min-width: 480px;
+    font-size: 0.78rem;
+  }
+
+  th,
+  td {
+    padding: 0.4rem 0.3rem;
+  }
+
+  .capture-photo-btn {
+    max-width: none;
+  }
+
+  .visit-camera-primary {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .inlineActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .inlineActions button {
+    width: 100%;
+  }
+
+  .rowBetween {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .grid.two,
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 901px) {
+  .sidebar {
+    position: relative;
+    z-index: 1;
+  }
+}
