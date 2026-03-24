@@ -270,7 +270,10 @@ function App() {
   const accessAllowed = useMemo(() => {
     const email = authSession?.user?.email
     if (!email) return false
-    return Boolean(findInviteForEmail(invitedUsers, email))
+    if (findInviteForEmail(invitedUsers, email)) return true
+    /** First Google sign-in while invite list is empty becomes owner (effect uses functional update; only one wins). */
+    if (invitedUsers.length === 0) return true
+    return false
   }, [authSession, invitedUsers])
 
   const role = useMemo<Role>(() => {
@@ -367,15 +370,18 @@ function App() {
     if (!sb || !authSession?.user?.email) return
     const email = authSession.user.email
     if (findInviteForEmail(invitedUsers, email)) return
+
+    if (invitedUsers.length === 0) {
+      setInvitedUsers((prev) => {
+        if (prev.length > 0) return prev
+        return [{ email: normalizeEmail(email), role: 'owner', addedAt: new Date().toISOString() }]
+      })
+      return
+    }
+
     void sb.auth.signOut()
     setLoginMessageIsError(true)
-    if (invitedUsers.length === 0) {
-      setLoginMessage(
-        'Add your organization owner email on this page (Add owner), then sign in with Google using that account.',
-      )
-    } else {
-      setLoginMessage('You are not authorized. Only added members can sign in. Contact your admin.')
-    }
+    setLoginMessage('You are not authorized. Only added members can sign in. Contact your admin.')
   }, [authSession?.user?.id, invitedUsers])
 
   useEffect(() => {
@@ -870,24 +876,6 @@ function App() {
       setLoginMessageIsError(true)
       setLoginMessage(error.message)
     }
-  }
-
-  const registerOwnerFromLogin = (rawEmail: string) => {
-    setLoginMessage('')
-    const email = normalizeEmail(rawEmail)
-    if (!email.includes('@')) {
-      setLoginMessageIsError(true)
-      setLoginMessage('Enter a valid email address.')
-      return
-    }
-    if (invitedUsers.length > 0) {
-      setLoginMessageIsError(true)
-      setLoginMessage('Invites are already configured. Ask an admin to add your email in Settings.')
-      return
-    }
-    setLoginMessageIsError(false)
-    setInvitedUsers([{ email, role: 'owner', addedAt: new Date().toISOString() }])
-    setLoginMessage('Owner email saved. Sign in with Google using that Google account.')
   }
 
   const handleSignOut = async () => {
@@ -1457,7 +1445,7 @@ function App() {
                 <h3>Add user (invite)</h3>
                 <p className="muted">
                   Enter the person&apos;s email and role. They must sign in with <strong>Google using that exact email</strong>{' '}
-                  (no password field). <strong>Owner</strong> can invite salesman, sub-admin, super-salesman.{' '}
+                  (no password field). <strong>Owner</strong> can invite owner, salesman, sub-admin, and super-salesman.{' '}
                   <strong>Sub-admin</strong> can invite salesman and super-salesman. <strong>Super-salesman</strong> can
                   invite salesman.
                 </p>
@@ -1508,8 +1496,8 @@ function App() {
                     {invitedUsers.length === 0 ? (
                       <tr>
                         <td colSpan={role === 'owner' ? 4 : 3} className="muted">
-                          No invites yet. On the sign-in page, use <strong>Add owner</strong> for the first organization
-                          owner, then sign in with Google.
+                          No invites yet. The first Google sign-in while this list is empty is added as <strong>owner</strong>.
+                          After that, owners add everyone (including more owners) here under Add user.
                         </td>
                       </tr>
                     ) : (
@@ -1758,9 +1746,7 @@ function App() {
         supabaseConfigured={supabaseEnabled}
         message={loginMessage}
         messageIsError={loginMessageIsError}
-        showOwnerSetup={invitedUsers.length === 0}
         onGoogleSignIn={() => void signInWithGoogle()}
-        onRegisterOwner={registerOwnerFromLogin}
       />
     )
   }
@@ -1842,9 +1828,6 @@ function App() {
               </span>
             ) : null}
             <span className={online ? 'statusTag ok' : 'statusTag warning'}>{online ? 'Online' : 'Offline'}</span>
-            <span className={`statusTag supabaseTag${supabaseEnabled ? ' ok' : ' warning'}`}>
-              {supabaseEnabled ? 'Supabase' : 'Local'}
-            </span>
             <span className="statusTag queueTag">Q:{queuedVisitCount}</span>
             {showLogOut ? (
               <button type="button" className="secondary topLogoutBtn" onClick={() => void handleSignOut()}>

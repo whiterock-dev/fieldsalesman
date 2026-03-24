@@ -1,14 +1,9 @@
-import { useState } from 'react'
-import { normalizeEmail } from '../lib/invites'
-
 type LoginScreenProps = {
   supabaseConfigured: boolean
   message?: string
   /** When true, message uses error styling; otherwise success/info styling */
   messageIsError?: boolean
-  showOwnerSetup: boolean
   onGoogleSignIn: () => void
-  onRegisterOwner: (email: string) => void
 }
 
 function GoogleGIcon() {
@@ -39,16 +34,8 @@ export function LoginScreen({
   supabaseConfigured,
   message,
   messageIsError = false,
-  showOwnerSetup,
   onGoogleSignIn,
-  onRegisterOwner,
 }: LoginScreenProps) {
-  const [ownerEmail, setOwnerEmail] = useState('')
-
-  const submitOwner = () => {
-    onRegisterOwner(normalizeEmail(ownerEmail))
-  }
-
   return (
     <div className="loginScreen loginScreen--ims">
       <div className="loginCard loginCard--ims">
@@ -66,25 +53,6 @@ export function LoginScreen({
           <p className={`loginMessage loginMessage--ims${messageIsError ? ' loginMessage--imsError' : ' loginMessage--imsInfo'}`}>
             {message}
           </p>
-        ) : null}
-
-        {supabaseConfigured && showOwnerSetup ? (
-          <div className="loginOwnerSetup">
-            <p className="loginOwnerSetupLabel">First time? Add the organization owner&apos;s Google email.</p>
-            <label className="loginOwnerField">
-              <span className="visuallyHidden">Owner email</span>
-              <input
-                type="email"
-                autoComplete="email"
-                placeholder="owner@company.com"
-                value={ownerEmail}
-                onChange={(e) => setOwnerEmail(e.target.value)}
-              />
-            </label>
-            <button type="button" className="loginAddOwnerBtn" onClick={submitOwner}>
-              Add owner
-            </button>
-          </div>
         ) : null}
 
         {supabaseConfigured ? (
