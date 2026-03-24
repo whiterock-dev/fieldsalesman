@@ -86,6 +86,7 @@ create index if not exists idx_meeting_responses_created_at on meeting_responses
 
 -- Server-side 30m rule for existing customers.
 create or replace function public.create_visit_enforced(
+  p_visit_id text,
   p_customer_id text,
   p_salesman_id text,
   p_visit_type text,
@@ -102,6 +103,7 @@ create or replace function public.create_visit_enforced(
 returns visits
 language plpgsql
 security definer
+set search_path = public
 as $$
 declare
   v_customer customers;
@@ -109,6 +111,10 @@ declare
   v_visit visits;
   v_max_acc double precision;
 begin
+  if p_visit_id is null or btrim(p_visit_id) = '' then
+    raise exception 'Visit id is required';
+  end if;
+
   select * into v_customer from customers where id = p_customer_id;
   if v_customer.id is null then
     raise exception 'Customer does not exist';
@@ -138,6 +144,7 @@ begin
   end if;
 
   insert into visits (
+    id,
     customer_id,
     salesman_id,
     visit_type,
@@ -152,6 +159,7 @@ begin
     follow_up_date
   )
   values (
+    p_visit_id,
     p_customer_id,
     p_salesman_id,
     p_visit_type,

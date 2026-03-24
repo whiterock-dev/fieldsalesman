@@ -1314,6 +1314,7 @@ function App() {
 
     if (supabase && online) {
       const { data: createdVisit, error } = await supabase.rpc('create_visit_enforced', {
+        p_visit_id: payload.id,
         p_customer_id: payload.customerId,
         p_salesman_id: payload.salesmanId,
         p_visit_type: payload.visitType,
@@ -1378,6 +1379,7 @@ function App() {
 
     for (const visit of queued) {
       const { data: createdVisit, error } = await supabase.rpc('create_visit_enforced', {
+        p_visit_id: visit.id,
         p_customer_id: visit.customerId,
         p_salesman_id: visit.salesmanId,
         p_visit_type: visit.visitType,
