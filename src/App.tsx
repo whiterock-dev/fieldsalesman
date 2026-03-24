@@ -1182,6 +1182,22 @@ function App() {
     }
     if (!notes.trim()) return setMessage('Meeting notes are required.')
 
+    if (supabase && online) {
+      const displayName =
+        (authSession?.user?.user_metadata?.full_name as string | undefined) ||
+        authSession?.user?.email ||
+        activeSalesman.name
+      const { error: profileErr } = await supabase.from('profiles').upsert(
+        { id: activeSalesman.id, full_name: displayName, role },
+        { onConflict: 'id' },
+      )
+      if (profileErr) {
+        return setMessage(
+          `Profile sync failed (required before saving customers): ${profileErr.message}`,
+        )
+      }
+    }
+
     let customerName = ''
     let customerId = selectedCustomerId
     let selectedCustomer: Customer | undefined
