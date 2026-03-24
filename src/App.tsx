@@ -107,13 +107,6 @@ const GPS_THRESHOLD_NEW_LEAD_METERS = 80
 const RADIUS_THRESHOLD_METERS = 30
 const VISIT_TYPES: VisitType[] = ['New lead', 'Existing customer', 'Follow-up', 'Collection', 'Complaint']
 
-const INITIAL_TEAM_PROFILES: TeamProfile[] = [
-  { id: 'owner-1', fullName: 'Demo Owner', role: 'owner' },
-  { id: 's1', fullName: 'Amit Sharma', role: 'salesman' },
-  { id: 's2', fullName: 'Neha Patel', role: 'salesman' },
-  { id: 's3', fullName: 'Rahul Verma', role: 'salesman' },
-]
-
 const INITIAL_CUSTOMERS: Customer[] = [
   {
     id: 'c1',
@@ -217,20 +210,16 @@ function kpiFromVisits(visits: VisitRecord[], salesmen: Salesman[]): KpiRow[] {
 }
 
 function App() {
-  const [offlineDemo, setOfflineDemo] = useState(
-    () => !supabaseEnabled || (typeof localStorage !== 'undefined' && localStorage.getItem('fs_offline_demo') === '1'),
-  )
   const [authSession, setAuthSession] = useState<Session | null>(null)
-  const [authHydrated, setAuthHydrated] = useState(
-    () => !supabaseEnabled || (typeof localStorage !== 'undefined' && localStorage.getItem('fs_offline_demo') === '1'),
-  )
+  const [authHydrated, setAuthHydrated] = useState(() => !supabaseEnabled)
   const [loginMessage, setLoginMessage] = useState('')
 
-  const [teamProfilesOffline] = useLocalStorageState<TeamProfile[]>('fs_team_profiles', INITIAL_TEAM_PROFILES)
-  const [teamProfilesOnline, setTeamProfilesOnline] = useState<TeamProfile[]>([])
+  const [teamProfiles, setTeamProfiles] = useState<TeamProfile[]>([])
   const [invitedUsers, setInvitedUsers] = useLocalStorageState<InvitedUser[]>('fs_invited_users', [])
 
-  const teamProfiles = offlineDemo ? teamProfilesOffline : teamProfilesOnline
+  useEffect(() => {
+    localStorage.removeItem('fs_offline_demo')
+  }, [])
   const [customers, setCustomers] = useLocalStorageState<Customer[]>('fs_customers', INITIAL_CUSTOMERS)
   const [followUps, setFollowUps] = useLocalStorageState<FollowUp[]>('fs_followups', INITIAL_FOLLOWUPS)
   const [visits, setVisits] = useLocalStorageState<VisitRecord[]>('fs_visits', [])
@@ -278,14 +267,13 @@ function App() {
   )
 
   const role = useMemo<Role>(() => {
-    if (offlineDemo) return 'owner'
     const email = authSession?.user?.email
-    if (!email) return 'owner'
+    if (!email) return 'salesman'
     const inv = findInviteForEmail(invitedUsers, email)
     if (inv) return inv.role
     if (invitedUsers.length === 0) return 'owner'
     return 'salesman'
-  }, [offlineDemo, authSession, invitedUsers])
+  }, [authSession, invitedUsers])
 
   const addableTeamRoles = useMemo(() => addableRolesFor(role), [role])
 
@@ -328,10 +316,9 @@ function App() {
   }, [])
 
   const activeSalesmanId = useMemo(() => {
-    if (offlineDemo) return salesmen[0]?.id ?? ''
     if (role === 'salesman' || role === 'super_salesman') return authSession?.user?.id ?? ''
     return salesmen[0]?.id ?? authSession?.user?.id ?? ''
-  }, [offlineDemo, role, salesmen, authSession?.user?.id])
+  }, [role, salesmen, authSession?.user?.id])
 
   const activeSalesman = useMemo(
     () => salesmen.find((item) => item.id === activeSalesmanId) ?? salesmen[0] ?? { id: '', name: '—' },
@@ -346,7 +333,7 @@ function App() {
   }, [addableTeamRoles, inviteRole])
 
   useEffect(() => {
-    if (!supabase || offlineDemo) {
+    if (!supabase) {
       setAuthHydrated(true)
       return
     }
@@ -368,11 +355,11 @@ function App() {
       finish()
     })
     return () => subscription.unsubscribe()
-  }, [offlineDemo])
+  }, [])
 
   useEffect(() => {
     const sb = supabase
-    if (!sb || offlineDemo || !authSession?.user?.email) return
+    if (!sb || !authSession?.user?.email) return
     const emailNorm = normalizeEmail(authSession.user.email)
 
     setInvitedUsers((prev) => {
@@ -390,10 +377,10 @@ function App() {
       }
       return list.length !== prev.length ? list : prev
     })
-  }, [authSession?.user?.id, offlineDemo])
+  }, [authSession?.user?.id])
 
   useEffect(() => {
-    if (!supabase || offlineDemo || !authSession?.user) return
+    if (!supabase || !authSession?.user) return
     const matched = findInviteForEmail(invitedUsers, authSession.user.email)
     if (!matched) return
     const displayName =
@@ -402,13 +389,7 @@ function App() {
       { id: authSession.user.id, full_name: displayName, role: matched.role },
       { onConflict: 'id' },
     )
-  }, [authSession?.user?.id, offlineDemo, invitedUsers])
-
-  useEffect(() => {
-    if (authSession && !offlineDemo) {
-      localStorage.removeItem('fs_offline_demo')
-    }
-  }, [authSession, offlineDemo])
+  }, [authSession?.user?.id, invitedUsers])
 
   useEffect(() => {
     const onOnline = () => setOnline(true)
@@ -423,7 +404,7 @@ function App() {
 
   useEffect(() => {
     const sb = supabase
-    if (!sb || offlineDemo) return
+    if (!sb) return
     if (!authSession?.user) return
     let closed = false
     const load = async () => {
@@ -442,7 +423,7 @@ function App() {
         for (const r of profileRows) {
           profileNameById.set(r.id as string, (r.full_name as string) ?? 'User')
         }
-        setTeamProfilesOnline(
+        setTeamProfiles(
           profileRows.map((r) => ({
             id: r.id as string,
             fullName: (r.full_name as string) ?? 'User',
@@ -531,7 +512,7 @@ function App() {
       void sb.removeChannel(channel)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authSession?.user?.id, offlineDemo])
+  }, [authSession?.user?.id])
 
   useEffect(() => {
     return () => {
@@ -887,26 +868,11 @@ function App() {
     if (error) setLoginMessage(error.message)
   }
 
-  const goOfflineDemo = () => {
-    void supabase?.auth.signOut()
-    setAuthSession(null)
-    localStorage.setItem('fs_offline_demo', '1')
-    setOfflineDemo(true)
-    setLoginMessage('')
-  }
-
   const handleSignOut = async () => {
     await supabase?.auth.signOut()
     setAuthSession(null)
     localStorage.removeItem('fs_offline_demo')
-    setOfflineDemo(false)
     setActiveView('dashboard')
-    setMobileNavOpen(false)
-  }
-
-  const handleExitDemo = () => {
-    localStorage.removeItem('fs_offline_demo')
-    setOfflineDemo(false)
     setMobileNavOpen(false)
   }
 
@@ -1144,8 +1110,8 @@ function App() {
       <h3>Record visit</h3>
       {!salesmen.length ? (
         <p className="muted visit-camera-warn">
-          Invite at least one <strong>salesman</strong> or <strong>super-salesman</strong> in <strong>Settings</strong>{' '}
-          (or use offline demo data) before recording visits.
+          Invite at least one <strong>salesman</strong> or <strong>super-salesman</strong> in <strong>Settings</strong> before
+          recording visits.
         </p>
       ) : null}
       <p className="muted">
@@ -1443,17 +1409,10 @@ function App() {
 
             <article className="card">
               <h3>Account</h3>
-              {offlineDemo ? (
-                <p className="muted">
-                  Offline demo mode — data stays in this browser. No Google sign-in. Enable Supabase in <code>.env</code> to
-                  use invited emails and Google sign-in only.
-                </p>
-              ) : (
-                <p className="muted">
-                  Signed in with Google. Your role comes from the invite list. There is no password — use the same Google
-                  account as the invited email.
-                </p>
-              )}
+              <p className="muted">
+                Signed in with Google. Your role comes from the invite list. There is no password — use the same Google
+                account as the invited email.
+              </p>
               {authSession?.user?.email ? (
                 <p>
                   <strong>Email:</strong> {authSession.user.email}
@@ -1463,20 +1422,9 @@ function App() {
                 <strong>Role:</strong> {role.replace(/_/g, ' ')}
               </p>
               <div className="inlineActions">
-                {!offlineDemo && supabaseEnabled ? (
+                {supabaseEnabled && authSession ? (
                   <button type="button" className="secondary" onClick={() => void handleSignOut()}>
-                    Sign out
-                  </button>
-                ) : null}
-                {offlineDemo && supabaseEnabled ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      localStorage.removeItem('fs_offline_demo')
-                      setOfflineDemo(false)
-                    }}
-                  >
-                    Use Google sign-in
+                    Log out
                   </button>
                 ) : null}
               </div>
@@ -1568,7 +1516,7 @@ function App() {
             </article>
 
             <article className="card">
-              <h3>{offlineDemo ? 'Team (offline)' : 'Profiles (synced)'}</h3>
+              <h3>Profiles (synced)</h3>
               <div className="scrollArea">
                 <table>
                   <thead>
@@ -1582,7 +1530,7 @@ function App() {
                     {teamProfiles.length === 0 ? (
                       <tr>
                         <td colSpan={3} className="muted">
-                          {offlineDemo ? 'No team rows.' : 'Sign in and load data, or add invites and sign in with Google.'}
+                          No profiles loaded yet. Data loads from Supabase after sign-in.
                         </td>
                       </tr>
                     ) : (
@@ -1773,8 +1721,8 @@ function App() {
     }
   })()
 
-  const showMainApp = offlineDemo || !supabaseEnabled || !!authSession
-  if (supabaseEnabled && !offlineDemo && !authHydrated) {
+  const showMainApp = Boolean(supabaseEnabled && authSession)
+  if (supabaseEnabled && !authHydrated) {
     return (
       <div className="authBootScreen">
         <p className="muted">Checking session…</p>
@@ -1787,13 +1735,11 @@ function App() {
         supabaseConfigured={supabaseEnabled}
         message={loginMessage}
         onGoogleSignIn={() => void signInWithGoogle()}
-        onOfflineDemo={goOfflineDemo}
       />
     )
   }
 
-  const showLogOut = Boolean(supabaseEnabled && authSession && !offlineDemo)
-  const showExitDemo = Boolean(supabaseEnabled && offlineDemo)
+  const showLogOut = Boolean(supabaseEnabled && authSession)
 
   return (
     <div className={`appShell${mobileNavOpen ? ' appShell--navOpen' : ''}`}>
@@ -1835,6 +1781,13 @@ function App() {
             </div>
           ))}
         </nav>
+        {showLogOut ? (
+          <div className="sidebarFooter">
+            <button type="button" className="secondary sidebarLogoutBtn" onClick={() => void handleSignOut()}>
+              Log out
+            </button>
+          </div>
+        ) : null}
       </aside>
 
       <div className="mainArea">
@@ -1862,7 +1815,6 @@ function App() {
                 {authSession.user.email}
               </span>
             ) : null}
-            {offlineDemo ? <span className="statusTag">Demo</span> : null}
             <span className={online ? 'statusTag ok' : 'statusTag warning'}>{online ? 'Online' : 'Offline'}</span>
             <span className={`statusTag supabaseTag${supabaseEnabled ? ' ok' : ' warning'}`}>
               {supabaseEnabled ? 'Supabase' : 'Local'}
@@ -1871,11 +1823,6 @@ function App() {
             {showLogOut ? (
               <button type="button" className="secondary topLogoutBtn" onClick={() => void handleSignOut()}>
                 Log out
-              </button>
-            ) : null}
-            {showExitDemo ? (
-              <button type="button" className="secondary topLogoutBtn" onClick={handleExitDemo}>
-                Exit demo
               </button>
             ) : null}
           </div>

@@ -100,11 +100,6 @@ body {
   justify-content: center;
 }
 
-.loginOfflineBtn {
-  width: 100%;
-  margin-top: 0.75rem;
-}
-
 .topUserEmail {
   font-size: 0.82rem;
   color: #475569;
@@ -235,6 +230,18 @@ p {
   flex: 1;
   overflow-y: auto;
   padding: 0.65rem 0;
+}
+
+.sidebarFooter {
+  flex-shrink: 0;
+  padding: 0.75rem 1rem 1rem;
+  border-top: 1px solid #eef2f7;
+}
+
+.sidebarLogoutBtn {
+  width: 100%;
+  justify-content: center;
+  font-weight: 600;
 }
 
 .navSectionLabel {
@@ -743,7 +750,11 @@ a {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
-    padding: 0.5rem 0 1rem;
+    padding: 0.5rem 0 0.5rem;
+  }
+
+  .sidebarFooter {
+    padding: 0.65rem 1rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
   }
 
   .navSectionLabel {

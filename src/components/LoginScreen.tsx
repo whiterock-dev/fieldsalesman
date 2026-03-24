@@ -2,10 +2,9 @@ type LoginScreenProps = {
   supabaseConfigured: boolean
   message?: string
   onGoogleSignIn: () => void
-  onOfflineDemo?: () => void
 }
 
-export function LoginScreen({ supabaseConfigured, message, onGoogleSignIn, onOfflineDemo }: LoginScreenProps) {
+export function LoginScreen({ supabaseConfigured, message, onGoogleSignIn }: LoginScreenProps) {
   return (
     <div className="loginScreen">
       <div className="loginCard">
@@ -13,7 +12,7 @@ export function LoginScreen({ supabaseConfigured, message, onGoogleSignIn, onOff
         <p className="loginSubtitle">
           {supabaseConfigured
             ? 'Sign in with the Google account that matches an email your admin added in Settings. No password — Google only.'
-            : 'Supabase is not configured. Use offline demo or add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.'}
+            : 'This app requires Supabase. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your deployment environment and rebuild.'}
         </p>
         {message ? <p className="loginMessage">{message}</p> : null}
         {supabaseConfigured ? (
@@ -22,11 +21,6 @@ export function LoginScreen({ supabaseConfigured, message, onGoogleSignIn, onOff
               G
             </span>
             Continue with Google
-          </button>
-        ) : null}
-        {onOfflineDemo ? (
-          <button type="button" className="secondary loginOfflineBtn" onClick={onOfflineDemo}>
-            Continue offline (demo)
           </button>
         ) : null}
       </div>
