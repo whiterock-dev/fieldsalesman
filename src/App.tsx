@@ -213,6 +213,7 @@ function App() {
   const [authSession, setAuthSession] = useState<Session | null>(null)
   const [authHydrated, setAuthHydrated] = useState(() => !supabaseEnabled)
   const [loginMessage, setLoginMessage] = useState('')
+  const [loginMessageIsError, setLoginMessageIsError] = useState(false)
 
   const [teamProfiles, setTeamProfiles] = useState<TeamProfile[]>([])
   const [invitedUsers, setInvitedUsers] = useLocalStorageState<InvitedUser[]>('fs_invited_users', [])
@@ -266,13 +267,17 @@ function App() {
     [teamProfiles],
   )
 
+  const accessAllowed = useMemo(() => {
+    const email = authSession?.user?.email
+    if (!email) return false
+    return Boolean(findInviteForEmail(invitedUsers, email))
+  }, [authSession, invitedUsers])
+
   const role = useMemo<Role>(() => {
     const email = authSession?.user?.email
     if (!email) return 'salesman'
     const inv = findInviteForEmail(invitedUsers, email)
-    if (inv) return inv.role
-    if (invitedUsers.length === 0) return 'owner'
-    return 'salesman'
+    return inv?.role ?? 'salesman'
   }, [authSession, invitedUsers])
 
   const addableTeamRoles = useMemo(() => addableRolesFor(role), [role])
@@ -360,24 +365,18 @@ function App() {
   useEffect(() => {
     const sb = supabase
     if (!sb || !authSession?.user?.email) return
-    const emailNorm = normalizeEmail(authSession.user.email)
-
-    setInvitedUsers((prev) => {
-      let list = [...prev]
-      if (list.length === 0) {
-        list = [{ email: emailNorm, role: 'owner', addedAt: new Date().toISOString() }]
-      }
-      const matched = list.find((i) => normalizeEmail(i.email) === emailNorm)
-      if (!matched) {
-        queueMicrotask(() => {
-          void sb.auth.signOut()
-          setMessage('This Google account is not invited. Ask an admin to add your email in Settings.')
-        })
-        return prev
-      }
-      return list.length !== prev.length ? list : prev
-    })
-  }, [authSession?.user?.id])
+    const email = authSession.user.email
+    if (findInviteForEmail(invitedUsers, email)) return
+    void sb.auth.signOut()
+    setLoginMessageIsError(true)
+    if (invitedUsers.length === 0) {
+      setLoginMessage(
+        'Add your organization owner email on this page (Add owner), then sign in with Google using that account.',
+      )
+    } else {
+      setLoginMessage('You are not authorized. Only added members can sign in. Contact your admin.')
+    }
+  }, [authSession?.user?.id, invitedUsers])
 
   useEffect(() => {
     if (!supabase || !authSession?.user) return
@@ -405,7 +404,8 @@ function App() {
   useEffect(() => {
     const sb = supabase
     if (!sb) return
-    if (!authSession?.user) return
+    if (!authSession?.user?.email) return
+    if (!findInviteForEmail(invitedUsers, authSession.user.email)) return
     let closed = false
     const load = async () => {
       const [{ data: profileRows }, { data: customerRows }, { data: followupRows }, { data: visitRows }, { data: liveRows }] =
@@ -512,7 +512,7 @@ function App() {
       void sb.removeChannel(channel)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authSession?.user?.id])
+  }, [authSession?.user?.id, invitedUsers])
 
   useEffect(() => {
     return () => {
@@ -860,12 +860,34 @@ function App() {
 
   const signInWithGoogle = async () => {
     setLoginMessage('')
+    setLoginMessageIsError(false)
     if (!supabase) return
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/` },
     })
-    if (error) setLoginMessage(error.message)
+    if (error) {
+      setLoginMessageIsError(true)
+      setLoginMessage(error.message)
+    }
+  }
+
+  const registerOwnerFromLogin = (rawEmail: string) => {
+    setLoginMessage('')
+    const email = normalizeEmail(rawEmail)
+    if (!email.includes('@')) {
+      setLoginMessageIsError(true)
+      setLoginMessage('Enter a valid email address.')
+      return
+    }
+    if (invitedUsers.length > 0) {
+      setLoginMessageIsError(true)
+      setLoginMessage('Invites are already configured. Ask an admin to add your email in Settings.')
+      return
+    }
+    setLoginMessageIsError(false)
+    setInvitedUsers([{ email, role: 'owner', addedAt: new Date().toISOString() }])
+    setLoginMessage('Owner email saved. Sign in with Google using that Google account.')
   }
 
   const handleSignOut = async () => {
@@ -1486,7 +1508,8 @@ function App() {
                     {invitedUsers.length === 0 ? (
                       <tr>
                         <td colSpan={role === 'owner' ? 4 : 3} className="muted">
-                          No invites yet. First Google sign-in with an empty list becomes owner automatically.
+                          No invites yet. On the sign-in page, use <strong>Add owner</strong> for the first organization
+                          owner, then sign in with Google.
                         </td>
                       </tr>
                     ) : (
@@ -1721,7 +1744,7 @@ function App() {
     }
   })()
 
-  const showMainApp = Boolean(supabaseEnabled && authSession)
+  const showMainApp = Boolean(supabaseEnabled && accessAllowed)
   if (supabaseEnabled && !authHydrated) {
     return (
       <div className="authBootScreen">
@@ -1734,7 +1757,10 @@ function App() {
       <LoginScreen
         supabaseConfigured={supabaseEnabled}
         message={loginMessage}
+        messageIsError={loginMessageIsError}
+        showOwnerSetup={invitedUsers.length === 0}
         onGoogleSignIn={() => void signInWithGoogle()}
+        onRegisterOwner={registerOwnerFromLogin}
       />
     )
   }
@@ -1758,7 +1784,7 @@ function App() {
         aria-label="Main navigation"
       >
         <div className="sidebarBrand">
-          <h1>Field Sales</h1>
+          <h1>Field Salesman</h1>
           <p>Visits, tracking &amp; CRM</p>
         </div>
         <nav className="sidebarNav" aria-label="Sections">

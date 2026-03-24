@@ -31,6 +31,10 @@ body {
   background: linear-gradient(165deg, #f8fafc 0%, #eef2f7 100%);
 }
 
+.loginScreen--ims {
+  background: #ffffff;
+}
+
 .loginCard {
   width: 100%;
   max-width: 400px;
@@ -41,6 +45,15 @@ body {
   box-shadow: 0 12px 40px rgba(15, 23, 42, 0.06);
 }
 
+.loginCard--ims {
+  max-width: 380px;
+  padding: 2.25rem 2rem;
+  border-radius: 12px;
+  border: 1px solid #ececec;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  text-align: center;
+}
+
 .loginTitle {
   font-size: 1.35rem;
   font-weight: 700;
@@ -48,11 +61,38 @@ body {
   margin: 0 0 0.5rem;
 }
 
+.loginTitle--ims {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #0a0a0a;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.35rem;
+}
+
 .loginSubtitle {
   font-size: 0.88rem;
   color: #64748b;
   line-height: 1.5;
   margin: 0 0 1.25rem;
+}
+
+.loginSubtitle--ims {
+  font-size: 0.9rem;
+  color: #6b7280;
+  font-weight: 400;
+  margin: 0 0 1.75rem;
+}
+
+.loginConfigWarn {
+  font-size: 0.82rem;
+  color: #64748b;
+  line-height: 1.45;
+  margin: 0 0 1rem;
+  text-align: left;
+}
+
+.loginConfigWarn code {
+  font-size: 0.78rem;
 }
 
 .loginMessage {
@@ -63,6 +103,76 @@ body {
   border-radius: 10px;
   padding: 0.6rem 0.75rem;
   margin: 0 0 1rem;
+}
+
+.loginMessage--ims {
+  text-align: left;
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  margin: 0 0 1.25rem;
+  line-height: 1.45;
+}
+
+.loginMessage--imsError {
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.loginMessage--imsInfo {
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.loginOwnerSetup {
+  text-align: left;
+  margin-bottom: 1.25rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.loginOwnerSetupLabel {
+  font-size: 0.82rem;
+  color: #4b5563;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.loginOwnerField input {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.loginAddOwnerBtn {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+.loginAddOwnerBtn:hover {
+  background: #f9fafb;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .loginGoogleBtn {
@@ -87,17 +197,23 @@ body {
   border-color: #d0d4da;
 }
 
-.loginGoogleIcon {
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  background: linear-gradient(135deg, #4285f4, #34a853 40%, #fbbc05 65%, #ea4335);
-  color: #fff;
-  font-size: 0.75rem;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.loginGoogleBtn--ims {
+  background: #13131a;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.75rem 1.25rem;
+  font-weight: 500;
+  font-size: 0.95rem;
+  box-shadow: none;
+}
+
+.loginGoogleBtn--ims:hover {
+  background: #252530;
+}
+
+.loginGoogleSvg {
+  flex-shrink: 0;
 }
 
 .topUserEmail {
