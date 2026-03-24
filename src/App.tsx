@@ -66,8 +66,6 @@ type KpiRow = {
   startTime: string
   endTime: string
 }
-type PersistedState<T> = [T, React.Dispatch<React.SetStateAction<T>>]
-
 type NavId =
   | 'dashboard'
   | 'map'
@@ -99,6 +97,37 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
   { id: 'settings', label: 'Settings', section: 'Account', show: () => true },
   { id: 'visits', label: 'Visit history', section: 'Overview', show: () => true },
 ]
+
+function isNavId(id: string): id is NavId {
+  return NAV_ITEMS.some((item) => item.id === id)
+}
+
+function parseNavFromLocation(): NavId {
+  if (typeof window === 'undefined') return 'dashboard'
+  const raw = window.location.hash.replace(/^#\/?/, '').trim()
+  if (raw && isNavId(raw)) return raw
+  try {
+    const s = sessionStorage.getItem('fs_active_view')
+    if (s && isNavId(s)) return s
+  } catch {
+    /* private mode */
+  }
+  return 'dashboard'
+}
+
+function syncNavToLocation(view: NavId) {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.setItem('fs_active_view', view)
+  } catch {
+    /* ignore */
+  }
+  const nextHash = view === 'dashboard' ? '' : `#${view}`
+  const base = `${window.location.pathname}${window.location.search}`
+  const current = `${base}${window.location.hash}`
+  const target = nextHash ? `${base}${nextHash}` : base
+  if (current !== target) window.history.replaceState(null, '', target)
+}
 
 /** Max reported GPS uncertainty allowed when visiting an existing customer (tight geo-fence). */
 const GPS_THRESHOLD_METERS = 30
@@ -138,22 +167,6 @@ const INITIAL_FOLLOWUPS: FollowUp[] = [
   { id: 'f1', customerId: 'c1', dueDate: '2026-03-16', priority: 'high', status: 'pending', remarks: 'Collection pending', salesmanId: 's1' },
   { id: 'f2', customerId: 'c2', dueDate: '2026-03-20', priority: 'medium', status: 'pending', remarks: 'Quotation follow-up', salesmanId: 's2' },
 ]
-
-function useLocalStorageState<T>(key: string, initialValue: T): PersistedState<T> {
-  const [value, setValue] = useState<T>(() => {
-    const raw = localStorage.getItem(key)
-    if (!raw) return initialValue
-    try {
-      return JSON.parse(raw) as T
-    } catch {
-      return initialValue
-    }
-  })
-  useEffect(() => {
-    localStorage.setItem(key, JSON.stringify(value))
-  }, [key, value])
-  return [value, setValue]
-}
 
 function timeString(isoDate: string) {
   return new Date(isoDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -216,16 +229,18 @@ function App() {
   const [loginMessageIsError, setLoginMessageIsError] = useState(false)
 
   const [teamProfiles, setTeamProfiles] = useState<TeamProfile[]>([])
-  const [invitedUsers, setInvitedUsers] = useLocalStorageState<InvitedUser[]>('fs_invited_users', [])
+  const [invitedUsers, setInvitedUsers] = useState<InvitedUser[]>([])
 
   useEffect(() => {
     localStorage.removeItem('fs_offline_demo')
   }, [])
-  const [customers, setCustomers] = useLocalStorageState<Customer[]>('fs_customers', INITIAL_CUSTOMERS)
-  const [followUps, setFollowUps] = useLocalStorageState<FollowUp[]>('fs_followups', INITIAL_FOLLOWUPS)
-  const [visits, setVisits] = useLocalStorageState<VisitRecord[]>('fs_visits', [])
-  const [meetingResponses, setMeetingResponses] = useLocalStorageState<MeetingResponse[]>('fs_meeting_responses', [])
-  const [livePoints, setLivePoints] = useLocalStorageState<LivePoint[]>('fs_live_points', [])
+  const [customers, setCustomers] = useState<Customer[]>(() => (supabaseEnabled ? [] : INITIAL_CUSTOMERS))
+  const [followUps, setFollowUps] = useState<FollowUp[]>(() => (supabaseEnabled ? [] : INITIAL_FOLLOWUPS))
+  const [visits, setVisits] = useState<VisitRecord[]>([])
+  const [meetingResponses, setMeetingResponses] = useState<MeetingResponse[]>([])
+  const [livePoints, setLivePoints] = useState<LivePoint[]>([])
+
+  const scheduleWorkspaceReloadRef = useRef<(() => void) | null>(null)
   const [online, setOnline] = useState<boolean>(navigator.onLine)
   const [syncing, setSyncing] = useState(false)
   const [geo, setGeo] = useState<{ lat: number; lng: number; accuracy: number; capturedAt: string } | null>(null)
@@ -248,7 +263,8 @@ function App() {
   const [message, setMessage] = useState('')
   const [kpiDateFilter, setKpiDateFilter] = useState('')
   const [kpiSalesmanFilter, setKpiSalesmanFilter] = useState('all')
-  const [activeView, setActiveView] = useState<NavId>('dashboard')
+  const [activeView, setActiveView] = useState<NavId>(parseNavFromLocation)
+  const [inviteSourceReady, setInviteSourceReady] = useState(() => !supabaseEnabled)
   const watchIdRef = useRef<number | null>(null)
   const visitLocationTimeoutRef = useRef<number | null>(null)
   const locationRequestIdRef = useRef(0)
@@ -290,6 +306,10 @@ function App() {
   useEffect(() => {
     if (!allowedNavIds.includes(activeView)) setActiveView('dashboard')
   }, [allowedNavIds, activeView])
+
+  useEffect(() => {
+    syncNavToLocation(activeView)
+  }, [activeView])
 
   useEffect(() => {
     setMobileNavOpen(false)
@@ -367,14 +387,86 @@ function App() {
 
   useEffect(() => {
     const sb = supabase
+    if (!sb) {
+      setInviteSourceReady(true)
+      return
+    }
+    if (!authSession?.user) {
+      setInviteSourceReady(true)
+      return
+    }
+
+    let cancelled = false
+    setInviteSourceReady(false)
+
+    void (async () => {
+      try {
+        const { data, error } = await sb.from('app_invites').select('email, role, added_at')
+        if (cancelled) return
+        if (error) {
+          console.warn('app_invites:', error.message)
+          setInviteSourceReady(true)
+          return
+        }
+        const rows = (data ?? []) as { email: string; role: string; added_at: string }[]
+        if (rows.length > 0) {
+          setInvitedUsers(
+            rows.map((r) => ({
+              email: normalizeEmail(r.email),
+              role: r.role as Role,
+              addedAt: r.added_at,
+            })),
+          )
+          return
+        }
+        const raw = localStorage.getItem('fs_invited_users')
+        let local: InvitedUser[] = []
+        try {
+          local = raw ? (JSON.parse(raw) as InvitedUser[]) : []
+        } catch {
+          local = []
+        }
+        if (local.length > 0) {
+          const payload = local.map((u) => ({
+            email: normalizeEmail(u.email),
+            role: u.role,
+            added_at: u.addedAt,
+          }))
+          await sb.from('app_invites').upsert(payload, { onConflict: 'email' })
+          if (!cancelled) {
+            setInvitedUsers(
+              local.map((u) => ({
+                email: normalizeEmail(u.email),
+                role: u.role,
+                addedAt: u.addedAt,
+              })),
+            )
+          }
+        }
+      } finally {
+        if (!cancelled) setInviteSourceReady(true)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [authSession?.user?.id])
+
+  useEffect(() => {
+    const sb = supabase
+    if (!inviteSourceReady) return
     if (!sb || !authSession?.user?.email) return
     const email = authSession.user.email
     if (findInviteForEmail(invitedUsers, email)) return
 
     if (invitedUsers.length === 0) {
+      const norm = normalizeEmail(email)
+      const addedAt = new Date().toISOString()
+      void sb.from('app_invites').upsert({ email: norm, role: 'owner', added_at: addedAt }, { onConflict: 'email' })
       setInvitedUsers((prev) => {
         if (prev.length > 0) return prev
-        return [{ email: normalizeEmail(email), role: 'owner', addedAt: new Date().toISOString() }]
+        return [{ email: norm, role: 'owner', addedAt }]
       })
       return
     }
@@ -382,7 +474,7 @@ function App() {
     void sb.auth.signOut()
     setLoginMessageIsError(true)
     setLoginMessage('You are not authorized. Only added members can sign in. Contact your admin.')
-  }, [authSession?.user?.id, invitedUsers])
+  }, [authSession?.user?.id, invitedUsers, inviteSourceReady])
 
   useEffect(() => {
     if (!supabase || !authSession?.user) return
@@ -410,115 +502,198 @@ function App() {
   useEffect(() => {
     const sb = supabase
     if (!sb) return
+    if (!inviteSourceReady) return
     if (!authSession?.user?.email) return
-    if (!findInviteForEmail(invitedUsers, authSession.user.email)) return
+    if (!accessAllowed) return
+
     let closed = false
-    const load = async () => {
-      const [{ data: profileRows }, { data: customerRows }, { data: followupRows }, { data: visitRows }, { data: liveRows }] =
-        await Promise.all([
-          sb.from('profiles').select('id, full_name, role'),
-          sb.from('customers').select('*').order('created_at', { ascending: false }),
-          sb.from('followups').select('*').order('due_date', { ascending: true }),
-          sb.from('visits').select('*').order('captured_at', { ascending: false }).limit(200),
-          sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(200),
-        ])
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
+    const loadDomain = async () => {
+      const [
+        { data: inviteRows, error: invitesErr },
+        { data: profileRows, error: profilesErr },
+        { data: customerRows, error: customersErr },
+        { data: followupRows, error: followupsErr },
+        { data: visitRows, error: visitsErr },
+        meetingResult,
+        { data: liveRows, error: liveErr },
+      ] = await Promise.all([
+        sb.from('app_invites').select('email, role, added_at').order('added_at', { ascending: true }),
+        sb.from('profiles').select('id, full_name, role'),
+        sb.from('customers').select('*').order('created_at', { ascending: false }),
+        sb.from('followups').select('*').order('due_date', { ascending: true }),
+        sb.from('visits').select('*').order('captured_at', { ascending: false }).limit(200),
+        sb.from('meeting_responses').select('*').order('created_at', { ascending: false }).limit(100),
+        sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(200),
+      ])
       if (closed) return
+      if (invitesErr) console.warn('app_invites:', invitesErr.message)
+      if (profilesErr) console.warn('profiles:', profilesErr.message)
+      if (customersErr) console.warn('customers:', customersErr.message)
+      if (followupsErr) console.warn('followups:', followupsErr.message)
+      if (visitsErr) console.warn('visits:', visitsErr.message)
+      if (meetingResult.error) console.warn('meeting_responses:', meetingResult.error.message)
+      if (liveErr) console.warn('live_locations:', liveErr.message)
+
+      if (!invitesErr && inviteRows) {
+        setInvitedUsers(
+          inviteRows.map((r) => ({
+            email: normalizeEmail(r.email as string),
+            role: r.role as Role,
+            addedAt: r.added_at as string,
+          })),
+        )
+      }
+
+      const meetingRows = meetingResult.error ? [] : (meetingResult.data ?? [])
+      const safeProfileRows = profilesErr ? [] : (profileRows ?? [])
+      const safeCustomerRows = customersErr ? [] : (customerRows ?? [])
+      const safeFollowupRows = followupsErr ? [] : (followupRows ?? [])
+      const safeVisitRows = visitsErr ? [] : (visitRows ?? [])
+      const safeLiveRows = liveErr ? [] : (liveRows ?? [])
 
       const profileNameById = new Map<string, string>()
-      if (profileRows?.length) {
-        for (const r of profileRows) {
-          profileNameById.set(r.id as string, (r.full_name as string) ?? 'User')
-        }
-        setTeamProfiles(
-          profileRows.map((r) => ({
+      setTeamProfiles(
+        safeProfileRows.map((r) => {
+          const name = (r.full_name as string) ?? 'User'
+          profileNameById.set(r.id as string, name)
+          return {
             id: r.id as string,
-            fullName: (r.full_name as string) ?? 'User',
+            fullName: name,
             role: (r.role as Role) ?? 'salesman',
-          })),
-        )
-      }
-      if (customerRows?.length) {
-        setCustomers(
-          customerRows.map((r) => ({
-            id: r.id as string,
-            name: r.name as string,
-            phone: r.phone as string,
-            whatsapp: (r.whatsapp as string) ?? '',
-            address: (r.address as string) ?? '',
-            city: (r.city as string) ?? '',
-            tags: (r.tags as string[]) ?? [],
-            assignedSalesmanId: (r.assigned_salesman_id as string) ?? '',
-            lat: Number(r.lat),
-            lng: Number(r.lng),
-          })),
-        )
-      }
-      if (followupRows?.length) {
-        setFollowUps(
-          followupRows.map((r) => ({
-            id: r.id as string,
-            customerId: r.customer_id as string,
-            dueDate: r.due_date as string,
-            priority: r.priority as FollowUp['priority'],
-            status: r.status as FollowUpStatus,
-            remarks: (r.remarks as string) ?? '',
-            salesmanId: r.salesman_id as string,
-          })),
-        )
-      }
-      if (visitRows?.length) {
-        setVisits(
-          visitRows.map((r) => ({
-            id: r.id as string,
-            customerId: r.customer_id as string,
-            customerName: customers.find((c) => c.id === (r.customer_id as string))?.name ?? 'Customer',
-            salesmanId: r.salesman_id as string,
-            salesmanName: profileNameById.get(r.salesman_id as string) ?? 'Salesman',
-            lat: Number(r.lat),
-            lng: Number(r.lng),
-            accuracy: Number(r.accuracy_meters),
-            capturedAt: r.captured_at as string,
-            photoDataUrl: (r.photo_path as string) ?? '',
-            visitType: r.visit_type as VisitType,
-            notes: r.notes as string,
-            nextAction: (r.next_action as string) ?? '',
-            followUpDate: (r.follow_up_date as string) ?? undefined,
-            status: 'synced',
-          })),
-        )
-      }
-      if (liveRows?.length) {
-        setLivePoints(
-          liveRows.map((r) => ({
-            lat: Number(r.lat),
-            lng: Number(r.lng),
-            accuracy: Number(r.accuracy_meters),
-            time: r.captured_at as string,
-            salesmanId: r.salesman_id as string,
-          })),
-        )
-      }
-    }
-    void load()
+          }
+        }),
+      )
 
-    const channel = sb
-      .channel('live-locations')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_locations' }, (payload) => {
-        const row = payload.new as { lat: number; lng: number; accuracy_meters: number; captured_at: string; salesman_id: string }
-        setLivePoints((previous) => [
-          { lat: Number(row.lat), lng: Number(row.lng), accuracy: Number(row.accuracy_meters), time: row.captured_at, salesmanId: row.salesman_id },
-          ...previous,
-        ].slice(0, 200))
+      const customersMapped = safeCustomerRows.map((r) => ({
+        id: r.id as string,
+        name: r.name as string,
+        phone: r.phone as string,
+        whatsapp: (r.whatsapp as string) ?? '',
+        address: (r.address as string) ?? '',
+        city: (r.city as string) ?? '',
+        tags: (r.tags as string[]) ?? [],
+        assignedSalesmanId: (r.assigned_salesman_id as string) ?? '',
+        lat: Number(r.lat),
+        lng: Number(r.lng),
+      }))
+      setCustomers(customersMapped)
+
+      const customerNameById = new Map(customersMapped.map((c) => [c.id, c.name]))
+
+      setFollowUps(
+        safeFollowupRows.map((r) => ({
+          id: r.id as string,
+          customerId: r.customer_id as string,
+          dueDate: r.due_date as string,
+          priority: r.priority as FollowUp['priority'],
+          status: r.status as FollowUpStatus,
+          remarks: (r.remarks as string) ?? '',
+          salesmanId: r.salesman_id as string,
+        })),
+      )
+
+      const fromServer: VisitRecord[] = safeVisitRows.map((r) => ({
+        id: r.id as string,
+        customerId: r.customer_id as string,
+        customerName: customerNameById.get(r.customer_id as string) ?? 'Customer',
+        salesmanId: r.salesman_id as string,
+        salesmanName: profileNameById.get(r.salesman_id as string) ?? 'Salesman',
+        lat: Number(r.lat),
+        lng: Number(r.lng),
+        accuracy: Number(r.accuracy_meters),
+        capturedAt: r.captured_at as string,
+        photoDataUrl: (r.photo_path as string) ?? '',
+        visitType: r.visit_type as VisitType,
+        notes: r.notes as string,
+        nextAction: (r.next_action as string) ?? '',
+        followUpDate: (r.follow_up_date as string) ?? undefined,
+        status: 'synced',
+      }))
+
+      setVisits((previous) => {
+        const queued = previous.filter((v) => v.status === 'queued')
+        const serverIds = new Set(fromServer.map((v) => v.id))
+        const merged = [...fromServer, ...queued.filter((q) => !serverIds.has(q.id))]
+        merged.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
+        return merged
       })
-      .subscribe()
+
+      setMeetingResponses(
+        (meetingRows ?? []).map((r) => ({
+          id: r.id as string,
+          customerName: r.customer_name as string,
+          salesmanName: r.salesman_name as string,
+          response: r.response as string,
+          createdAt: r.created_at as string,
+        })),
+      )
+
+      setLivePoints(
+        safeLiveRows.map((r) => ({
+          lat: Number(r.lat),
+          lng: Number(r.lng),
+          accuracy: Number(r.accuracy_meters),
+          time: r.captured_at as string,
+          salesmanId: r.salesman_id as string,
+        })),
+      )
+    }
+
+    const scheduleReload = () => {
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void loadDomain()
+      }, 220)
+    }
+
+    scheduleWorkspaceReloadRef.current = scheduleReload
+
+    void loadDomain()
+
+    const realtimeTables = [
+      'app_invites',
+      'profiles',
+      'customers',
+      'followups',
+      'visits',
+      'meeting_responses',
+      'live_locations',
+    ] as const
+
+    const channel = sb.channel('fs-domain-sync')
+    for (const table of realtimeTables) {
+      channel.on('postgres_changes', { event: '*', schema: 'public', table }, scheduleReload)
+    }
+
+    const reloadOnOnline = () => scheduleReload()
+    window.addEventListener('online', reloadOnOnline)
+
+    void channel.subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.warn('Field Salesman realtime:', status)
+      }
+    })
 
     return () => {
       closed = true
+      scheduleWorkspaceReloadRef.current = null
+      window.removeEventListener('online', reloadOnOnline)
+      if (debounceTimer) clearTimeout(debounceTimer)
       if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current)
       void sb.removeChannel(channel)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authSession?.user?.id, invitedUsers])
+  }, [authSession?.user?.id, inviteSourceReady, accessAllowed, invitedUsers.length])
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') scheduleWorkspaceReloadRef.current?.()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -732,23 +907,43 @@ function App() {
       return
     }
     stopVisitCamera()
+    const attempts: MediaStreamConstraints[] = [
+      { video: { facingMode: { ideal: 'environment' } }, audio: false },
+      { video: { facingMode: 'environment' }, audio: false },
+      { video: true, audio: false },
+      { video: { facingMode: 'user' }, audio: false },
+    ]
+    let stream: MediaStream | null = null
+    let lastErr: unknown
+    for (const constraints of attempts) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints)
+        break
+      } catch (e) {
+        lastErr = e
+      }
+    }
+    if (!stream) {
+      setMessage(`Cannot open camera: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`)
+      return
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        audio: false,
-      })
       visitCameraStreamRef.current = stream
       const el = visitVideoRef.current
       if (el) {
+        el.setAttribute('playsinline', 'true')
+        el.setAttribute('webkit-playsinline', 'true')
+        el.muted = true
         el.srcObject = stream
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve())
+        })
         await el.play().catch(() => undefined)
       }
       setVisitCameraOn(true)
     } catch (error) {
+      stream.getTracks().forEach((t) => t.stop())
+      visitCameraStreamRef.current = null
       setMessage(`Cannot open camera: ${(error as Error).message}`)
     }
   }
@@ -882,6 +1077,14 @@ function App() {
     await supabase?.auth.signOut()
     setAuthSession(null)
     localStorage.removeItem('fs_offline_demo')
+    localStorage.removeItem('fs_invited_users')
+    setInvitedUsers([])
+    setTeamProfiles([])
+    setCustomers(supabaseEnabled ? [] : INITIAL_CUSTOMERS)
+    setFollowUps(supabaseEnabled ? [] : INITIAL_FOLLOWUPS)
+    setVisits([])
+    setMeetingResponses([])
+    setLivePoints([])
     setActiveView('dashboard')
     setMobileNavOpen(false)
   }
@@ -901,7 +1104,11 @@ function App() {
       setMessage('That email is already invited.')
       return
     }
-    setInvitedUsers((previous) => [...previous, { email, role: inviteRole, addedAt: new Date().toISOString() }])
+    const addedAt = new Date().toISOString()
+    setInvitedUsers((previous) => [...previous, { email, role: inviteRole, addedAt }])
+    if (supabase) {
+      void supabase.from('app_invites').upsert({ email, role: inviteRole, added_at: addedAt }, { onConflict: 'email' })
+    }
     setInviteEmail('')
     setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They sign in with Google using that email only.`)
   }
@@ -910,6 +1117,7 @@ function App() {
     if (role !== 'owner') return
     const n = normalizeEmail(email)
     setInvitedUsers((previous) => previous.filter((u) => normalizeEmail(u.email) !== n))
+    if (supabase) void supabase.from('app_invites').delete().eq('email', n)
   }
 
   const saveVisit = async () => {
@@ -1015,10 +1223,12 @@ function App() {
     }
 
     setVisits((previous) => [payload, ...previous])
-    setMeetingResponses((previous) => [
-      { id: `m-${Date.now()}`, customerName, salesmanName: activeSalesman.name, response: notes.trim(), createdAt: capturedAt },
-      ...previous,
-    ])
+    if (!supabase || !online) {
+      setMeetingResponses((previous) => [
+        { id: `m-${Date.now()}`, customerName, salesmanName: activeSalesman.name, response: notes.trim(), createdAt: capturedAt },
+        ...previous,
+      ])
+    }
     if (followUpDate) {
       const nextFollowUp: FollowUp = {
         id: `f-${Date.now()}`,
@@ -1045,7 +1255,7 @@ function App() {
     }
 
     if (supabase && online) {
-      const { error } = await supabase.rpc('create_visit_enforced', {
+      const { data: createdVisit, error } = await supabase.rpc('create_visit_enforced', {
         p_customer_id: payload.customerId,
         p_salesman_id: payload.salesmanId,
         p_visit_type: payload.visitType,
@@ -1062,6 +1272,22 @@ function App() {
       if (error) {
         setVisits((previous) => previous.filter((v) => v.id !== payload.id))
         return setMessage(`Visit rejected by server: ${error.message}`)
+      }
+      const visitRowId =
+        createdVisit && typeof createdVisit === 'object' && 'id' in createdVisit
+          ? String((createdVisit as { id: string }).id)
+          : visitId
+      const meetingId = `m-${visitId}`
+      const { error: meetingErr } = await supabase.from('meeting_responses').insert({
+        id: meetingId,
+        customer_name: customerName,
+        salesman_name: activeSalesman.name,
+        response: notes.trim(),
+        created_at: capturedAt,
+        visit_id: visitRowId,
+      })
+      if (meetingErr) {
+        console.warn('meeting_responses insert:', meetingErr.message)
       }
     }
 
@@ -1093,7 +1319,7 @@ function App() {
     setSyncing(true)
 
     for (const visit of queued) {
-      const { error } = await supabase.rpc('create_visit_enforced', {
+      const { data: createdVisit, error } = await supabase.rpc('create_visit_enforced', {
         p_customer_id: visit.customerId,
         p_salesman_id: visit.salesmanId,
         p_visit_type: visit.visitType,
@@ -1108,6 +1334,22 @@ function App() {
         p_follow_up_date: visit.followUpDate || null,
       })
       if (!error) {
+        const visitRowId =
+          createdVisit && typeof createdVisit === 'object' && 'id' in createdVisit
+            ? String((createdVisit as { id: string }).id)
+            : visit.id
+        const { error: meetingErr } = await supabase.from('meeting_responses').upsert(
+          {
+            id: `m-${visit.id}`,
+            customer_name: visit.customerName,
+            salesman_name: visit.salesmanName,
+            response: visit.notes,
+            created_at: visit.capturedAt,
+            visit_id: visitRowId,
+          },
+          { onConflict: 'id' },
+        )
+        if (meetingErr) console.warn('meeting_responses sync:', meetingErr.message)
         setVisits((previous) => previous.map((item) => (item.id === visit.id ? { ...item, status: 'synced' } : item)))
       }
     }
@@ -1732,11 +1974,19 @@ function App() {
     }
   })()
 
-  const showMainApp = Boolean(supabaseEnabled && accessAllowed)
+  const invitesBootPending = Boolean(supabaseEnabled && authSession && !inviteSourceReady)
+  const showMainApp = Boolean(supabaseEnabled && accessAllowed && !invitesBootPending)
   if (supabaseEnabled && !authHydrated) {
     return (
       <div className="authBootScreen">
         <p className="muted">Checking session…</p>
+      </div>
+    )
+  }
+  if (invitesBootPending) {
+    return (
+      <div className="authBootScreen">
+        <p className="muted">Syncing team access…</p>
       </div>
     )
   }

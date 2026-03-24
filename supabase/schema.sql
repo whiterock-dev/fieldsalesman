@@ -1,3 +1,10 @@
+-- Invite list shared across devices (Settings → invited emails).
+create table if not exists app_invites (
+  email text primary key,
+  role text not null check (role in ('owner', 'sub_admin', 'super_salesman', 'salesman')),
+  added_at timestamptz not null default now()
+);
+
 -- Role model.
 create table if not exists profiles (
   id text primary key,
@@ -65,6 +72,17 @@ create table if not exists live_locations (
 create index if not exists idx_followups_salesman_due_date on followups(salesman_id, due_date);
 create index if not exists idx_visits_salesman_captured_at on visits(salesman_id, captured_at desc);
 create index if not exists idx_live_locations_salesman_captured_at on live_locations(salesman_id, captured_at desc);
+
+create table if not exists meeting_responses (
+  id text primary key,
+  customer_name text not null,
+  salesman_name text not null,
+  response text not null,
+  created_at timestamptz not null default now(),
+  visit_id text
+);
+
+create index if not exists idx_meeting_responses_created_at on meeting_responses (created_at desc);
 
 -- Server-side 30m rule for existing customers.
 create or replace function public.create_visit_enforced(

@@ -12,6 +12,11 @@ export const supabase = supabaseEnabled
         autoRefreshToken: true,
         detectSessionInUrl: true,
       },
+      realtime: {
+        params: {
+          eventsPerSecond: 25,
+        },
+      },
     })
   : null
 
