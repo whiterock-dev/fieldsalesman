@@ -55,6 +55,7 @@ create table if not exists visits (
   notes text not null,
   next_action text,
   follow_up_date date,
+  visit_started_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -98,6 +99,7 @@ create or replace function public.create_visit_enforced(
   p_notes text,
   p_next_action text,
   p_follow_up_date date,
+  p_visit_started_at timestamptz default null,
   p_max_gps_accuracy_meters double precision default 30
 )
 returns visits
@@ -156,7 +158,8 @@ begin
     photo_path,
     notes,
     next_action,
-    follow_up_date
+    follow_up_date,
+    visit_started_at
   )
   values (
     p_visit_id,
@@ -171,7 +174,8 @@ begin
     p_photo_path,
     p_notes,
     p_next_action,
-    p_follow_up_date
+    p_follow_up_date,
+    p_visit_started_at
   )
   returning * into v_visit;
 

@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Session } from '@supabase/supabase-js'
+import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { DealerMap } from './components/DealerMap'
 import { LoginScreen } from './components/LoginScreen'
 import { findInviteForEmail, normalizeEmail, type InvitedUser } from './lib/invites'
 import { addableRolesFor, type Role } from './lib/roles'
 import { supabase, supabaseEnabled } from './lib/supabase'
 import { colorForSalesmanId, salesmanColorMap } from './mapColors'
+
+async function resolveVisitPhotoSrc(client: SupabaseClient, stored: string): Promise<string | null> {
+  const t = stored.trim()
+  if (!t) return null
+  if (t.startsWith('data:') || /^https?:\/\//i.test(t)) return t
+  const { data, error } = await client.storage.from('visit-photos').createSignedUrl(t, 3600)
+  if (error || !data?.signedUrl) {
+    console.warn('visit photo signed URL:', error?.message)
+    return null
+  }
+  return data.signedUrl
+}
 
 type TeamProfile = { id: string; fullName: string; role: Role; email?: string }
 type VisitType = 'New lead' | 'Existing customer' | 'Follow-up' | 'Collection' | 'Complaint'
@@ -52,6 +64,22 @@ type VisitRecord = {
   status: VisitStatus
   /** Accuracy ceiling used when saving (30 existing / 80 new lead); needed for offline sync RPC. */
   maxGpsAccuracyMeters?: number
+  /** When the rep tapped Start visit at arrival; `capturedAt` is end/leave (photo) time. */
+  visitStartedAt?: string
+}
+
+type VisitSession = {
+  startGeo: { lat: number; lng: number; accuracy: number; capturedAt: string }
+  selectedCustomerId: string
+  visitType: VisitType
+  quickLead: {
+    name: string
+    phone: string
+    whatsapp: string
+    address: string
+    city: string
+    tags: string
+  }
 }
 type MeetingResponse = { id: string; customerName: string; salesmanName: string; response: string; createdAt: string }
 type LivePoint = { lat: number; lng: number; accuracy: number; time: string; salesmanId?: string }
@@ -259,6 +287,8 @@ function App() {
   /** True when image was taken from live camera with timestamp+GPS already drawn on canvas */
   const [photoHasEmbeddedWatermark, setPhotoHasEmbeddedWatermark] = useState(false)
   const [visitCameraOn, setVisitCameraOn] = useState(false)
+  const [visitPhotoModal, setVisitPhotoModal] = useState<{ src: string; caption: string } | null>(null)
+  const [visitPhotoOpeningId, setVisitPhotoOpeningId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [kpiDateFilter, setKpiDateFilter] = useState('')
   const [kpiSalesmanFilter, setKpiSalesmanFilter] = useState('all')
@@ -270,6 +300,7 @@ function App() {
   const visitCameraStreamRef = useRef<MediaStream | null>(null)
   const visitVideoRef = useRef<HTMLVideoElement>(null)
   const [locationLocking, setLocationLocking] = useState(false)
+  const [visitSession, setVisitSession] = useState<VisitSession | null>(null)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<Role>('salesman')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -609,23 +640,28 @@ function App() {
         })),
       )
 
-      const fromServer: VisitRecord[] = safeVisitRows.map((r) => ({
-        id: r.id as string,
-        customerId: r.customer_id as string,
-        customerName: customerNameById.get(r.customer_id as string) ?? 'Customer',
-        salesmanId: r.salesman_id as string,
-        salesmanName: profileNameById.get(r.salesman_id as string) ?? 'Salesman',
-        lat: Number(r.lat),
-        lng: Number(r.lng),
-        accuracy: Number(r.accuracy_meters),
-        capturedAt: r.captured_at as string,
-        photoDataUrl: (r.photo_path as string) ?? '',
-        visitType: r.visit_type as VisitType,
-        notes: r.notes as string,
-        nextAction: (r.next_action as string) ?? '',
-        followUpDate: (r.follow_up_date as string) ?? undefined,
-        status: 'synced',
-      }))
+      const fromServer: VisitRecord[] = safeVisitRows.map((r) => {
+        const row = r as Record<string, unknown>
+        const started = row.visit_started_at
+        return {
+          id: r.id as string,
+          customerId: r.customer_id as string,
+          customerName: customerNameById.get(r.customer_id as string) ?? 'Customer',
+          salesmanId: r.salesman_id as string,
+          salesmanName: profileNameById.get(r.salesman_id as string) ?? 'Salesman',
+          lat: Number(r.lat),
+          lng: Number(r.lng),
+          accuracy: Number(r.accuracy_meters),
+          capturedAt: r.captured_at as string,
+          photoDataUrl: (r.photo_path as string) ?? '',
+          visitType: r.visit_type as VisitType,
+          notes: r.notes as string,
+          nextAction: (r.next_action as string) ?? '',
+          followUpDate: (r.follow_up_date as string) ?? undefined,
+          status: 'synced' as const,
+          visitStartedAt: typeof started === 'string' && started ? started : undefined,
+        }
+      })
 
       setVisits((previous) => {
         const queued = previous.filter((v) => v.status === 'queued')
@@ -776,6 +812,44 @@ function App() {
     return rows.slice(0, 50)
   }, [role, visits, activeSalesman.id])
 
+  useEffect(() => {
+    if (!visitPhotoModal) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setVisitPhotoModal(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [visitPhotoModal])
+
+  const openVisitPhoto = async (visit: VisitRecord) => {
+    setMessage('')
+    const raw = visit.photoDataUrl?.trim() ?? ''
+    if (!raw) {
+      setMessage('No photo stored for this visit.')
+      return
+    }
+    const caption = `${visit.customerName} · ${visit.salesmanName} · ${new Date(visit.capturedAt).toLocaleString()}`
+    if (raw.startsWith('data:') || /^https?:\/\//i.test(raw)) {
+      setVisitPhotoModal({ src: raw, caption })
+      return
+    }
+    if (!supabase) {
+      setMessage('Configure Supabase to open photos saved to Storage.')
+      return
+    }
+    setVisitPhotoOpeningId(visit.id)
+    try {
+      const url = await resolveVisitPhotoSrc(supabase, raw)
+      if (!url) {
+        setMessage('Could not load photo. Check the visit-photos bucket and Storage policies.')
+        return
+      }
+      setVisitPhotoModal({ src: url, caption })
+    } finally {
+      setVisitPhotoOpeningId(null)
+    }
+  }
+
   const navGrouped = useMemo(() => {
     const visible = NAV_ITEMS.filter((item) => item.show(role))
     const sections = new Map<string, typeof visible>()
@@ -824,6 +898,7 @@ function App() {
     if (activeView !== 'add_visit') {
       locationRequestIdRef.current += 1
       clearVisitLocationWatch()
+      setVisitSession(null)
     }
   }, [activeView, clearVisitLocationWatch])
 
@@ -875,11 +950,17 @@ function App() {
           const capturedAt = new Date().toISOString()
           setGeo({ lat, lng, accuracy: acc, capturedAt })
           setMessage(
-            acc <= GPS_THRESHOLD_METERS
-              ? `Location locked: ±${Math.round(acc)}m — OK for existing customers and new leads.`
-              : acc <= GPS_THRESHOLD_NEW_LEAD_METERS
-                ? `Location locked: ±${Math.round(acc)}m — OK for new lead only (existing customer visits need ≤${GPS_THRESHOLD_METERS}m).`
-                : `Location locked: ±${Math.round(acc)}m — need ≤${GPS_THRESHOLD_NEW_LEAD_METERS}m for new lead, ≤${GPS_THRESHOLD_METERS}m for existing customer.`,
+            visitSession
+              ? acc <= GPS_THRESHOLD_METERS
+                ? `Leave location locked: ±${Math.round(acc)}m — OK to capture photo and end visit.`
+                : acc <= GPS_THRESHOLD_NEW_LEAD_METERS
+                  ? `Leave location locked: ±${Math.round(acc)}m — OK if this visit was a new lead (existing customer needs ≤${GPS_THRESHOLD_METERS}m).`
+                  : `Leave location locked: ±${Math.round(acc)}m — tighten GPS (≤${visitSession.selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS}m) before ending.`
+              : acc <= GPS_THRESHOLD_METERS
+                ? `Arrival locked: ±${Math.round(acc)}m — OK for existing customers and new leads.`
+                : acc <= GPS_THRESHOLD_NEW_LEAD_METERS
+                  ? `Arrival locked: ±${Math.round(acc)}m — OK for new lead only (existing customer visits need ≤${GPS_THRESHOLD_METERS}m).`
+                  : `Arrival locked: ±${Math.round(acc)}m — need ≤${GPS_THRESHOLD_NEW_LEAD_METERS}m for new lead, ≤${GPS_THRESHOLD_METERS}m for existing customer.`,
           )
         },
         (error) => {
@@ -914,7 +995,11 @@ function App() {
   const startVisitCamera = async () => {
     setMessage('')
     if (!geo) {
-      setMessage('Mark visit location first — the photo will include that GPS and timestamps on the image.')
+      setMessage(
+        visitSession
+          ? 'Mark your leave location first — the photo will include that GPS and timestamps on the image.'
+          : 'Mark your arrival location first — after you start the visit you will mark leave location for the photo.',
+      )
       return
     }
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -1012,7 +1097,7 @@ function App() {
     setPhotoPreview(dataUrl)
     setPhotoHasEmbeddedWatermark(true)
     stopVisitCamera()
-    setMessage('Photo saved. Use Retake if you want another shot, or Save visit below.')
+    setMessage('Photo saved. Use Retake if you want another shot, or End visit & save below.')
   }
 
   const clearVisitPhoto = () => {
@@ -1020,6 +1105,58 @@ function App() {
     setPhotoPreview('')
     setPhotoHasEmbeddedWatermark(false)
     stopVisitCamera()
+  }
+
+  const cancelVisitSession = () => {
+    setVisitSession(null)
+    setGeo(null)
+    clearVisitPhoto()
+    setMessage('Visit cancelled.')
+  }
+
+  const startVisitSession = () => {
+    setMessage('')
+    if (visitSession) return
+    if (!geo) return setMessage('Mark your arrival location first.')
+    const maxGpsAccuracy =
+      selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS
+    if (geo.accuracy > maxGpsAccuracy) {
+      return setMessage(
+        selectedCustomerId === 'new'
+          ? `GPS accuracy must be under ${GPS_THRESHOLD_NEW_LEAD_METERS}m to start a new lead visit. Current: ${Math.round(geo.accuracy)}m`
+          : `GPS accuracy must be under ${GPS_THRESHOLD_METERS}m to start an existing-customer visit. Current: ${Math.round(geo.accuracy)}m`,
+      )
+    }
+    if (selectedCustomerId === 'new') {
+      if (!quickLeadName.trim() || !quickLeadPhone.trim()) {
+        return setMessage('Quick lead needs at least name and phone before starting the visit.')
+      }
+    } else {
+      const selectedCustomer = customers.find((item) => item.id === selectedCustomerId)
+      if (!selectedCustomer) return setMessage('Customer not found.')
+      const radius = distanceMeters(geo.lat, geo.lng, selectedCustomer.lat, selectedCustomer.lng)
+      if (radius > RADIUS_THRESHOLD_METERS) {
+        return setMessage(
+          `Outside ${RADIUS_THRESHOLD_METERS}m of the customer pin — move closer to start the visit. Current distance: ${Math.round(radius)}m`,
+        )
+      }
+    }
+    setVisitSession({
+      startGeo: { ...geo },
+      selectedCustomerId,
+      visitType,
+      quickLead: {
+        name: quickLeadName.trim(),
+        phone: quickLeadPhone.trim(),
+        whatsapp: quickLeadWhatsapp.trim() || quickLeadPhone.trim(),
+        address: quickLeadAddress.trim() || 'Address pending',
+        city: quickLeadCity.trim() || 'Unknown',
+        tags: quickLeadTags,
+      },
+    })
+    setGeo(null)
+    clearVisitPhoto()
+    setMessage('Visit started. When you leave, mark your leave location, then photo and notes — tap End visit & save.')
   }
 
   const retakeVisitPhoto = () => {
@@ -1166,14 +1303,16 @@ function App() {
   const saveVisit = async () => {
     setMessage('')
     if (!activeSalesman.id) return setMessage('Sign in again, then save the visit.')
-    if (!geo) return setMessage('Mark visit location before saving.')
+    if (!visitSession) return setMessage('Start a visit at arrival first, then end it when you leave.')
+    if (!geo) return setMessage('Mark your leave location before saving.')
+    const session = visitSession
     const maxGpsAccuracy =
-      selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS
+      session.selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS
     if (geo.accuracy > maxGpsAccuracy) {
       return setMessage(
-        selectedCustomerId === 'new'
-          ? `GPS accuracy must be under ${GPS_THRESHOLD_NEW_LEAD_METERS}m for a new lead. Current: ${Math.round(geo.accuracy)}m`
-          : `GPS accuracy must be under ${GPS_THRESHOLD_METERS}m for an existing customer. Current: ${Math.round(geo.accuracy)}m`,
+        session.selectedCustomerId === 'new'
+          ? `GPS accuracy must be under ${GPS_THRESHOLD_NEW_LEAD_METERS}m when ending a new lead visit. Current: ${Math.round(geo.accuracy)}m`
+          : `GPS accuracy must be under ${GPS_THRESHOLD_METERS}m when ending an existing-customer visit. Current: ${Math.round(geo.accuracy)}m`,
       )
     }
     if (!photoFile) return setMessage('Take a mandatory photo using the camera (gallery upload is not allowed).')
@@ -1199,19 +1338,21 @@ function App() {
     }
 
     let customerName = ''
-    let customerId = selectedCustomerId
+    let customerId = session.selectedCustomerId
     let selectedCustomer: Customer | undefined
+    const visitStartedAt = session.startGeo.capturedAt
 
-    if (selectedCustomerId === 'new') {
-      if (!quickLeadName.trim() || !quickLeadPhone.trim()) return setMessage('Quick lead needs at least name and phone.')
+    if (session.selectedCustomerId === 'new') {
+      const ql = session.quickLead
+      const tagList = ql.tags.split(',').map((item) => item.trim()).filter(Boolean)
       const newCustomer: Customer = {
         id: `c-${Date.now()}`,
-        name: quickLeadName.trim(),
-        phone: quickLeadPhone.trim(),
-        whatsapp: quickLeadWhatsapp.trim() || quickLeadPhone.trim(),
-        address: quickLeadAddress.trim() || 'Address pending',
-        city: quickLeadCity.trim() || 'Unknown',
-        tags: quickLeadTags.split(',').map((item) => item.trim()).filter(Boolean),
+        name: ql.name,
+        phone: ql.phone,
+        whatsapp: ql.whatsapp,
+        address: ql.address,
+        city: ql.city,
+        tags: tagList,
         assignedSalesmanId: activeSalesman.id,
         lat: geo.lat,
         lng: geo.lng,
@@ -1236,15 +1377,15 @@ function App() {
         if (error) return setMessage(`Customer save failed: ${error.message}`)
       }
     } else {
-      selectedCustomer = customers.find((item) => item.id === selectedCustomerId)
+      selectedCustomer = customers.find((item) => item.id === session.selectedCustomerId)
       if (!selectedCustomer) return setMessage('Customer not found.')
       customerName = selectedCustomer.name
     }
 
-    if (selectedCustomer && selectedCustomerId !== 'new') {
+    if (selectedCustomer && session.selectedCustomerId !== 'new') {
       const radius = distanceMeters(geo.lat, geo.lng, selectedCustomer.lat, selectedCustomer.lng)
       if (radius > RADIUS_THRESHOLD_METERS) {
-        return setMessage(`Outside ${RADIUS_THRESHOLD_METERS}m radius. Current distance: ${Math.round(radius)}m`)
+        return setMessage(`Outside ${RADIUS_THRESHOLD_METERS}m radius at leave time. Current distance: ${Math.round(radius)}m`)
       }
     }
 
@@ -1272,12 +1413,13 @@ function App() {
       accuracy: geo.accuracy,
       capturedAt,
       photoDataUrl: photoPath,
-      visitType,
+      visitType: session.visitType,
       notes: notes.trim(),
       nextAction: nextAction.trim(),
       followUpDate: followUpDate || undefined,
       status: online ? 'synced' : 'queued',
       maxGpsAccuracyMeters: maxGpsAccuracy,
+      visitStartedAt,
     }
 
     setVisits((previous) => [payload, ...previous])
@@ -1322,11 +1464,12 @@ function App() {
         p_lat: payload.lat,
         p_lng: payload.lng,
         p_accuracy_meters: payload.accuracy,
-        p_max_gps_accuracy_meters: payload.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
         p_photo_path: payload.photoDataUrl,
         p_notes: payload.notes,
         p_next_action: payload.nextAction || null,
         p_follow_up_date: payload.followUpDate || null,
+        p_visit_started_at: payload.visitStartedAt ?? null,
+        p_max_gps_accuracy_meters: payload.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
       })
       if (error) {
         setVisits((previous) => previous.filter((v) => v.id !== payload.id))
@@ -1350,6 +1493,7 @@ function App() {
       }
     }
 
+    setVisitSession(null)
     setGeo(null)
     setSelectedCustomerId('new')
     setQuickLeadName('')
@@ -1387,11 +1531,12 @@ function App() {
         p_lat: visit.lat,
         p_lng: visit.lng,
         p_accuracy_meters: visit.accuracy,
-        p_max_gps_accuracy_meters: visit.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
         p_photo_path: visit.photoDataUrl,
         p_notes: visit.notes,
         p_next_action: visit.nextAction || null,
         p_follow_up_date: visit.followUpDate || null,
+        p_visit_started_at: visit.visitStartedAt ?? null,
+        p_max_gps_accuracy_meters: visit.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
       })
       if (!error) {
         const visitRowId =
@@ -1417,28 +1562,71 @@ function App() {
     setMessage('Queued visits sync attempt completed.')
   }
 
+  const visitSessionCustomerLabel = visitSession
+    ? visitSession.selectedCustomerId === 'new'
+      ? visitSession.quickLead.name
+      : customers.find((c) => c.id === visitSession.selectedCustomerId)?.name ?? 'Customer'
+    : ''
+
   const visitFormCard = (
     <article className="card visitFormCard">
       <h3>Record visit</h3>
       {!activeSalesman.id ? (
         <p className="muted visit-camera-warn">Could not resolve your user id for this visit. Refresh the page or sign in again.</p>
       ) : null}
-      <p className="muted">
-        <strong>1.</strong> Mark your visit location. <strong>Existing customer:</strong> GPS uncertainty must be ≤{' '}
-        {GPS_THRESHOLD_METERS}m and you must be within {RADIUS_THRESHOLD_METERS}m of their pin. <strong>New lead:</strong>{' '}
-        GPS uncertainty can be up to {GPS_THRESHOLD_NEW_LEAD_METERS}m (no prior pin to match). Laptops often report
-        30–100m; phones work better in the field.
-      </p>
-      <div className="inlineActions">
-        <button type="button" onClick={markVisitLocation} disabled={locationLocking}>
-          {locationLocking ? 'Getting location…' : 'Mark visit location'}
-        </button>
-        {locationLocking ? (
-          <button type="button" className="secondary" onClick={cancelMarkLocation}>
-            Cancel
-          </button>
-        ) : null}
-      </div>
+
+      {visitSession ? (
+        <div className="visit-session-banner" role="status">
+          <p>
+            <strong>Visit in progress</strong> — {visitSessionCustomerLabel} · {visitSession.visitType} · arrived{' '}
+            {new Date(visitSession.startGeo.capturedAt).toLocaleString()}
+          </p>
+          <div className="inlineActions">
+            <button type="button" className="secondary" onClick={cancelVisitSession}>
+              Cancel visit
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {!visitSession ? (
+        <>
+          <p className="muted">
+            <strong>Step 1 — Arrival.</strong> Mark where you arrived. <strong>Existing customer:</strong> GPS uncertainty
+            must be ≤ {GPS_THRESHOLD_METERS}m and you must be within {RADIUS_THRESHOLD_METERS}m of their pin.{' '}
+            <strong>New lead:</strong> GPS uncertainty can be up to {GPS_THRESHOLD_NEW_LEAD_METERS}m. Then choose customer
+            and visit type and tap <strong>Start visit</strong>.
+          </p>
+          <div className="inlineActions">
+            <button type="button" onClick={markVisitLocation} disabled={locationLocking}>
+              {locationLocking ? 'Getting location…' : 'Mark arrival location'}
+            </button>
+            {locationLocking ? (
+              <button type="button" className="secondary" onClick={cancelMarkLocation}>
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="muted">
+            <strong>Step 2 — Leaving.</strong> When you are done, mark your <strong>leave</strong> location (can be the same
+            spot or where you wrap up). Same GPS rules apply. Then add notes, photo, and <strong>End visit &amp; save</strong>.
+          </p>
+          <div className="inlineActions">
+            <button type="button" onClick={markVisitLocation} disabled={locationLocking}>
+              {locationLocking ? 'Getting location…' : 'Mark leave location'}
+            </button>
+            {locationLocking ? (
+              <button type="button" className="secondary" onClick={cancelMarkLocation}>
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </>
+      )}
+
       {locationLocking ? (
         <p className="muted">
           Requesting location (usually under 20s). If this never finishes, tap <strong>Cancel</strong> and check site
@@ -1447,133 +1635,158 @@ function App() {
       ) : null}
       {geo && !locationLocking ? (
         <p className="muted">
-          Locked {new Date(geo.capturedAt).toLocaleString()} | {geo.lat.toFixed(6)}, {geo.lng.toFixed(6)} | ±
-          {Math.round(geo.accuracy)}m
+          {visitSession ? 'Leave' : 'Arrival'} locked {new Date(geo.capturedAt).toLocaleString()} | {geo.lat.toFixed(6)},{' '}
+          {geo.lng.toFixed(6)} | ±{Math.round(geo.accuracy)}m
         </p>
       ) : null}
 
-      <div className="formGrid">
-        <label>
-          Customer
-          <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}>
-            <option value="new">+ Quick create new lead</option>
-            {customers.map((item) => (
-              <option value={item.id} key={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </label>
+      {!visitSession ? (
+        <div className="formGrid">
+          <label>
+            Customer
+            <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}>
+              <option value="new">+ Quick create new lead</option>
+              {customers.map((item) => (
+                <option value={item.id} key={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        {selectedCustomerId === 'new' ? (
-          <>
-            <label>
-              Lead name
-              <input value={quickLeadName} onChange={(event) => setQuickLeadName(event.target.value)} />
-            </label>
-            <label>
-              Phone
-              <input value={quickLeadPhone} onChange={(event) => setQuickLeadPhone(event.target.value)} />
-            </label>
-            <label>
-              WhatsApp
-              <input value={quickLeadWhatsapp} onChange={(event) => setQuickLeadWhatsapp(event.target.value)} />
-            </label>
-            <label>
-              Address
-              <input value={quickLeadAddress} onChange={(event) => setQuickLeadAddress(event.target.value)} />
-            </label>
-            <label>
-              City / area
-              <input value={quickLeadCity} onChange={(event) => setQuickLeadCity(event.target.value)} />
-            </label>
-            <label>
-              Tags (comma separated)
-              <input value={quickLeadTags} onChange={(event) => setQuickLeadTags(event.target.value)} />
-            </label>
-          </>
-        ) : null}
+          {selectedCustomerId === 'new' ? (
+            <>
+              <label>
+                Lead name
+                <input value={quickLeadName} onChange={(event) => setQuickLeadName(event.target.value)} />
+              </label>
+              <label>
+                Phone
+                <input value={quickLeadPhone} onChange={(event) => setQuickLeadPhone(event.target.value)} />
+              </label>
+              <label>
+                WhatsApp
+                <input value={quickLeadWhatsapp} onChange={(event) => setQuickLeadWhatsapp(event.target.value)} />
+              </label>
+              <label>
+                Address
+                <input value={quickLeadAddress} onChange={(event) => setQuickLeadAddress(event.target.value)} />
+              </label>
+              <label>
+                City / area
+                <input value={quickLeadCity} onChange={(event) => setQuickLeadCity(event.target.value)} />
+              </label>
+              <label>
+                Tags (comma separated)
+                <input value={quickLeadTags} onChange={(event) => setQuickLeadTags(event.target.value)} />
+              </label>
+            </>
+          ) : null}
 
-        <label>
-          Visit type
-          <select value={visitType} onChange={(event) => setVisitType(event.target.value as VisitType)}>
-            {VISIT_TYPES.map((item) => (
-              <option value={item} key={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label>
+            Visit type
+            <select value={visitType} onChange={(event) => setVisitType(event.target.value as VisitType)}>
+              {VISIT_TYPES.map((item) => (
+                <option value={item} key={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      ) : (
+        <div className="formGrid">
+          <p className="muted">
+            <strong>Customer:</strong> {visitSessionCustomerLabel}
+            <br />
+            <strong>Visit type:</strong> {visitSession.visitType}
+          </p>
+          <label>
+            Notes
+            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
+          </label>
 
-        <label>
-          Notes
-          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
-        </label>
+          <label>
+            Next action
+            <textarea value={nextAction} onChange={(event) => setNextAction(event.target.value)} />
+          </label>
 
-        <label>
-          Next action
-          <textarea value={nextAction} onChange={(event) => setNextAction(event.target.value)} />
-        </label>
+          <label>
+            Follow-up date
+            <input type="date" value={followUpDate} onChange={(event) => setFollowUpDate(event.target.value)} />
+          </label>
+        </div>
+      )}
 
-        <label>
-          Follow-up date
-          <input type="date" value={followUpDate} onChange={(event) => setFollowUpDate(event.target.value)} />
-        </label>
-      </div>
+      {!visitSession ? (
+        <div className="inlineActions">
+          <button
+            type="button"
+            onClick={startVisitSession}
+            disabled={!geo || locationLocking || !activeSalesman.id}
+          >
+            Start visit
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="visit-camera-block">
+            <h4 className="visit-camera-title">
+              <strong>Photo</strong> (camera only)
+            </h4>
+            <p className="muted">
+              Open the camera and capture. The image includes timestamp and your <strong>leave</strong> location GPS.
+              Gallery is not used. After a shot you can <strong>Retake</strong> or <strong>End visit &amp; save</strong> below.
+            </p>
+            {!geo ? (
+              <p className="muted visit-camera-warn">Mark leave location above before opening the camera.</p>
+            ) : null}
+            <video
+              ref={visitVideoRef}
+              className="visit-camera-video"
+              playsInline
+              muted
+              autoPlay
+              style={{ display: visitCameraOn ? 'block' : 'none' }}
+            />
+            {!photoPreview && !visitCameraOn ? (
+              <div className="visit-camera-actions">
+                <button
+                  type="button"
+                  className="visit-camera-primary"
+                  disabled={!geo || locationLocking}
+                  onClick={() => void startVisitCamera()}
+                >
+                  Open camera
+                </button>
+              </div>
+            ) : null}
+            {visitCameraOn ? (
+              <div className="visit-camera-capture-wrap">
+                <button type="button" className="capture-photo-btn" onClick={() => void captureVisitPhoto()}>
+                  Capture photo
+                </button>
+                <p className="muted capture-hint">Tap once when ready — the photo is saved; you can retake if needed.</p>
+              </div>
+            ) : null}
+            {photoPreview && !visitCameraOn ? (
+              <div className="visit-camera-actions">
+                <button type="button" className="secondary visit-camera-primary" onClick={() => void retakeVisitPhoto()}>
+                  Retake
+                </button>
+              </div>
+            ) : null}
+          </div>
 
-      <div className="visit-camera-block">
-        <h4 className="visit-camera-title">
-          <strong>2.</strong> Mandatory photo (camera only)
-        </h4>
-        <p className="muted">
-          One step: open the camera, then capture. The image is saved with timestamp and your marked GPS on it. Gallery is
-          not used. After a shot you can <strong>Retake</strong> or <strong>Save visit</strong> below.
-        </p>
-        {!geo ? <p className="muted visit-camera-warn">Mark visit location above before opening the camera.</p> : null}
-        <video
-          ref={visitVideoRef}
-          className="visit-camera-video"
-          playsInline
-          muted
-          autoPlay
-          style={{ display: visitCameraOn ? 'block' : 'none' }}
-        />
-        {!photoPreview && !visitCameraOn ? (
-          <div className="visit-camera-actions">
-            <button
-              type="button"
-              className="visit-camera-primary"
-              disabled={!geo || locationLocking}
-              onClick={() => void startVisitCamera()}
-            >
-              Open camera
+          {photoPreview ? <img src={photoPreview} alt="Saved visit photo" className="photoPreview" /> : null}
+
+          <div className="inlineActions">
+            <button type="button" onClick={() => void saveVisit()}>
+              End visit &amp; save
             </button>
           </div>
-        ) : null}
-        {visitCameraOn ? (
-          <div className="visit-camera-capture-wrap">
-            <button type="button" className="capture-photo-btn" onClick={() => void captureVisitPhoto()}>
-              Capture photo
-            </button>
-            <p className="muted capture-hint">Tap once when ready — the photo is saved; you can retake if needed.</p>
-          </div>
-        ) : null}
-        {photoPreview && !visitCameraOn ? (
-          <div className="visit-camera-actions">
-            <button type="button" className="secondary visit-camera-primary" onClick={() => void retakeVisitPhoto()}>
-              Retake
-            </button>
-          </div>
-        ) : null}
-      </div>
-
-      {photoPreview ? <img src={photoPreview} alt="Saved visit photo" className="photoPreview" /> : null}
-
-      <div className="inlineActions">
-        <button type="button" onClick={() => void saveVisit()}>
-          Save visit
-        </button>
-      </div>
+        </>
+      )}
     </article>
   )
 
@@ -1999,17 +2212,22 @@ function App() {
                 <table>
                   <thead>
                     <tr>
-                      <th>Captured</th>
+                      <th>Arrived</th>
+                      <th>Ended</th>
                       <th>Salesman</th>
                       <th>Customer</th>
                       <th>Type</th>
                       <th>GPS</th>
                       <th>Status</th>
+                      <th>Photo</th>
                     </tr>
                   </thead>
                   <tbody>
                     {visitHistoryRows.map((visit) => (
                       <tr key={visit.id}>
+                        <td>
+                          {visit.visitStartedAt ? new Date(visit.visitStartedAt).toLocaleString() : '—'}
+                        </td>
                         <td>{new Date(visit.capturedAt).toLocaleString()}</td>
                         <td>{visit.salesmanName}</td>
                         <td>{visit.customerName}</td>
@@ -2018,6 +2236,16 @@ function App() {
                           {visit.lat.toFixed(4)}, {visit.lng.toFixed(4)} (±{Math.round(visit.accuracy)}m)
                         </td>
                         <td>{visit.status}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="secondary"
+                            disabled={!visit.photoDataUrl?.trim() || visitPhotoOpeningId === visit.id}
+                            onClick={() => void openVisitPhoto(visit)}
+                          >
+                            {visitPhotoOpeningId === visit.id ? 'Opening…' : 'View'}
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2141,6 +2369,30 @@ function App() {
           {mainContent}
         </div>
       </div>
+
+      {visitPhotoModal ? (
+        <div
+          className="visitPhotoModalOverlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Visit photo"
+          onClick={() => setVisitPhotoModal(null)}
+        >
+          <div className="visitPhotoModal" onClick={(e) => e.stopPropagation()}>
+            <div className="visitPhotoModalHeader rowBetween">
+              <p className="visitPhotoModalCaption">{visitPhotoModal.caption}</p>
+              <button type="button" className="secondary" onClick={() => setVisitPhotoModal(null)}>
+                Close
+              </button>
+            </div>
+            <img
+              src={visitPhotoModal.src}
+              alt="Visit photo captured in the field"
+              className="visitPhotoModalImg"
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
