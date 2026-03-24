@@ -168,10 +168,6 @@ const INITIAL_FOLLOWUPS: FollowUp[] = [
   { id: 'f2', customerId: 'c2', dueDate: '2026-03-20', priority: 'medium', status: 'pending', remarks: 'Quotation follow-up', salesmanId: 's2' },
 ]
 
-function timeString(isoDate: string) {
-  return new Date(isoDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-}
-
 function dateString(isoDate: string) {
   return new Date(isoDate).toISOString().slice(0, 10)
 }
@@ -194,30 +190,33 @@ function distanceMeters(aLat: number, aLng: number, bLat: number, bLng: number) 
   return earthRadius * c
 }
 
+function kpiDateTimeLabel(iso: string) {
+  return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
+}
+
 function kpiFromVisits(visits: VisitRecord[], salesmen: Salesman[]): KpiRow[] {
   const grouped = new Map<string, VisitRecord[]>()
   for (const visit of visits) {
     const key = `${visit.salesmanId}-${dateString(visit.capturedAt)}`
     grouped.set(key, [...(grouped.get(key) ?? []), visit])
   }
-  return [...grouped.entries()].map(([key, rows]) => {
-    const [salesmanId, date] = key.split('-').length > 2
-      ? [rows[0].salesmanId, dateString(rows[0].capturedAt)]
-      : key.split('-')
+  return [...grouped.entries()].map(([, rows]) => {
+    const salesmanId = rows[0].salesmanId
+    const date = dateString(rows[0].capturedAt)
     const sorted = rows.slice().sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
-    const first = timeString(sorted[0].capturedAt)
-    const last = timeString(sorted[sorted.length - 1].capturedAt)
+    const firstIso = sorted[0].capturedAt
+    const lastIso = sorted[sorted.length - 1].capturedAt
     const salesmanName = salesmen.find((s) => s.id === salesmanId)?.name ?? rows[0].salesmanName
     return {
       salesmanId,
       salesmanName,
       date,
-      totalWorkingHours: hoursBetween(`${date}T${first}:00`, `${date}T${last}:00`),
-      firstVisitTime: first,
-      lastVisitTime: last,
+      totalWorkingHours: hoursBetween(firstIso, lastIso),
+      firstVisitTime: kpiDateTimeLabel(firstIso),
+      lastVisitTime: kpiDateTimeLabel(lastIso),
       visitCount: sorted.length,
-      startTime: first,
-      endTime: last,
+      startTime: kpiDateTimeLabel(firstIso),
+      endTime: kpiDateTimeLabel(lastIso),
     }
   }).sort((a, b) => b.date.localeCompare(a.date))
 }
@@ -287,10 +286,12 @@ function App() {
     const email = authSession?.user?.email
     if (!email) return false
     if (findInviteForEmail(invitedUsers, email)) return true
+    /** While invites are still loading from Supabase, keep the shell open; sign-out waits until `inviteSourceReady`. */
+    if (supabaseEnabled && !inviteSourceReady) return true
     /** First Google sign-in while invite list is empty becomes owner (effect uses functional update; only one wins). */
     if (invitedUsers.length === 0) return true
     return false
-  }, [authSession, invitedUsers])
+  }, [authSession, invitedUsers, inviteSourceReady])
 
   const role = useMemo<Role>(() => {
     const email = authSession?.user?.email
@@ -344,14 +345,25 @@ function App() {
   }, [])
 
   const activeSalesmanId = useMemo(() => {
-    if (role === 'salesman' || role === 'super_salesman') return authSession?.user?.id ?? ''
-    return salesmen[0]?.id ?? authSession?.user?.id ?? ''
+    const uid = authSession?.user?.id ?? ''
+    if (role === 'salesman' || role === 'super_salesman') return uid
+    /** Owner / sub-admin record visits under their own profile id (same as logged-in account). */
+    if (role === 'owner' || role === 'sub_admin') return uid
+    return salesmen[0]?.id ?? uid
   }, [role, salesmen, authSession?.user?.id])
 
-  const activeSalesman = useMemo(
-    () => salesmen.find((item) => item.id === activeSalesmanId) ?? salesmen[0] ?? { id: '', name: '—' },
-    [activeSalesmanId, salesmen],
-  )
+  const activeSalesman = useMemo(() => {
+    const fromField = salesmen.find((item) => item.id === activeSalesmanId)
+    if (fromField) return fromField
+    const selfProfile = teamProfiles.find((p) => p.id === activeSalesmanId)
+    if (selfProfile) return { id: selfProfile.id, name: selfProfile.fullName }
+    const uid = authSession?.user?.id ?? ''
+    const email = authSession?.user?.email
+    if (activeSalesmanId && (activeSalesmanId === uid || !salesmen.length)) {
+      return { id: activeSalesmanId, name: email ?? 'You' }
+    }
+    return salesmen[0] ?? { id: uid, name: email ?? '—' }
+  }, [activeSalesmanId, salesmen, teamProfiles, authSession?.user?.id, authSession?.user?.email])
 
   const mapColorBySalesmanId = useMemo(() => salesmanColorMap(salesmen), [salesmen])
 
@@ -432,7 +444,8 @@ function App() {
             role: u.role,
             added_at: u.addedAt,
           }))
-          await sb.from('app_invites').upsert(payload, { onConflict: 'email' })
+          const { error: upErr } = await sb.from('app_invites').upsert(payload, { onConflict: 'email' })
+          if (upErr) console.warn('app_invites migrate from localStorage:', upErr.message)
           if (!cancelled) {
             setInvitedUsers(
               local.map((u) => ({
@@ -463,7 +476,9 @@ function App() {
     if (invitedUsers.length === 0) {
       const norm = normalizeEmail(email)
       const addedAt = new Date().toISOString()
-      void sb.from('app_invites').upsert({ email: norm, role: 'owner', added_at: addedAt }, { onConflict: 'email' })
+      void sb.from('app_invites').upsert({ email: norm, role: 'owner', added_at: addedAt }, { onConflict: 'email' }).then(({ error }) => {
+        if (error) console.warn('Bootstrap owner invite:', error.message)
+      })
       setInvitedUsers((prev) => {
         if (prev.length > 0) return prev
         return [{ email: norm, role: 'owner', addedAt }]
@@ -1105,10 +1120,27 @@ function App() {
       return
     }
     const addedAt = new Date().toISOString()
-    setInvitedUsers((previous) => [...previous, { email, role: inviteRole, addedAt }])
     if (supabase) {
-      void supabase.from('app_invites').upsert({ email, role: inviteRole, added_at: addedAt }, { onConflict: 'email' })
+      void (async () => {
+        const { error } = await supabase.from('app_invites').upsert(
+          { email, role: inviteRole, added_at: addedAt },
+          { onConflict: 'email' },
+        )
+        if (error) {
+          setMessage(`Could not save invite: ${error.message}`)
+          return
+        }
+        setInvitedUsers((previous) => {
+          if (previous.some((u) => normalizeEmail(u.email) === email)) return previous
+          return [...previous, { email, role: inviteRole, addedAt }]
+        })
+        setInviteEmail('')
+        setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They sign in with Google using that email only.`)
+        scheduleWorkspaceReloadRef.current?.()
+      })()
+      return
     }
+    setInvitedUsers((previous) => [...previous, { email, role: inviteRole, addedAt }])
     setInviteEmail('')
     setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They sign in with Google using that email only.`)
   }
@@ -1116,14 +1148,24 @@ function App() {
   const removeInvitedUser = (email: string) => {
     if (role !== 'owner') return
     const n = normalizeEmail(email)
+    if (supabase) {
+      void (async () => {
+        const { error } = await supabase.from('app_invites').delete().eq('email', n)
+        if (error) {
+          setMessage(`Could not remove invite: ${error.message}`)
+          return
+        }
+        setInvitedUsers((previous) => previous.filter((u) => normalizeEmail(u.email) !== n))
+        scheduleWorkspaceReloadRef.current?.()
+      })()
+      return
+    }
     setInvitedUsers((previous) => previous.filter((u) => normalizeEmail(u.email) !== n))
-    if (supabase) void supabase.from('app_invites').delete().eq('email', n)
   }
 
   const saveVisit = async () => {
     setMessage('')
-    if (!activeSalesman.id)
-      return setMessage('Add a field user (invite their email in Settings) or ensure a salesman exists before saving visits.')
+    if (!activeSalesman.id) return setMessage('Sign in again, then save the visit.')
     if (!geo) return setMessage('Mark visit location before saving.')
     const maxGpsAccuracy =
       selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS
@@ -1360,11 +1402,8 @@ function App() {
   const visitFormCard = (
     <article className="card visitFormCard">
       <h3>Record visit</h3>
-      {!salesmen.length ? (
-        <p className="muted visit-camera-warn">
-          Invite at least one <strong>salesman</strong> or <strong>super-salesman</strong> in <strong>Settings</strong> before
-          recording visits.
-        </p>
+      {!activeSalesman.id ? (
+        <p className="muted visit-camera-warn">Could not resolve your user id for this visit. Refresh the page or sign in again.</p>
       ) : null}
       <p className="muted">
         <strong>1.</strong> Mark your visit location. <strong>Existing customer:</strong> GPS uncertainty must be ≤{' '}
@@ -1974,19 +2013,11 @@ function App() {
     }
   })()
 
-  const invitesBootPending = Boolean(supabaseEnabled && authSession && !inviteSourceReady)
-  const showMainApp = Boolean(supabaseEnabled && accessAllowed && !invitesBootPending)
+  const showMainApp = Boolean(supabaseEnabled && accessAllowed)
   if (supabaseEnabled && !authHydrated) {
     return (
       <div className="authBootScreen">
         <p className="muted">Checking session…</p>
-      </div>
-    )
-  }
-  if (invitesBootPending) {
-    return (
-      <div className="authBootScreen">
-        <p className="muted">Syncing team access…</p>
       </div>
     )
   }
