@@ -23,7 +23,7 @@ async function resolveVisitPhotoSrc(client: SupabaseClient, stored: string): Pro
   return data.signedUrl
 }
 
-type TeamProfile = { id: string; fullName: string; role: Role; email?: string }
+type TeamProfile = { id: string; fullName: string; role: Role; email?: string; phone?: string }
 type VisitType = 'New lead' | 'Existing customer' | 'Follow-up' | 'Collection' | 'Complaint'
 type VisitStatus = 'synced' | 'queued'
 type FollowUpStatus = 'pending' | 'in_progress' | 'closed'
@@ -83,7 +83,14 @@ type VisitSession = {
     city: string
   }
 }
-type MeetingResponse = { id: string; customerName: string; salesmanName: string; response: string; createdAt: string }
+type MeetingResponse = {
+  id: string
+  customerName: string
+  salesmanName: string
+  response: string
+  createdAt: string
+  visitId?: string
+}
 type LivePoint = { lat: number; lng: number; accuracy: number; time: string; salesmanId?: string }
 type KpiRow = {
   salesmanId: string
@@ -276,6 +283,7 @@ function App() {
   const [quickLeadPhone, setQuickLeadPhone] = useState('')
   const [quickLeadAddress, setQuickLeadAddress] = useState('')
   const [quickLeadCity, setQuickLeadCity] = useState('')
+  const [visitCustomerSearch, setVisitCustomerSearch] = useState('')
   const [notes, setNotes] = useState('')
   const [nextAction, setNextAction] = useState('')
   const [followUpDate, setFollowUpDate] = useState('')
@@ -301,6 +309,8 @@ function App() {
   const [locationLocking, setLocationLocking] = useState(false)
   const [visitSession, setVisitSession] = useState<VisitSession | null>(null)
   const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteName, setInviteName] = useState('')
+  const [invitePhone, setInvitePhone] = useState('')
   /** Default per product spec: owner/sub-admin assign access with Owner pre-selected (still changeable). */
   const [inviteRole, setInviteRole] = useState<Role>('owner')
   const [invitePassword, setInvitePassword] = useState('')
@@ -309,6 +319,13 @@ function App() {
   const [settingsNewPassword, setSettingsNewPassword] = useState('')
   const [settingsConfirmPassword, setSettingsConfirmPassword] = useState('')
   const [settingsPasswordMessage, setSettingsPasswordMessage] = useState('')
+  const [visitHistoryDateFilter, setVisitHistoryDateFilter] = useState('')
+  const [visitHistorySalesmanFilter, setVisitHistorySalesmanFilter] = useState('all')
+  const [visitHistoryClientFilter, setVisitHistoryClientFilter] = useState('')
+  const [visitHistoryCityFilter, setVisitHistoryCityFilter] = useState('')
+  const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
+  const [meetingDateFilter, setMeetingDateFilter] = useState('')
+  const [salesmanFollowUpDateFilter, setSalesmanFollowUpDateFilter] = useState('')
 
   const salesmen = useMemo(
     () =>
@@ -568,20 +585,21 @@ function App() {
     if (!matched) return
     const displayName =
       (authSession.user.user_metadata?.full_name as string | undefined) || authSession.user.email || 'User'
+    const accountPhone = String((authSession.user.user_metadata?.phone as string | undefined) ?? '').trim()
     const uid = authSession.user.id
     void (async () => {
       const accountEmail = normalizeEmail(authSession.user.email ?? '')
       const { data: existing } = await supabase.from('profiles').select('id').eq('id', uid).maybeSingle()
       if (!existing) {
         const { error } = await supabase.from('profiles').upsert(
-          { id: uid, full_name: displayName, role: matched.role, email: accountEmail },
+          { id: uid, full_name: displayName, role: matched.role, email: accountEmail, phone: accountPhone || null },
           { onConflict: 'id' },
         )
         if (error) console.warn('Profile bootstrap:', error.message)
       } else {
         const { error } = await supabase
           .from('profiles')
-          .update({ full_name: displayName, email: accountEmail })
+          .update({ full_name: displayName, email: accountEmail, phone: accountPhone || null })
           .eq('id', uid)
         if (error) console.warn('Profile name update:', error.message)
       }
@@ -620,7 +638,7 @@ function App() {
         { data: liveRows, error: liveErr },
       ] = await Promise.all([
         sb.from('app_invites').select('email, role, added_at').order('added_at', { ascending: true }),
-        sb.from('profiles').select('id, full_name, role, email'),
+        sb.from('profiles').select('id, full_name, role, email, phone'),
         sb.from('customers').select('*').order('created_at', { ascending: false }),
         sb.from('followups').select('*').order('due_date', { ascending: true }),
         sb.from('visits').select('*').order('captured_at', { ascending: false }).limit(200),
@@ -680,11 +698,13 @@ function App() {
           const name = (r.full_name as string) ?? 'User'
           profileNameById.set(r.id as string, name)
           const rawEmail = (r as { email?: string | null }).email
+          const rawPhone = (r as { phone?: string | null }).phone
           return {
             id: r.id as string,
             fullName: name,
             role: (r.role as Role) ?? 'salesman',
             email: rawEmail && typeof rawEmail === 'string' ? normalizeEmail(rawEmail) : undefined,
+            phone: rawPhone && typeof rawPhone === 'string' ? rawPhone : undefined,
           }
         }),
       )
@@ -760,6 +780,7 @@ function App() {
           salesmanName: r.salesman_name as string,
           response: r.response as string,
           createdAt: r.created_at as string,
+          visitId: (r.visit_id as string) ?? undefined,
         })),
       )
 
@@ -838,13 +859,53 @@ function App() {
     () => followUps.filter((item) => item.salesmanId === activeSalesman.id && item.status !== 'closed').sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
     [activeSalesman.id, followUps],
   )
-  const overdueBySalesman = useMemo(() => {
+  const customerById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers])
+  const visitById = useMemo(() => new Map(visits.map((v) => [v.id, v])), [visits])
+  const latestVisitByCustomerId = useMemo(() => {
+    const map = new Map<string, VisitRecord>()
+    for (const v of visits) {
+      const current = map.get(v.customerId)
+      if (!current || v.capturedAt > current.capturedAt) map.set(v.customerId, v)
+    }
+    return map
+  }, [visits])
+  const overdueRowsDetailed = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
-    return salesmen.map((salesman) => ({
-      salesman,
-      overdue: followUps.filter((item) => item.salesmanId === salesman.id && item.status !== 'closed' && item.dueDate < today),
-    }))
-  }, [followUps, salesmen])
+    return followUps
+      .filter((item) => item.status !== 'closed' && item.dueDate < today)
+      .map((item) => {
+        const customer = customerById.get(item.customerId)
+        const lastVisit = latestVisitByCustomerId.get(item.customerId)
+        const salesmanName = salesmen.find((s) => s.id === item.salesmanId)?.name ?? 'Salesman'
+        return {
+          ...item,
+          salesmanName,
+          customerName: customer?.name ?? 'Unknown customer',
+          customerCity: customer?.city ?? '—',
+          customerPhone: customer?.phone ?? '—',
+          lastVisitType: lastVisit?.visitType ?? '—',
+          lastVisitAt: lastVisit?.capturedAt ?? '',
+          lastVisitNotes: lastVisit?.notes ?? '',
+        }
+      })
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+  }, [followUps, customerById, latestVisitByCustomerId, salesmen])
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), [])
+  const followUpsDueTodayForSalesman = useMemo(
+    () => pendingFollowUpsForSalesman.filter((item) => item.dueDate === todayIso),
+    [pendingFollowUpsForSalesman, todayIso],
+  )
+  const overdueFollowUpsForSalesman = useMemo(
+    () => pendingFollowUpsForSalesman.filter((item) => item.dueDate < todayIso),
+    [pendingFollowUpsForSalesman, todayIso],
+  )
+  const filteredPendingFollowUpsForSalesman = useMemo(
+    () =>
+      pendingFollowUpsForSalesman.filter((item) =>
+        salesmanFollowUpDateFilter ? item.dueDate === salesmanFollowUpDateFilter : true,
+      ),
+    [pendingFollowUpsForSalesman, salesmanFollowUpDateFilter],
+  )
   const kpiRows = useMemo(() => kpiFromVisits(visits, salesmen), [visits, salesmen])
   const filteredKpiRows = useMemo(
     () => kpiRows.filter((row) => (!kpiDateFilter || row.date === kpiDateFilter) && (kpiSalesmanFilter === 'all' || row.salesmanId === kpiSalesmanFilter)),
@@ -857,6 +918,11 @@ function App() {
     if (role === 'salesman') return customers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
     return customers
   }, [role, customers, activeSalesman.id])
+  const filteredMapCustomers = useMemo(() => {
+    if (role !== 'owner' && role !== 'sub_admin') return mapCustomers
+    if (mapSalesmanFilter === 'all') return mapCustomers
+    return mapCustomers.filter((c) => c.assignedSalesmanId === mapSalesmanFilter)
+  }, [role, mapCustomers, mapSalesmanFilter])
 
   const mapLivePoints = useMemo(() => {
     if (role === 'salesman') return livePoints.filter((p) => p.salesmanId === activeSalesman.id)
@@ -893,6 +959,11 @@ function App() {
       salesmanId: v.salesmanId,
     }))
   }, [role, visits, activeSalesman.id, teamProfiles])
+  const filteredMapRecentVisits = useMemo(() => {
+    if (role !== 'owner' && role !== 'sub_admin') return mapRecentVisits
+    if (mapSalesmanFilter === 'all') return mapRecentVisits
+    return mapRecentVisits.filter((v) => v.salesmanId === mapSalesmanFilter)
+  }, [role, mapRecentVisits, mapSalesmanFilter])
 
   const visitHistoryRows = useMemo(() => {
     const rows = role === 'salesman' ? visits.filter((v) => v.salesmanId === activeSalesman.id) : visits
@@ -903,8 +974,28 @@ function App() {
       seen.add(v.id)
       out.push(v)
     }
-    return out.slice(0, 50)
-  }, [role, visits, activeSalesman.id])
+    const filtered = out.filter((v) => {
+      const d = v.capturedAt.slice(0, 10)
+      const city = (customerById.get(v.customerId)?.city ?? '').toLowerCase()
+      const client = v.customerName.toLowerCase()
+      const cityQ = visitHistoryCityFilter.trim().toLowerCase()
+      const clientQ = visitHistoryClientFilter.trim().toLowerCase()
+      return (
+        (!visitHistoryDateFilter || d === visitHistoryDateFilter) &&
+        (visitHistorySalesmanFilter === 'all' || v.salesmanId === visitHistorySalesmanFilter) &&
+        (!clientQ || client.includes(clientQ)) &&
+        (!cityQ || city.includes(cityQ))
+      )
+    })
+    return filtered.slice(0, 100)
+  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilter, visitHistoryCityFilter])
+  const filteredMeetingResponses = useMemo(
+    () =>
+      meetingResponses.filter((m) =>
+        meetingDateFilter ? m.createdAt.slice(0, 10) === meetingDateFilter : true,
+      ),
+    [meetingResponses, meetingDateFilter],
+  )
 
   useEffect(() => {
     if (!visitPhotoModal) return
@@ -1362,9 +1453,19 @@ function App() {
   const addInvitedUser = () => {
     setMessage('')
     setInviteSuccessMessage('')
+    const fullName = inviteName.trim()
     const email = normalizeEmail(inviteEmail)
+    const phone = invitePhone.trim()
+    if (!fullName) {
+      setMessage('Enter full name.')
+      return
+    }
     if (!email.includes('@')) {
       setMessage('Enter a valid email address.')
+      return
+    }
+    if (phone && !/^[0-9+\-\s]{7,20}$/.test(phone)) {
+      setMessage('Enter a valid phone number (digits, +, -, space).')
       return
     }
     if (!addableTeamRoles.includes(inviteRole)) {
@@ -1387,7 +1488,7 @@ function App() {
       }
       void (async () => {
         const { data, error } = await supabase.functions.invoke('invite-user-with-password', {
-          body: { email, role: inviteRole, password: invitePassword },
+          body: { fullName, email, phone, role: inviteRole, password: invitePassword },
         })
         if (error) {
           const status = error instanceof FunctionsHttpError ? error.context?.status : undefined
@@ -1413,19 +1514,23 @@ function App() {
           if (previous.some((u) => normalizeEmail(u.email) === email)) return previous
           return [...previous, { email, role: inviteRole, addedAt }]
         })
+        setInviteName('')
         setInviteEmail('')
+        setInvitePhone('')
         setInvitePassword('')
         setInvitePasswordConfirm('')
         setInviteSuccessMessage(
-          `Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They can sign in with that email and the password you set (they can change it under Settings).`,
+          `Invited ${fullName} (${email}) as ${inviteRole.replace(/_/g, ' ')}. They can sign in with that email and the password you set (they can change it under Settings).`,
         )
         scheduleWorkspaceReloadRef.current?.()
       })()
       return
     }
     setInvitedUsers((previous) => [...previous, { email, role: inviteRole, addedAt }])
+    setInviteName('')
     setInviteEmail('')
-    setInviteSuccessMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')} (offline demo).`)
+    setInvitePhone('')
+    setInviteSuccessMessage(`Invited ${fullName} (${email}) as ${inviteRole.replace(/_/g, ' ')} (offline demo).`)
   }
 
   const removeInvitedUser = (email: string) => {
@@ -1473,7 +1578,7 @@ function App() {
         authSession?.user?.email ||
         activeSalesman.name
       const { error: profileErr } = await supabase.from('profiles').upsert(
-        { id: activeSalesman.id, full_name: displayName, role },
+        { id: activeSalesman.id, full_name: displayName, role, email: normalizeEmail(authSession?.user?.email ?? '') },
         { onConflict: 'id' },
       )
       if (profileErr) {
@@ -1791,14 +1896,32 @@ function App() {
       {!visitSession ? (
         <div className="formGrid">
           <label>
+            Search customer
+            <input
+              value={visitCustomerSearch}
+              onChange={(event) => setVisitCustomerSearch(event.target.value)}
+              placeholder="Name, phone, city"
+            />
+          </label>
+          <label>
             Customer
             <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}>
               <option value="new">+ Quick create new lead</option>
-              {customers.map((item) => (
+              {customers
+                .filter((item) => {
+                  const q = visitCustomerSearch.trim().toLowerCase()
+                  if (!q) return true
+                  return (
+                    item.name.toLowerCase().includes(q) ||
+                    item.phone.toLowerCase().includes(q) ||
+                    item.city.toLowerCase().includes(q)
+                  )
+                })
+                .map((item) => (
                 <option value={item.id} key={item.id}>
-                  {item.name}
+                  {item.name} ({item.city})
                 </option>
-              ))}
+                ))}
             </select>
           </label>
 
@@ -1847,7 +1970,7 @@ function App() {
           </label>
 
           <label>
-            Next action
+            Next action / remarks
             <textarea value={nextAction} onChange={(event) => setNextAction(event.target.value)} />
           </label>
 
@@ -1953,6 +2076,16 @@ function App() {
                   <button type="button" className="secondary" onClick={() => setActiveView('visits')}>
                     Visit history
                   </button>
+                  {role !== 'salesman' ? (
+                    <>
+                      <button type="button" className="secondary" onClick={() => setActiveView('admin_overdue')}>
+                        Overdue follow-ups
+                      </button>
+                      <button type="button" className="secondary" onClick={() => setActiveView('admin_meetings')}>
+                        Meeting responses
+                      </button>
+                    </>
+                  ) : null}
                   {NAV_ITEMS.find((i) => i.id === 'add_visit')?.show(role) ? (
                     <button type="button" onClick={() => setActiveView('add_visit')}>
                       Add visit
@@ -1960,6 +2093,32 @@ function App() {
                   ) : null}
                 </div>
               </article>
+              {(role === 'owner' || role === 'sub_admin') && (
+                <article className="card">
+                  <h3>Admin metrics</h3>
+                  <p className="muted">Field salesmen: {salesmen.length}</p>
+                  <p className="muted">Total visits: {visits.length}</p>
+                  <p className="muted">Visits today: {visits.filter((v) => v.capturedAt.slice(0, 10) === todayIso).length}</p>
+                </article>
+              )}
+              {(role === 'salesman' || role === 'super_salesman') && (
+                <article className="card">
+                  <h3>Follow-up snapshot</h3>
+                  <div className="inlineFilters">
+                    <label>
+                      Follow-up date
+                      <input
+                        type="date"
+                        value={salesmanFollowUpDateFilter}
+                        onChange={(event) => setSalesmanFollowUpDateFilter(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <p className="muted">Due today: {followUpsDueTodayForSalesman.length}</p>
+                  <p className="muted">Overdue: {overdueFollowUpsForSalesman.length}</p>
+                  <p className="muted">Matching selected date: {filteredPendingFollowUpsForSalesman.length}</p>
+                </article>
+              )}
             </div>
           </section>
         )
@@ -1971,6 +2130,21 @@ function App() {
               Each salesman has a consistent color on customer pins and on recent visit dots (field salesmen only).
               Unassigned customers use gray. Live GPS pings are on the Live tracking screen, not here.
             </p>
+            {(role === 'owner' || role === 'sub_admin') && salesmen.length ? (
+              <div className="inlineFilters">
+                <label>
+                  Field salesman
+                  <select value={mapSalesmanFilter} onChange={(event) => setMapSalesmanFilter(event.target.value)}>
+                    <option value="all">All field salesmen</option>
+                    {salesmen.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : null}
             {salesmen.length ? (
               <div className="mapColorKey">
                 {salesmen.map((s) => (
@@ -1986,7 +2160,7 @@ function App() {
               </div>
             ) : null}
             <DealerMap
-              customers={mapCustomers.map((c) => ({
+              customers={filteredMapCustomers.map((c) => ({
                 id: c.id,
                 name: c.name,
                 city: c.city,
@@ -1996,7 +2170,7 @@ function App() {
                 salesmanName: salesmen.find((x) => x.id === c.assignedSalesmanId)?.name,
               }))}
               livePoints={[]}
-              recentVisits={mapRecentVisits}
+              recentVisits={filteredMapRecentVisits}
               salesmen={salesmen}
             />
           </section>
@@ -2013,22 +2187,48 @@ function App() {
           <section className="panel">
             <h2>Overdue follow-ups</h2>
             <article className="card">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Salesman</th>
-                    <th>Overdue count</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {overdueBySalesman.map(({ salesman, overdue }) => (
-                    <tr key={salesman.id}>
-                      <td>{salesman.name}</td>
-                      <td>{overdue.length}</td>
+              <div className="scrollArea">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Salesman</th>
+                      <th>Client</th>
+                      <th>City</th>
+                      <th>Phone</th>
+                      <th>Due date</th>
+                      <th>Priority</th>
+                      <th>Status</th>
+                      <th>Remarks</th>
+                      <th>Last visit</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {overdueRowsDetailed.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="muted">
+                          No overdue follow-ups.
+                        </td>
+                      </tr>
+                    ) : (
+                      overdueRowsDetailed.map((row) => (
+                        <tr key={row.id}>
+                          <td>{row.salesmanName}</td>
+                          <td>{row.customerName}</td>
+                          <td>{row.customerCity}</td>
+                          <td>{row.customerPhone}</td>
+                          <td>{row.dueDate}</td>
+                          <td>{row.priority}</td>
+                          <td>{row.status}</td>
+                          <td>{row.remarks || '—'}</td>
+                          <td>
+                            {row.lastVisitAt ? `${new Date(row.lastVisitAt).toLocaleDateString()} (${row.lastVisitType})` : '—'}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </article>
           </section>
         )
@@ -2037,6 +2237,12 @@ function App() {
           <section className="panel">
             <h2>Meeting responses</h2>
             <article className="card">
+              <div className="inlineFilters">
+                <label>
+                  Date
+                  <input type="date" value={meetingDateFilter} onChange={(event) => setMeetingDateFilter(event.target.value)} />
+                </label>
+              </div>
               <div className="scrollArea">
                 <table>
                   <thead>
@@ -2045,15 +2251,17 @@ function App() {
                       <th>Salesman</th>
                       <th>Customer</th>
                       <th>Response</th>
+                      <th>Next action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {meetingResponses.slice(0, 50).map((item) => (
+                    {filteredMeetingResponses.slice(0, 80).map((item) => (
                       <tr key={item.id}>
                         <td>{new Date(item.createdAt).toLocaleString()}</td>
                         <td>{item.salesmanName}</td>
                         <td>{item.customerName}</td>
                         <td>{item.response}</td>
+                        <td>{(item.visitId && visitById.get(item.visitId)?.nextAction) || '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2150,6 +2358,14 @@ function App() {
                 </p>
                 <div className="formGrid">
                   <label>
+                    Full name
+                    <input
+                      value={inviteName}
+                      onChange={(event) => setInviteName(event.target.value)}
+                      placeholder="User full name"
+                    />
+                  </label>
+                  <label>
                     Email
                     <input
                       type="email"
@@ -2168,6 +2384,14 @@ function App() {
                         </option>
                       ))}
                     </select>
+                  </label>
+                  <label>
+                    Phone number
+                    <input
+                      value={invitePhone}
+                      onChange={(event) => setInvitePhone(event.target.value)}
+                      placeholder="+91 98xxxxxx"
+                    />
                   </label>
                   {supabaseEnabled ? (
                     <>
@@ -2266,6 +2490,7 @@ function App() {
                       <tr>
                         <th>Name</th>
                         <th>Email</th>
+                        <th>Phone</th>
                         <th>Role</th>
                         <th>User id</th>
                       </tr>
@@ -2273,7 +2498,7 @@ function App() {
                     <tbody>
                       {teamProfiles.length === 0 ? (
                         <tr>
-                          <td colSpan={4} className="muted">
+                          <td colSpan={5} className="muted">
                             No profiles loaded yet. Data loads from Supabase after sign-in.
                           </td>
                         </tr>
@@ -2285,6 +2510,7 @@ function App() {
                             <tr key={p.id}>
                               <td>{p.fullName}</td>
                               <td className="muted settingsEmailCell">{p.email ?? '—'}</td>
+                              <td>{p.phone || '—'}</td>
                               <td>
                                 <span className="roleBadge">{p.role.replace(/_/g, ' ')}</span>
                               </td>
@@ -2354,8 +2580,21 @@ function App() {
           <section className="panel">
             <h2>Pending follow-ups</h2>
             <article className="card">
+              <div className="inlineFilters">
+                <label>
+                  Follow-up date
+                  <input
+                    type="date"
+                    value={salesmanFollowUpDateFilter}
+                    onChange={(event) => setSalesmanFollowUpDateFilter(event.target.value)}
+                  />
+                </label>
+              </div>
+              <p className="muted">
+                Due today: {followUpsDueTodayForSalesman.length} · Overdue: {overdueFollowUpsForSalesman.length}
+              </p>
               <ul className="list">
-                {pendingFollowUpsForSalesman.map((item) => {
+                {filteredPendingFollowUpsForSalesman.map((item) => {
                   const customer = customers.find((entry) => entry.id === item.customerId)
                   return (
                     <li key={item.id}>
@@ -2439,6 +2678,42 @@ function App() {
           <section className="panel">
             <h2>Visit history</h2>
             <article className="card">
+              <div className="inlineFilters">
+                <label>
+                  Date
+                  <input type="date" value={visitHistoryDateFilter} onChange={(event) => setVisitHistoryDateFilter(event.target.value)} />
+                </label>
+                <label>
+                  Salesman
+                  <select
+                    value={visitHistorySalesmanFilter}
+                    onChange={(event) => setVisitHistorySalesmanFilter(event.target.value)}
+                  >
+                    <option value="all">All</option>
+                    {salesmen.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Client name
+                  <input
+                    value={visitHistoryClientFilter}
+                    onChange={(event) => setVisitHistoryClientFilter(event.target.value)}
+                    placeholder="Search client"
+                  />
+                </label>
+                <label>
+                  City
+                  <input
+                    value={visitHistoryCityFilter}
+                    onChange={(event) => setVisitHistoryCityFilter(event.target.value)}
+                    placeholder="Search city"
+                  />
+                </label>
+              </div>
               <div className="scrollArea">
                 <table>
                   <thead>
@@ -2447,6 +2722,7 @@ function App() {
                       <th>Ended</th>
                       <th>Salesman</th>
                       <th>Customer</th>
+                      <th>City</th>
                       <th>Type</th>
                       <th>GPS</th>
                       <th>Status</th>
@@ -2462,6 +2738,7 @@ function App() {
                         <td>{new Date(visit.capturedAt).toLocaleString()}</td>
                         <td>{visit.salesmanName}</td>
                         <td>{visit.customerName}</td>
+                        <td>{customerById.get(visit.customerId)?.city ?? '—'}</td>
                         <td>{visit.visitType}</td>
                         <td>
                           {visit.lat.toFixed(4)}, {visit.lng.toFixed(4)} (±{Math.round(visit.accuracy)}m){' '}
