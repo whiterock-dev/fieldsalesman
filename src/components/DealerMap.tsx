@@ -6,6 +6,7 @@ import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import { colorForSalesmanId, salesmanColorMap, UNASSIGNED_PIN_COLOR } from '../mapColors'
+import { googleMapsSearchUrl } from '../lib/maps'
 
 const DefaultIcon = L.icon({
   iconUrl: markerIcon,
@@ -147,6 +148,10 @@ export function DealerMap({
               <span style={{ fontSize: '0.9em', color: '#334155' }}>
                 Salesman: {c.salesmanName ?? '—'}
               </span>
+              <br />
+              <a href={googleMapsSearchUrl(c.lat, c.lng)} target="_blank" rel="noopener noreferrer">
+                Open in Google Maps
+              </a>
             </Popup>
           </Marker>
         ))}
@@ -195,6 +200,10 @@ export function DealerMap({
               <span style={{ fontSize: '0.9em', color: '#334155' }}>Salesman: {v.salesmanName}</span>
               <br />
               {new Date(v.capturedAt).toLocaleString()}
+              <br />
+              <a href={googleMapsSearchUrl(v.lat, v.lng)} target="_blank" rel="noopener noreferrer">
+                Open in Google Maps
+              </a>
             </Popup>
           </Marker>
         ))}

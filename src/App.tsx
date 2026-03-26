@@ -9,6 +9,7 @@ import { formatSignInError } from './lib/authMessages'
 import { isValidPassword, PASSWORD_POLICY_HINT } from './lib/passwordPolicy'
 import { supabase, supabaseEnabled } from './lib/supabase'
 import { colorForSalesmanId, salesmanColorMap } from './mapColors'
+import { googleMapsSearchUrl } from './lib/maps'
 
 async function resolveVisitPhotoSrc(client: SupabaseClient, stored: string): Promise<string | null> {
   const t = stored.trim()
@@ -300,7 +301,8 @@ function App() {
   const [locationLocking, setLocationLocking] = useState(false)
   const [visitSession, setVisitSession] = useState<VisitSession | null>(null)
   const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState<Role>('salesman')
+  /** Default per product spec: owner/sub-admin assign access with Owner pre-selected (still changeable). */
+  const [inviteRole, setInviteRole] = useState<Role>('owner')
   const [invitePassword, setInvitePassword] = useState('')
   const [invitePasswordConfirm, setInvitePasswordConfirm] = useState('')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -329,10 +331,16 @@ function App() {
 
   const role = useMemo<Role>(() => {
     const email = authSession?.user?.email
+    const uid = authSession?.user?.id
     if (!email) return 'salesman'
     const inv = findInviteForEmail(invitedUsers, email)
-    return inv?.role ?? 'salesman'
-  }, [authSession, invitedUsers])
+    if (inv?.role) return inv.role
+    if (uid) {
+      const prof = teamProfiles.find((p) => p.id === uid)
+      if (prof?.role) return prof.role
+    }
+    return 'salesman'
+  }, [authSession, invitedUsers, teamProfiles])
 
   const addableTeamRoles = useMemo(() => addableRolesFor(role), [role])
   const canInviteTeam = addableTeamRoles.length > 0
@@ -736,8 +744,13 @@ function App() {
         const queued = previous.filter((v) => v.status === 'queued')
         const serverIds = new Set(fromServer.map((v) => v.id))
         const merged = [...fromServer, ...queued.filter((q) => !serverIds.has(q.id))]
-        merged.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
-        return merged
+        const byId = new Map<string, VisitRecord>()
+        for (const v of merged) {
+          if (!byId.has(v.id)) byId.set(v.id, v)
+        }
+        const deduped = [...byId.values()]
+        deduped.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
+        return deduped
       })
 
       setMeetingResponses(
@@ -883,7 +896,14 @@ function App() {
 
   const visitHistoryRows = useMemo(() => {
     const rows = role === 'salesman' ? visits.filter((v) => v.salesmanId === activeSalesman.id) : visits
-    return rows.slice(0, 50)
+    const seen = new Set<string>()
+    const out: VisitRecord[] = []
+    for (const v of rows) {
+      if (seen.has(v.id)) continue
+      seen.add(v.id)
+      out.push(v)
+    }
+    return out.slice(0, 50)
   }, [role, visits, activeSalesman.id])
 
   useEffect(() => {
@@ -1615,6 +1635,11 @@ function App() {
       })
       if (meetingErr) {
         console.warn('meeting_responses insert:', meetingErr.message)
+      }
+      if (visitRowId !== payload.id) {
+        setVisits((previous) =>
+          previous.map((v) => (v.id === payload.id ? { ...v, id: visitRowId } : v)),
+        )
       }
     }
 
@@ -2390,9 +2415,19 @@ function App() {
                           {item.phone} | Tags: {item.tags.join(', ') || '—'}
                         </p>
                       </div>
-                      <button type="button" className="secondary" onClick={() => setActiveView('map')}>
-                        Show on map
-                      </button>
+                      <div className="inlineActions">
+                        <a
+                          className="secondary"
+                          href={googleMapsSearchUrl(item.lat, item.lng)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Google Maps
+                        </a>
+                        <button type="button" className="secondary" onClick={() => setActiveView('map')}>
+                          In-app map
+                        </button>
+                      </div>
                     </li>
                   ))}
               </ul>
@@ -2429,7 +2464,16 @@ function App() {
                         <td>{visit.customerName}</td>
                         <td>{visit.visitType}</td>
                         <td>
-                          {visit.lat.toFixed(4)}, {visit.lng.toFixed(4)} (±{Math.round(visit.accuracy)}m)
+                          {visit.lat.toFixed(4)}, {visit.lng.toFixed(4)} (±{Math.round(visit.accuracy)}m){' '}
+                          <a
+                            href={googleMapsSearchUrl(visit.lat, visit.lng)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="muted"
+                            style={{ fontSize: '0.78rem', marginLeft: '0.35rem' }}
+                          >
+                            Maps
+                          </a>
                         </td>
                         <td>{visit.status}</td>
                         <td>
