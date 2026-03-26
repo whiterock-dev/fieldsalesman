@@ -1,12 +1,10 @@
 import { useState, type FormEvent } from 'react'
-import { PASSWORD_POLICY_HINT } from '../lib/passwordPolicy'
 
 type LoginScreenProps = {
   supabaseConfigured: boolean
   message?: string
   messageIsError?: boolean
   onEmailSignIn: (email: string, password: string) => void | Promise<void>
-  onEmailSignUp: (email: string, password: string) => void | Promise<void>
 }
 
 export function LoginScreen({
@@ -14,16 +12,13 @@ export function LoginScreen({
   message,
   messageIsError = false,
   onEmailSignIn,
-  onEmailSignUp,
 }: LoginScreenProps) {
-  const [mode, setMode] = useState<'sign_in' | 'sign_up'>('sign_in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
-    if (mode === 'sign_up') void onEmailSignUp(email, password)
-    else void onEmailSignIn(email, password)
+    void onEmailSignIn(email, password)
   }
 
   return (
@@ -63,32 +58,17 @@ export function LoginScreen({
               <input
                 className="loginFieldInput"
                 type="password"
-                autoComplete={mode === 'sign_up' ? 'new-password' : 'current-password'}
+                autoComplete="current-password"
                 value={password}
                 onChange={(ev) => setPassword(ev.target.value)}
                 placeholder="••••••••"
               />
             </label>
-            <p className="loginPasswordHint">{PASSWORD_POLICY_HINT}</p>
+            <p className="loginPasswordHint">Accounts are created by an admin in Settings. Use the email and password they gave you.</p>
             <button type="submit" className="loginSubmitBtn">
-              {mode === 'sign_up' ? 'Create account' : 'Sign in'}
+              Sign in
             </button>
-            <button
-              type="button"
-              className="loginModeLink"
-              onClick={() => setMode((m) => (m === 'sign_in' ? 'sign_up' : 'sign_in'))}
-            >
-              {mode === 'sign_in' ? 'Need an account? Sign up' : 'Already have an account? Sign in'}
-            </button>
-            {mode === 'sign_up' ? (
-              <p className="loginSignupHint">
-                If this email is <strong>already registered</strong>, switch to{' '}
-                <button type="button" className="loginInlineLink" onClick={() => setMode('sign_in')}>
-                  Sign in
-                </button>
-                —do not create again.
-              </p>
-            ) : null}
+            <p className="loginSignupHint">New users are added in <strong>Settings</strong> by an admin (email + role + password).</p>
           </form>
         ) : null}
       </div>

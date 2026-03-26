@@ -17,16 +17,18 @@ export function friendlyAuthMessage(raw: string, context: 'sign_in' | 'sign_up')
     }
   }
 
-  if (context === 'sign_in') {
-    if (
-      lower.includes('invalid login') ||
-      lower.includes('invalid credentials') ||
-      lower.includes('wrong password') ||
-      (lower.includes('email') && lower.includes('password') && lower.includes('invalid'))
-    ) {
-      return 'Sign-in failed. Check your email and password, or ask an admin to reset your account in Supabase → Authentication.'
-    }
+  return raw
+}
+
+/** Sign-in: show Supabase’s real message (do not replace “Invalid credentials” with a generic line). Add hints only for specific cases. */
+export function formatSignInError(error: { message: string; code?: string }): string {
+  const msg = error.message?.trim() || 'Sign-in failed.'
+  const lower = msg.toLowerCase()
+  const code = (error.code ?? '').toLowerCase()
+
+  if (code === 'email_not_confirmed' || lower.includes('email not confirmed')) {
+    return `${msg} — Confirm the address in Supabase (Authentication → Users) or adjust “Confirm email” under Auth settings.`
   }
 
-  return raw
+  return msg
 }

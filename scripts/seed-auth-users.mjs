@@ -5,7 +5,7 @@
  *
  *   export VITE_SUPABASE_URL="https://xxx.supabase.co"
  *   export SUPABASE_SERVICE_ROLE_KEY="eyJ..."   # Dashboard → Project Settings → API → service_role (secret)
- *   export SEED_PASSWORD="YourTemp1Pass"       # min 6 chars, upper, lower, digit
+ *   export SEED_PASSWORD="YourTemp1Pass"       # min 8 chars, upper, lower, digit
  *   node scripts/seed-auth-users.mjs
  *
  * Or: node --env-file=.env.local scripts/seed-auth-users.mjs
@@ -32,7 +32,7 @@ const password = process.env.SEED_PASSWORD
 function okPassword(p) {
   return (
     p &&
-    p.length >= 6 &&
+    p.length >= 8 &&
     /[a-z]/.test(p) &&
     /[A-Z]/.test(p) &&
     /[0-9]/.test(p)
@@ -45,7 +45,7 @@ if (!url || !serviceKey) {
 }
 if (!okPassword(password)) {
   console.error(
-    'SEED_PASSWORD must be at least 6 characters and include lowercase, uppercase, and a digit.',
+    'SEED_PASSWORD must be at least 8 characters and include lowercase, uppercase, and a digit.',
   )
   process.exit(1)
 }

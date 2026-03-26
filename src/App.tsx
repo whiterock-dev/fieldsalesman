@@ -4,7 +4,7 @@ import { DealerMap } from './components/DealerMap'
 import { LoginScreen } from './components/LoginScreen'
 import { findInviteForEmail, normalizeEmail, type InvitedUser } from './lib/invites'
 import { addableRolesFor, type Role } from './lib/roles'
-import { friendlyAuthMessage } from './lib/authMessages'
+import { formatSignInError } from './lib/authMessages'
 import { isValidPassword, PASSWORD_POLICY_HINT } from './lib/passwordPolicy'
 import { supabase, supabaseEnabled } from './lib/supabase'
 import { colorForSalesmanId, salesmanColorMap } from './mapColors'
@@ -298,6 +298,8 @@ function App() {
   const [visitSession, setVisitSession] = useState<VisitSession | null>(null)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<Role>('salesman')
+  const [invitePassword, setInvitePassword] = useState('')
+  const [invitePasswordConfirm, setInvitePasswordConfirm] = useState('')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [settingsNewPassword, setSettingsNewPassword] = useState('')
   const [settingsConfirmPassword, setSettingsConfirmPassword] = useState('')
@@ -1216,51 +1218,18 @@ function App() {
     setLoginMessage('')
     setLoginMessageIsError(false)
     if (!supabase) return
-    const trimmed = email.trim()
-    if (!trimmed || !password) {
+    const emailNorm = normalizeEmail(email)
+    if (!emailNorm || !password) {
       setLoginMessageIsError(true)
       setLoginMessage('Enter email and password.')
       return
     }
-    if (!isValidPassword(password)) {
-      setLoginMessageIsError(true)
-      setLoginMessage(PASSWORD_POLICY_HINT)
-      return
-    }
-    const { error } = await supabase.auth.signInWithPassword({ email: trimmed, password })
+    /** Do not enforce password *format* on sign-in — only Supabase knows the real rules; client rules caused false rejects after a valid password change. */
+    const { error } = await supabase.auth.signInWithPassword({ email: emailNorm, password })
     if (error) {
       setLoginMessageIsError(true)
-      setLoginMessage(friendlyAuthMessage(error.message, 'sign_in'))
+      setLoginMessage(formatSignInError(error))
     }
-  }
-
-  const signUpWithEmailPassword = async (email: string, password: string) => {
-    setLoginMessage('')
-    setLoginMessageIsError(false)
-    if (!supabase) return
-    const trimmed = email.trim()
-    if (!trimmed || !password) {
-      setLoginMessageIsError(true)
-      setLoginMessage('Enter email and password.')
-      return
-    }
-    if (!isValidPassword(password)) {
-      setLoginMessageIsError(true)
-      setLoginMessage(PASSWORD_POLICY_HINT)
-      return
-    }
-    const { error } = await supabase.auth.signUp({
-      email: trimmed,
-      password,
-      options: { emailRedirectTo: `${window.location.origin}/` },
-    })
-    if (error) {
-      setLoginMessageIsError(true)
-      setLoginMessage(friendlyAuthMessage(error.message, 'sign_up'))
-      return
-    }
-    setLoginMessageIsError(false)
-    setLoginMessage('If email confirmation is enabled, check your inbox—then sign in. Otherwise you can sign in now.')
   }
 
   const updateAccountPassword = async () => {
@@ -1317,13 +1286,29 @@ function App() {
     }
     const addedAt = new Date().toISOString()
     if (supabase) {
+      if (invitePassword !== invitePasswordConfirm) {
+        setMessage('Initial password and confirmation do not match.')
+        return
+      }
+      if (!isValidPassword(invitePassword)) {
+        setMessage(`Initial password: ${PASSWORD_POLICY_HINT}`)
+        return
+      }
       void (async () => {
-        const { error } = await supabase.from('app_invites').upsert(
-          { email, role: inviteRole, added_at: addedAt },
-          { onConflict: 'email' },
-        )
+        const { data, error } = await supabase.functions.invoke('invite-user-with-password', {
+          body: { email, role: inviteRole, password: invitePassword },
+        })
         if (error) {
-          setMessage(`Could not save invite: ${error.message}`)
+          setMessage(
+            error.message.includes('Failed to fetch') || error.message.includes('404')
+              ? 'Invite failed: deploy the Edge Function `invite-user-with-password` (see supabase/functions) and run `supabase functions deploy invite-user-with-password`.'
+              : `Invite failed: ${error.message}`,
+          )
+          return
+        }
+        const payload = data as { error?: string; ok?: boolean } | null
+        if (payload?.error) {
+          setMessage(`Invite failed: ${payload.error}`)
           return
         }
         setInvitedUsers((previous) => {
@@ -1331,14 +1316,18 @@ function App() {
           return [...previous, { email, role: inviteRole, addedAt }]
         })
         setInviteEmail('')
-        setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They must sign in using that exact email.`)
+        setInvitePassword('')
+        setInvitePasswordConfirm('')
+        setMessage(
+          `Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They can sign in with that email and the password you set (they can change it under Settings).`,
+        )
         scheduleWorkspaceReloadRef.current?.()
       })()
       return
     }
     setInvitedUsers((previous) => [...previous, { email, role: inviteRole, addedAt }])
     setInviteEmail('')
-    setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They must sign in using that exact email.`)
+    setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')} (offline demo).`)
   }
 
   const removeInvitedUser = (email: string) => {
@@ -2038,10 +2027,15 @@ function App() {
               <article className="card">
                 <h3>Add user (invite)</h3>
                 <p className="muted">
-                  Enter the person&apos;s email and role. They must use <strong>that exact email</strong> to sign in.
-                  <strong>Owner</strong> can invite owner, salesman, sub-admin, and
-                  super-salesman. <strong>Sub-admin</strong> can invite salesman and super-salesman.{' '}
-                  <strong>Super-salesman</strong> can invite salesman.
+                  {supabaseEnabled ? (
+                    <>
+                      Set their <strong>initial password</strong> here (they can change it later under Settings). Requires the
+                      deployed Edge Function <code>invite-user-with-password</code>.{' '}
+                    </>
+                  ) : null}
+                  <strong>Owner</strong> can invite owner, salesman, sub-admin, and super-salesman.{' '}
+                  <strong>Sub-admin</strong> can invite salesman and super-salesman. <strong>Super-salesman</strong> can
+                  invite salesman.
                 </p>
                 <div className="formGrid">
                   <label>
@@ -2064,7 +2058,34 @@ function App() {
                       ))}
                     </select>
                   </label>
+                  {supabaseEnabled ? (
+                    <>
+                      <label>
+                        Initial password
+                        <input
+                          type="password"
+                          autoComplete="new-password"
+                          value={invitePassword}
+                          onChange={(event) => setInvitePassword(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Confirm initial password
+                        <input
+                          type="password"
+                          autoComplete="new-password"
+                          value={invitePasswordConfirm}
+                          onChange={(event) => setInvitePasswordConfirm(event.target.value)}
+                        />
+                      </label>
+                    </>
+                  ) : null}
                 </div>
+                {supabaseEnabled ? (
+                  <p className="muted" style={{ fontSize: '0.85rem' }}>
+                    {PASSWORD_POLICY_HINT}
+                  </p>
+                ) : null}
                 <div className="inlineActions">
                   <button type="button" onClick={addInvitedUser}>
                     Add invited user
@@ -2075,7 +2096,9 @@ function App() {
 
             <article className="card">
               <h3>Invited emails ({invitedUsers.length})</h3>
-              <p className="muted">Only these invited emails can access the app (after they register or sign in with a password).</p>
+              <p className="muted">
+                Only these invited emails can access the app. Admins assign the initial password when adding a user.
+              </p>
               <div className="scrollArea">
                 <table>
                   <thead>
@@ -2352,7 +2375,6 @@ function App() {
         message={loginMessage}
         messageIsError={loginMessageIsError}
         onEmailSignIn={(email, password) => void signInWithEmailPassword(email, password)}
-        onEmailSignUp={(email, password) => void signUpWithEmailPassword(email, password)}
       />
     )
   }

@@ -1,5 +1,5 @@
-/** App password rules for email/password auth (client-side check before Supabase). */
-const MIN_LEN = 6
+/** App password rules for sign-up / password change (align with Supabase Dashboard minimum, often 8). */
+const MIN_LEN = 8
 
 export function isValidPassword(password: string): boolean {
   if (password.length < MIN_LEN) return false
@@ -10,4 +10,4 @@ export function isValidPassword(password: string): boolean {
 }
 
 export const PASSWORD_POLICY_HINT =
-  'At least 6 characters with uppercase, lowercase, and a number.'
+  'At least 8 characters with uppercase, lowercase, and a number.'
