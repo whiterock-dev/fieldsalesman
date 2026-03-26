@@ -104,12 +104,24 @@ Deno.serve(async (req) => {
       })
     }
 
-    const body = (await req.json()) as { email?: string; role?: string; password?: string }
+    const body = (await req.json()) as {
+      fullName?: string
+      email?: string
+      phone?: string
+      role?: string
+      password?: string
+    }
+    const fullName = String(body.fullName ?? '').trim()
     const email = String(body.email ?? '')
       .trim()
       .toLowerCase()
+    const phone = String(body.phone ?? '').trim()
     const role = String(body.role ?? '').trim()
     const password = String(body.password ?? '')
+
+    if (!fullName) {
+      return json({ ok: false, error: 'Full name is required' })
+    }
 
     if (!email.includes('@')) {
       return json({ ok: false, error: 'Invalid email' })
@@ -125,6 +137,9 @@ Deno.serve(async (req) => {
         error: 'Password must be at least 8 characters with uppercase, lowercase, and a number',
       })
     }
+    if (phone && !/^[0-9+\-\s]{7,20}$/.test(phone)) {
+      return json({ ok: false, error: 'Invalid phone number format' })
+    }
 
     const existingId = await findUserIdByEmail(admin, email)
     let userId: string
@@ -133,6 +148,10 @@ Deno.serve(async (req) => {
       const { error: updErr } = await admin.auth.admin.updateUserById(existingId, {
         password,
         email_confirm: true,
+        user_metadata: {
+          full_name: fullName,
+          phone: phone || null,
+        },
       })
       if (updErr) {
         return json({ ok: false, error: updErr.message })
@@ -143,6 +162,10 @@ Deno.serve(async (req) => {
         email,
         password,
         email_confirm: true,
+        user_metadata: {
+          full_name: fullName,
+          phone: phone || null,
+        },
       })
       if (createErr || !created.user?.id) {
         return json({ ok: false, error: createErr?.message ?? 'Could not create user' })
@@ -159,9 +182,8 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: `Invite row: ${invErr.message}` })
     }
 
-    const displayName = email.split('@')[0] || 'User'
     const { error: profErr } = await admin.from('profiles').upsert(
-      { id: userId, full_name: displayName, role, email },
+      { id: userId, full_name: fullName, role, email, phone: phone || null },
       { onConflict: 'id' },
     )
     if (profErr) {
