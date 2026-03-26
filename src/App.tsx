@@ -286,6 +286,8 @@ function App() {
   const [visitPhotoModal, setVisitPhotoModal] = useState<{ src: string; caption: string } | null>(null)
   const [visitPhotoOpeningId, setVisitPhotoOpeningId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
+  /** Shown only on Settings; avoids a global banner after the invitee signs in. */
+  const [inviteSuccessMessage, setInviteSuccessMessage] = useState('')
   const [kpiDateFilter, setKpiDateFilter] = useState('')
   const [kpiSalesmanFilter, setKpiSalesmanFilter] = useState('all')
   const [activeView, setActiveView] = useState<NavId>(parseNavFromLocation)
@@ -333,12 +335,19 @@ function App() {
   }, [authSession, invitedUsers])
 
   const addableTeamRoles = useMemo(() => addableRolesFor(role), [role])
+  const canInviteTeam = addableTeamRoles.length > 0
+  const canSeeTeamDirectory = role === 'owner' || role === 'sub_admin' || role === 'super_salesman'
+  const canRemoveInvites = role === 'owner'
 
   const allowedNavIds = useMemo(() => NAV_ITEMS.filter((item) => item.show(role)).map((item) => item.id), [role])
 
   useEffect(() => {
     if (!allowedNavIds.includes(activeView)) setActiveView('dashboard')
   }, [allowedNavIds, activeView])
+
+  useEffect(() => {
+    if (activeView !== 'settings') setInviteSuccessMessage('')
+  }, [activeView])
 
   useEffect(() => {
     syncNavToLocation(activeView)
@@ -503,25 +512,47 @@ function App() {
     if (!inviteSourceReady) return
     if (!sb || !authSession?.user?.email) return
     const email = authSession.user.email
-    if (findInviteForEmail(invitedUsers, email)) return
+    let cancelled = false
 
-    if (invitedUsers.length === 0) {
-      const norm = normalizeEmail(email)
-      const addedAt = new Date().toISOString()
-      void sb.from('app_invites').upsert({ email: norm, role: 'owner', added_at: addedAt }, { onConflict: 'email' }).then(({ error }) => {
+    void (async () => {
+      const { data: allRows, error: fetchErr } = await sb
+        .from('app_invites')
+        .select('email, role, added_at')
+        .order('added_at', { ascending: true })
+      if (cancelled) return
+      if (fetchErr) {
+        console.warn('app_invites access check:', fetchErr.message)
+        return
+      }
+      const mapped: InvitedUser[] = (allRows ?? []).map((r) => ({
+        email: normalizeEmail(r.email as string),
+        role: r.role as Role,
+        addedAt: r.added_at as string,
+      }))
+      if (findInviteForEmail(mapped, email)) {
+        setInvitedUsers(mapped)
+        return
+      }
+      if (mapped.length === 0) {
+        const norm = normalizeEmail(email)
+        const addedAt = new Date().toISOString()
+        const { error } = await sb.from('app_invites').upsert(
+          { email: norm, role: 'owner', added_at: addedAt },
+          { onConflict: 'email' },
+        )
         if (error) console.warn('Bootstrap owner invite:', error.message)
-      })
-      setInvitedUsers((prev) => {
-        if (prev.length > 0) return prev
-        return [{ email: norm, role: 'owner', addedAt }]
-      })
-      return
-    }
+        setInvitedUsers([{ email: norm, role: 'owner', addedAt }])
+        return
+      }
+      void sb.auth.signOut()
+      setLoginMessageIsError(true)
+      setLoginMessage('You are not authorized. Only added members can sign in. Contact your admin.')
+    })()
 
-    void sb.auth.signOut()
-    setLoginMessageIsError(true)
-    setLoginMessage('You are not authorized. Only added members can sign in. Contact your admin.')
-  }, [authSession?.user?.id, invitedUsers, inviteSourceReady])
+    return () => {
+      cancelled = true
+    }
+  }, [authSession?.user?.id, inviteSourceReady])
 
   useEffect(() => {
     if (!supabase || !authSession?.user) return
@@ -529,10 +560,20 @@ function App() {
     if (!matched) return
     const displayName =
       (authSession.user.user_metadata?.full_name as string | undefined) || authSession.user.email || 'User'
-    void supabase.from('profiles').upsert(
-      { id: authSession.user.id, full_name: displayName, role: matched.role },
-      { onConflict: 'id' },
-    )
+    const uid = authSession.user.id
+    void (async () => {
+      const { data: existing } = await supabase.from('profiles').select('id').eq('id', uid).maybeSingle()
+      if (!existing) {
+        const { error } = await supabase.from('profiles').upsert(
+          { id: uid, full_name: displayName, role: matched.role },
+          { onConflict: 'id' },
+        )
+        if (error) console.warn('Profile bootstrap:', error.message)
+      } else {
+        const { error } = await supabase.from('profiles').update({ full_name: displayName }).eq('id', uid)
+        if (error) console.warn('Profile name update:', error.message)
+      }
+    })()
   }, [authSession?.user?.id, invitedUsers])
 
   useEffect(() => {
@@ -1256,6 +1297,7 @@ function App() {
 
   const handleSignOut = async () => {
     await supabase?.auth.signOut()
+    setInviteSuccessMessage('')
     setAuthSession(null)
     localStorage.removeItem('fs_offline_demo')
     localStorage.removeItem('fs_invited_users')
@@ -1272,6 +1314,7 @@ function App() {
 
   const addInvitedUser = () => {
     setMessage('')
+    setInviteSuccessMessage('')
     const email = normalizeEmail(inviteEmail)
     if (!email.includes('@')) {
       setMessage('Enter a valid email address.')
@@ -1326,7 +1369,7 @@ function App() {
         setInviteEmail('')
         setInvitePassword('')
         setInvitePasswordConfirm('')
-        setMessage(
+        setInviteSuccessMessage(
           `Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They can sign in with that email and the password you set (they can change it under Settings).`,
         )
         scheduleWorkspaceReloadRef.current?.()
@@ -1335,7 +1378,7 @@ function App() {
     }
     setInvitedUsers((previous) => [...previous, { email, role: inviteRole, addedAt }])
     setInviteEmail('')
-    setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')} (offline demo).`)
+    setInviteSuccessMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')} (offline demo).`)
   }
 
   const removeInvitedUser = (email: string) => {
@@ -1969,10 +2012,13 @@ function App() {
         )
       case 'settings':
         return (
-          <section className="panel">
-            <h2>Settings</h2>
+          <section className="panel settingsPanel">
+            <div className="settingsHeader">
+              <h2>Settings</h2>
+              <p className="muted settingsLead">Account security and team access for Whiterock Field Salesman.</p>
+            </div>
 
-            <article className="card">
+            <article className="card settingsCard">
               <h3>Account</h3>
               <p className="muted">
                 Your role comes from the invite list. Sign in with <strong>email and password</strong> using the same
@@ -1996,7 +2042,7 @@ function App() {
             </article>
 
             {supabaseEnabled && authSession ? (
-              <article className="card">
+              <article className="card settingsCard">
                 <h3>Change password</h3>
                 <p className="muted">Use a new password that meets the same rules as at sign-up. You can change it anytime.</p>
                 {settingsPasswordMessage ? <p className="muted">{settingsPasswordMessage}</p> : null}
@@ -2031,8 +2077,13 @@ function App() {
               </article>
             ) : null}
 
-            {addableTeamRoles.length ? (
-              <article className="card">
+            {canInviteTeam ? (
+              <article className="card settingsCard">
+                {inviteSuccessMessage ? (
+                  <p className="message messageSuccess" role="status">
+                    {inviteSuccessMessage}
+                  </p>
+                ) : null}
                 <h3>Add user (invite)</h3>
                 <p className="muted">
                   {supabaseEnabled ? (
@@ -2102,91 +2153,98 @@ function App() {
               </article>
             ) : null}
 
-            <article className="card">
-              <h3>Invited emails ({invitedUsers.length})</h3>
-              <p className="muted">
-                Only these invited emails can access the app. Admins assign the initial password when adding a user.
-              </p>
-              <div className="scrollArea">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Email</th>
-                      <th>Role</th>
-                      <th>Added</th>
-                      {role === 'owner' ? <th /> : null}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {invitedUsers.length === 0 ? (
+            {canSeeTeamDirectory ? (
+              <article className="card settingsCard">
+                <h3>Invited emails ({invitedUsers.length})</h3>
+                <p className="muted">
+                  Only these invited emails can access the app. Admins assign the initial password when adding a user.
+                </p>
+                <div className="scrollArea settingsTableWrap">
+                  <table className="settingsTable">
+                    <thead>
                       <tr>
-                        <td colSpan={role === 'owner' ? 4 : 3} className="muted">
-                          No invites yet. The first sign-in while this list is empty is added as <strong>owner</strong>.
-                          After that, owners add everyone (including more owners) here under Add user.
-                        </td>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Added</th>
+                        {canRemoveInvites ? <th aria-label="Actions" /> : null}
                       </tr>
-                    ) : (
-                      invitedUsers
-                        .slice()
-                        .sort((a, b) => a.email.localeCompare(b.email))
-                        .map((u) => (
-                          <tr key={u.email}>
-                            <td>{u.email}</td>
-                            <td>{u.role.replace(/_/g, ' ')}</td>
-                            <td className="muted" style={{ fontSize: '0.78rem' }}>
-                              {new Date(u.addedAt).toLocaleString()}
-                            </td>
-                            {role === 'owner' ? (
+                    </thead>
+                    <tbody>
+                      {invitedUsers.length === 0 ? (
+                        <tr>
+                          <td colSpan={canRemoveInvites ? 4 : 3} className="muted">
+                            No invites yet. The first sign-in while this list is empty is added as <strong>owner</strong>.
+                            After that, owners add everyone (including more owners) here under Add user.
+                          </td>
+                        </tr>
+                      ) : (
+                        invitedUsers
+                          .slice()
+                          .sort((a, b) => a.email.localeCompare(b.email))
+                          .map((u) => (
+                            <tr key={u.email}>
+                              <td className="settingsEmailCell">{u.email}</td>
                               <td>
-                                <button type="button" className="secondary" onClick={() => removeInvitedUser(u.email)}>
-                                  Remove
-                                </button>
+                                <span className="roleBadge">{u.role.replace(/_/g, ' ')}</span>
                               </td>
-                            ) : null}
-                          </tr>
-                        ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </article>
+                              <td className="muted settingsDateCell">{new Date(u.addedAt).toLocaleString()}</td>
+                              {canRemoveInvites ? (
+                                <td className="settingsActionsCell">
+                                  <button type="button" className="secondary danger" onClick={() => removeInvitedUser(u.email)}>
+                                    Remove
+                                  </button>
+                                </td>
+                              ) : null}
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            ) : null}
 
-            <article className="card">
-              <h3>Profiles (synced)</h3>
-              <div className="scrollArea">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Role</th>
-                      <th>Id</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {teamProfiles.length === 0 ? (
+            {canSeeTeamDirectory ? (
+              <article className="card settingsCard">
+                <h3>Profiles (synced)</h3>
+                <p className="muted">Live roles from Supabase <code>profiles</code> (used for visits and permissions).</p>
+                <div className="scrollArea settingsTableWrap">
+                  <table className="settingsTable">
+                    <thead>
                       <tr>
-                        <td colSpan={3} className="muted">
-                          No profiles loaded yet. Data loads from Supabase after sign-in.
-                        </td>
+                        <th>Name</th>
+                        <th>Role</th>
+                        <th>User id</th>
                       </tr>
-                    ) : (
-                      teamProfiles
-                        .slice()
-                        .sort((a, b) => a.fullName.localeCompare(b.fullName))
-                        .map((p) => (
-                          <tr key={p.id}>
-                            <td>{p.fullName}</td>
-                            <td>{p.role.replace(/_/g, ' ')}</td>
-                            <td className="muted" style={{ fontSize: '0.78rem' }}>
-                              {p.id}
-                            </td>
-                          </tr>
-                        ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </article>
+                    </thead>
+                    <tbody>
+                      {teamProfiles.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="muted">
+                            No profiles loaded yet. Data loads from Supabase after sign-in.
+                          </td>
+                        </tr>
+                      ) : (
+                        teamProfiles
+                          .slice()
+                          .sort((a, b) => a.fullName.localeCompare(b.fullName))
+                          .map((p) => (
+                            <tr key={p.id}>
+                              <td>{p.fullName}</td>
+                              <td>
+                                <span className="roleBadge">{p.role.replace(/_/g, ' ')}</span>
+                              </td>
+                              <td className="muted idCell" title={p.id}>
+                                {p.id.slice(0, 8)}…
+                              </td>
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            ) : null}
           </section>
         )
       case 'admin_kpi':

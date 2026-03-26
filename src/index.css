@@ -618,6 +618,102 @@ button:focus-visible {
   font-size: 0.84rem;
 }
 
+.message.messageSuccess {
+  background: rgba(22, 163, 74, 0.08);
+  border-color: rgba(22, 163, 74, 0.25);
+  color: var(--text);
+}
+
+.settingsPanel {
+  gap: 1rem;
+  max-width: 920px;
+}
+
+.settingsHeader .settingsLead {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+}
+
+.settingsCard {
+  padding: 1.1rem 1.2rem;
+}
+
+.settingsTableWrap {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.settingsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.settingsTable th {
+  text-align: left;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0.55rem 0.65rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.settingsTable td {
+  padding: 0.55rem 0.65rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.settingsTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.settingsEmailCell {
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.settingsDateCell {
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.settingsActionsCell {
+  width: 5.5rem;
+  text-align: right;
+}
+
+.roleBadge {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  background: var(--accent-subtle);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.idCell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.74rem;
+  cursor: help;
+}
+
+button.secondary.danger {
+  border-color: rgba(220, 38, 38, 0.35);
+  color: #b91c1c;
+}
+
+button.secondary.danger:hover {
+  background: rgba(220, 38, 38, 0.06);
+  border-color: rgba(220, 38, 38, 0.5);
+}
+
 .panel {
   display: grid;
   gap: 0.8rem;
