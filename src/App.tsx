@@ -824,6 +824,9 @@ function App() {
 
     const reloadOnOnline = () => scheduleReload()
     window.addEventListener('online', reloadOnOnline)
+    const periodicReloadId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') scheduleReload()
+    }, 15000)
 
     void channel.subscribe((status) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
@@ -835,6 +838,7 @@ function App() {
       closed = true
       scheduleWorkspaceReloadRef.current = null
       window.removeEventListener('online', reloadOnOnline)
+      window.clearInterval(periodicReloadId)
       if (debounceTimer) clearTimeout(debounceTimer)
       if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current)
       void sb.removeChannel(channel)
@@ -914,10 +918,29 @@ function App() {
 
   const queuedVisitCount = visits.filter((item) => item.status === 'queued').length
 
+  const dedupedCustomers = useMemo(() => {
+    const seen = new Map<string, Customer>()
+    for (const c of customers) {
+      if (!seen.has(c.id)) seen.set(c.id, c)
+    }
+    return [...seen.values()]
+  }, [customers])
+
+  const myCustomers = useMemo(() => {
+    if (role === 'salesman' || role === 'super_salesman') {
+      const mine = dedupedCustomers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
+      return mine.length ? mine : dedupedCustomers
+    }
+    return dedupedCustomers
+  }, [role, dedupedCustomers, activeSalesman.id])
+
   const mapCustomers = useMemo(() => {
-    if (role === 'salesman') return customers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
-    return customers
-  }, [role, customers, activeSalesman.id])
+    if (role === 'salesman' || role === 'super_salesman') {
+      const mine = dedupedCustomers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
+      return mine.length ? mine : dedupedCustomers
+    }
+    return dedupedCustomers
+  }, [role, dedupedCustomers, activeSalesman.id])
   const filteredMapCustomers = useMemo(() => {
     if (role !== 'owner' && role !== 'sub_admin') return mapCustomers
     if (mapSalesmanFilter === 'all') return mapCustomers
@@ -1907,7 +1930,7 @@ function App() {
             Customer
             <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}>
               <option value="new">+ Quick create new lead</option>
-              {customers
+              {dedupedCustomers
                 .filter((item) => {
                   const q = visitCustomerSearch.trim().toLowerCase()
                   if (!q) return true
@@ -2644,9 +2667,7 @@ function App() {
             <h2>My customers</h2>
             <article className="card">
               <ul className="list">
-                {customers
-                  .filter((item) => item.assignedSalesmanId === activeSalesman.id)
-                  .map((item) => (
+                {myCustomers.map((item) => (
                     <li key={item.id}>
                       <div>
                         <strong>{item.name}</strong> — {item.city}
