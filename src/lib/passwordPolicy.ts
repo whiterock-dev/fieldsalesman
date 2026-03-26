@@ -1,3 +1,10 @@
+/*
+ * Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+ * © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+ *
+ * Unauthorized copying, modification, or distribution is strictly prohibited.
+ */
+
 /** App password rules for sign-up / password change (align with Supabase Dashboard minimum, often 8). */
 const MIN_LEN = 8
 

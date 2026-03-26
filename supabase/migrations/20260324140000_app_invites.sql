@@ -1,3 +1,8 @@
+-- Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+-- © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+--
+-- Unauthorized copying, modification, or distribution is strictly prohibited.
+
 -- Cross-device invite list (replaces localStorage-only for multi-device teams).
 create table if not exists public.app_invites (
   email text primary key,

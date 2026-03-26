@@ -1,3 +1,8 @@
+-- Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+-- © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+--
+-- Unauthorized copying, modification, or distribution is strictly prohibited.
+
 -- Private bucket for visit JPEGs (path: {salesman_profile_id}/{visitId}.jpg)
 insert into storage.buckets (id, name, public)
 values ('visit-photos', 'visit-photos', false)

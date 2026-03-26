@@ -1,3 +1,8 @@
+-- Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+-- © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+--
+-- Unauthorized copying, modification, or distribution is strictly prohibited.
+
 -- Track arrival time separately from end/photo time (captured_at).
 alter table public.visits
   add column if not exists visit_started_at timestamptz;

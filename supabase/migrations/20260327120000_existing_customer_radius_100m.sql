@@ -1,3 +1,8 @@
+-- Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+-- © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+--
+-- Unauthorized copying, modification, or distribution is strictly prohibited.
+
 -- Existing-customer visit: allow up to 100m from customer pin (was 30m).
 create or replace function public.create_visit_enforced(
   p_visit_id text,

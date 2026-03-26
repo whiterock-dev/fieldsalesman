@@ -1,3 +1,10 @@
+/*
+ * Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+ * © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+ *
+ * Unauthorized copying, modification, or distribution is strictly prohibited.
+ */
+
 /** Map Supabase Auth errors to clearer copy for the login screen. */
 export function friendlyAuthMessage(raw: string, context: 'sign_in' | 'sign_up'): string {
   const lower = raw.toLowerCase()

@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { FunctionsHttpError } from '@supabase/supabase-js'
-import { DealerMap } from './components/DealerMap'
 import { LoginScreen } from './components/LoginScreen'
 import { findInviteForEmail, normalizeEmail, type InvitedUser } from './lib/invites'
 import { addableRolesFor, type Role } from './lib/roles'
@@ -10,6 +9,11 @@ import { isValidPassword, PASSWORD_POLICY_HINT } from './lib/passwordPolicy'
 import { supabase, supabaseEnabled } from './lib/supabase'
 import { colorForSalesmanId, salesmanColorMap } from './mapColors'
 import { googleMapsSearchUrl } from './lib/maps'
+
+const DealerMap = lazy(async () => {
+  const module = await import('./components/DealerMap')
+  return { default: module.DealerMap }
+})
 
 async function resolveVisitPhotoSrc(client: SupabaseClient, stored: string): Promise<string | null> {
   const t = stored.trim()
@@ -529,7 +533,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [authSession?.user?.id])
+  }, [authSession?.user, authSession?.user?.id])
 
   useEffect(() => {
     const sb = supabase
@@ -576,7 +580,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [authSession?.user?.id, inviteSourceReady])
+  }, [authSession?.user, authSession?.user?.id, authSession?.user?.email, inviteSourceReady])
 
   useEffect(() => {
     if (!supabase || !authSession?.user) return
@@ -603,7 +607,7 @@ function App() {
         if (error) console.warn('Profile name update:', error.message)
       }
     })()
-  }, [authSession?.user?.id, invitedUsers])
+  }, [authSession?.user, authSession?.user?.id, authSession?.user?.email, invitedUsers])
 
   useEffect(() => {
     const onOnline = () => setOnline(true)
@@ -842,7 +846,7 @@ function App() {
       if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current)
       void sb.removeChannel(channel)
     }
-  }, [authSession?.user?.id, inviteSourceReady, accessAllowed, invitedUsers.length])
+  }, [authSession?.user, authSession?.user?.id, authSession?.user?.email, inviteSourceReady, accessAllowed, invitedUsers.length])
 
   useEffect(() => {
     const onVis = () => {
@@ -1186,7 +1190,7 @@ function App() {
       if (locationRequestIdRef.current !== requestId) return
       setLocationLocking(false)
       setMessage(
-        'Location is taking too long. Allow location for this site (address bar → site settings), use HTTPS (or localhost), enable system Location/GPS, and try again — desktop often needs Wi‑Fi location or a phone hotspot.',
+        'Location is taking too long. Allow location for this site (address bar -> site settings), use a secure app URL, enable system Location/GPS, and try again - desktop often needs Wi-Fi location or a phone hotspot.',
       )
     }, 22000)
 
@@ -1903,7 +1907,7 @@ function App() {
       {locationLocking ? (
         <p className="muted">
           Requesting location (usually under 20s). If this never finishes, tap <strong>Cancel</strong> and check site
-          permissions (HTTPS required except on localhost).
+          permissions on your secure app URL.
         </p>
       ) : null}
       {geo && !locationLocking ? (
@@ -2179,20 +2183,22 @@ function App() {
                 ))}
               </div>
             ) : null}
-            <DealerMap
-              customers={filteredMapCustomers.map((c) => ({
-                id: c.id,
-                name: c.name,
-                city: c.city,
-                lat: c.lat,
-                lng: c.lng,
-                assignedSalesmanId: c.assignedSalesmanId,
-                salesmanName: salesmen.find((x) => x.id === c.assignedSalesmanId)?.name,
-              }))}
-              livePoints={[]}
-              recentVisits={filteredMapRecentVisits}
-              salesmen={salesmen}
-            />
+            <Suspense fallback={<p className="muted">Loading map...</p>}>
+              <DealerMap
+                customers={filteredMapCustomers.map((c) => ({
+                  id: c.id,
+                  name: c.name,
+                  city: c.city,
+                  lat: c.lat,
+                  lng: c.lng,
+                  assignedSalesmanId: c.assignedSalesmanId,
+                  salesmanName: salesmen.find((x) => x.id === c.assignedSalesmanId)?.name,
+                }))}
+                livePoints={[]}
+                recentVisits={filteredMapRecentVisits}
+                salesmen={salesmen}
+              />
+            </Suspense>
           </section>
         )
       case 'add_visit':

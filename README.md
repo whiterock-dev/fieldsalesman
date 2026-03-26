@@ -1,81 +1,110 @@
-# Field Salesman Web App
+# WhiteRock Field Sales App
 
-This is a standalone web app inside `fieldsalesman` (separate from `b2bsales` and other folders).
+> Developed and delivered by **Nerdshouse Technologies LLP**
 
-## Implemented MVP
+---
 
-- Role-aware UI for `owner`, `sub_admin`, `super_salesman`, and `salesman`
-- Admin options:
-  - Salesmen wise overdue follow-ups
-  - Meeting responses
-  - Map view links for customers + live points count
-  - KPI table with date + salesman filters
-- Salesman options:
-  - Pending follow-ups
-  - Record meeting / visit capture form
-  - Live location tracking
-- Left sidebar navigation (one screen per section)
-- Map view: OpenStreetMap + Leaflet with dealer pins, live pings, and recent visit markers
-  - Customer list view with map links
-- Visit capture (G-Form replacement behavior):
-  - **Mark visit location**: `getCurrentPosition` (high accuracy) + safety timeout so the UI never hangs forever
-  - Existing customer must be within `30m` radius (geo-fence); GPS uncertainty must be ≤ `30m`
-  - **New lead** (quick create): GPS uncertainty allowed up to **`80m`** (no prior pin)
-  - Auto timestamp
-  - **Camera-only** visit photo via `getUserMedia` (no gallery / file picker)
-  - On **Take photo**, timestamp + GPS (lat/lng, accuracy) + visit fix time are **burned into the JPEG**
-  - Existing customer selection or quick lead creation
-  - Visit type, notes, next action, follow-up date
-  - Offline queue support with later sync preserving captured time
-- CRM + follow-up data model:
-  - Customer/lead data with contact, location, and tags
-  - Follow-up tasks with due date, priority, status, remarks
+## About
 
-## Sign-in & invites
+WhiteRock Field Sales App is a role-based field operations platform for sales owners, sub-admins, and field sales teams to manage customers, follow-ups, visit capture, meeting responses, map visibility, and live location tracking. The app uses Supabase for authentication, data, storage, and edge-function-powered invite flows, while keeping an offline-friendly browser mode for continuity during unstable connectivity.
 
-- **No email/password form** — sign-in is **Google only** (Supabase Auth).
-- Admins add users under **Settings → Add user (invite)**: enter **email** + **role**. The person must sign in with **Google using that same email**.
-- Invited emails are stored locally (`fs_invited_users`). If the list is **empty** on first Google sign-in, that account is bootstrapped as **owner**.
-- **Continue offline (demo)** skips Google and uses browser-stored demo data (no Supabase session).
+## Tech Stack
 
-## Supabase Integration
+| Layer        | Technology                                |
+|--------------|-------------------------------------------|
+| Frontend     | React 19, TypeScript, Vite               |
+| Backend      | Supabase Edge Functions (Deno/TypeScript) |
+| Database     | Supabase Postgres                         |
+| Hosting      | Static frontend hosting + Supabase Cloud  |
+| Other        | Leaflet/OpenStreetMap, Supabase Storage   |
 
-The app now includes Supabase client integration. If env values are present, it reads/writes:
+## Getting Started
 
-- `profiles`
-- `customers`
-- `followups`
-- `visits` (via RPC `create_visit_enforced`)
-- `live_locations`
-- Storage bucket `visit-photos`
+### Prerequisites
 
-When env values are missing, the app still runs in local demo mode using browser storage.
+- Node.js 20+ and npm 10+
+- Supabase project access (URL + anon key) and Supabase CLI (for function deploy/migrations)
 
-### Setup
-
-1. Copy `.env.example` to `.env.local`
-2. Add your project values:
+### Installation
 
 ```bash
-VITE_SUPABASE_URL=...
-VITE_SUPABASE_ANON_KEY=...
+# Clone the repository
+git clone <repo-url>
+cd <project-folder>
+
+# Install dependencies
+npm install
+
+# Set up environment
+cp .env.example .env
+# Fill in required values in .env
 ```
 
-3. Run SQL from `supabase/schema.sql` in Supabase SQL editor (or `supabase/migrations/20260319120000_create_visit_enforced_max_gps.sql` if you already deployed an older `create_visit_enforced`)
-4. Create storage bucket named `visit-photos`
-5. In **Authentication → Providers**, enable **Google** and add your OAuth client ID/secret.
-6. Add **Redirect URL** in Supabase Auth settings: your app origin (e.g. `http://localhost:5173` for dev).
-7. Add RLS policies for your auth model (owner/sub admin/super salesman/salesman). The app upserts the signed-in user into `profiles` on login (invite role).
-
-## Run
+### Running Locally
 
 ```bash
-npm install
 npm run dev
 ```
 
-## Build
+### Building for Production
 
 ```bash
 npm run build
 ```
+
+## Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `VITE_SUPABASE_URL` | Supabase project URL used by the web app client | Yes |
+| `VITE_SUPABASE_ANON_KEY` | Public/anon Supabase API key used by frontend auth/data requests | Yes |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key for privileged server-only scripts/functions | No |
+| `SEED_PASSWORD` | Temporary seed password for one-time user bootstrap workflows | No |
+
+## Project Structure
+
+```text
+.
+├── index.html                  # Vite HTML entry
+├── src/
+│   ├── App.tsx                 # Main app shell and feature views
+│   ├── main.tsx                # React bootstrap
+│   ├── index.css               # Global design system/styles
+│   ├── components/             # Reusable UI components
+│   └── lib/                    # Shared domain utilities
+├── supabase/
+│   ├── functions/              # Edge functions (invite flow)
+│   ├── migrations/             # SQL schema changes
+│   └── schema.sql              # Baseline schema snapshot
+├── public/                     # Static public assets
+└── package.json                # Scripts and dependencies
+```
+
+## Deployment
+
+- Build frontend with `npm run build`.
+- Deploy frontend `dist/` output to your static host.
+- Deploy invite function with `npm run deploy:function:invite`.
+- Apply database migrations in `supabase/migrations/` to target Supabase project.
+
+## Third-Party Services
+
+| Service | Purpose | Setup Required |
+|---------|---------|----------------|
+| Supabase Auth | User authentication and sessions | Yes |
+| Supabase Postgres | Operational data storage | Yes |
+| Supabase Storage | Visit photo storage | Yes |
+| Supabase Edge Functions | Secure invite + password provisioning | Yes |
+| OpenStreetMap / Leaflet | Map rendering and geospatial display | No |
+
+---
+
+## Developed By
+
+**Nerdshouse Technologies LLP**
+🌐 [nerdshouse.com](https://nerdshouse.com)  
+📧 axit@nerdshouse.com
+
+---
+
+*© 2026 WhiteRock (Royal Enterprise). All rights reserved. Developed by Nerdshouse Technologies LLP.*

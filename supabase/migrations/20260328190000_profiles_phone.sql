@@ -1,3 +1,8 @@
+-- Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+-- © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+--
+-- Unauthorized copying, modification, or distribution is strictly prohibited.
+
 -- Optional phone field for team directory / invite form.
 alter table public.profiles add column if not exists phone text;
 

@@ -1,3 +1,8 @@
+-- Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+-- © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+--
+-- Unauthorized copying, modification, or distribution is strictly prohibited.
+
 -- Core CRM tables (required before create_visit_enforced, which returns composite type visits).
 -- app_invites and meeting_responses (+ their RLS) are added in later migrations.
 

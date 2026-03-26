@@ -1,3 +1,8 @@
+-- Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+-- © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+--
+-- Unauthorized copying, modification, or distribution is strictly prohibited.
+
 -- Meeting notes surfaced in Admin → Meeting responses (synced + realtime).
 -- If ALTER PUBLICATION fails because a table is already in supabase_realtime, remove that line only.
 create table if not exists public.meeting_responses (

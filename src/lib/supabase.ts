@@ -1,3 +1,10 @@
+/*
+ * Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+ * © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+ *
+ * Unauthorized copying, modification, or distribution is strictly prohibited.
+ */
+
 import { createClient } from '@supabase/supabase-js'
 
 const url = import.meta.env.VITE_SUPABASE_URL

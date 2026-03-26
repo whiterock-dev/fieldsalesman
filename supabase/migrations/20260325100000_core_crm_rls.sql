@@ -1,3 +1,8 @@
+-- Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+-- © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+--
+-- Unauthorized copying, modification, or distribution is strictly prohibited.
+
 -- Field Salesman app uses the anon key + signed-in JWT for all CRM writes.
 -- If RLS is enabled on these tables without policies, every insert/update fails.
 

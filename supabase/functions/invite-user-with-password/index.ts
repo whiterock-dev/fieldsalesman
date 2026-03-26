@@ -1,3 +1,10 @@
+/*
+ * Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+ * © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+ *
+ * Unauthorized copying, modification, or distribution is strictly prohibited.
+ */
+
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
 const corsHeaders: Record<string, string> = {

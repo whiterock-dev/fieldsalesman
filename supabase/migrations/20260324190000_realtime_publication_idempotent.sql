@@ -1,3 +1,8 @@
+-- Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+-- © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+--
+-- Unauthorized copying, modification, or distribution is strictly prohibited.
+
 -- Ensure workspace tables emit Realtime events (safe if already in supabase_realtime).
 -- Fixes partial applies of older migrations that used non-idempotent ALTER PUBLICATION.
 DO $$

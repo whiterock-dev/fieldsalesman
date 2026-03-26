@@ -1,3 +1,8 @@
+-- Developed by Nerdshouse Technologies LLP — https://nerdshouse.com
+-- © 2026 WhiteRock (Royal Enterprise). All rights reserved.
+--
+-- Unauthorized copying, modification, or distribution is strictly prohibited.
+
 -- Run in Supabase SQL editor if you already created create_visit_enforced without p_max_gps_accuracy_meters.
 -- Or use the full definition in ../schema.sql
 
