@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
+import { FunctionsHttpError } from '@supabase/supabase-js'
 import { DealerMap } from './components/DealerMap'
 import { LoginScreen } from './components/LoginScreen'
 import { findInviteForEmail, normalizeEmail, type InvitedUser } from './lib/invites'
@@ -1299,6 +1300,13 @@ function App() {
           body: { email, role: inviteRole, password: invitePassword },
         })
         if (error) {
+          const status = error instanceof FunctionsHttpError ? error.context?.status : undefined
+          if (status === 401) {
+            setMessage(
+              'Invite failed: the function gateway rejected your session (401). Redeploy with `supabase/config.toml` setting `[functions.invite-user-with-password] verify_jwt = false` (then `npm run deploy:function:invite`). Auth is still enforced inside the function.',
+            )
+            return
+          }
           setMessage(
             error.message.includes('Failed to fetch') || error.message.includes('404')
               ? 'Invite failed: deploy the Edge Function `invite-user-with-password` and run `supabase functions deploy invite-user-with-password` (or `npm run deploy:function:invite`).'
