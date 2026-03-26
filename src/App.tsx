@@ -1009,6 +1009,52 @@ function App() {
     })
     return filtered.slice(0, 100)
   }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilter, visitHistoryCityFilter])
+  const clientWiseVisitRows = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        customerId: string
+        customerName: string
+        city: string
+        visits: number
+        firstVisitAt: string
+        lastVisitAt: string
+        lastVisitType: VisitType
+        lastSalesmanName: string
+        lat: number
+        lng: number
+      }
+    >()
+    for (const visit of visitHistoryRows) {
+      const city = customerById.get(visit.customerId)?.city ?? '—'
+      const current = grouped.get(visit.customerId)
+      if (!current) {
+        grouped.set(visit.customerId, {
+          customerId: visit.customerId,
+          customerName: visit.customerName,
+          city,
+          visits: 1,
+          firstVisitAt: visit.capturedAt,
+          lastVisitAt: visit.capturedAt,
+          lastVisitType: visit.visitType,
+          lastSalesmanName: visit.salesmanName,
+          lat: visit.lat,
+          lng: visit.lng,
+        })
+        continue
+      }
+      current.visits += 1
+      if (visit.capturedAt < current.firstVisitAt) current.firstVisitAt = visit.capturedAt
+      if (visit.capturedAt > current.lastVisitAt) {
+        current.lastVisitAt = visit.capturedAt
+        current.lastVisitType = visit.visitType
+        current.lastSalesmanName = visit.salesmanName
+        current.lat = visit.lat
+        current.lng = visit.lng
+      }
+    }
+    return [...grouped.values()].sort((a, b) => b.lastVisitAt.localeCompare(a.lastVisitAt))
+  }, [visitHistoryRows, customerById])
   const filteredMeetingResponses = useMemo(
     () =>
       meetingResponses.filter((m) =>
@@ -2752,6 +2798,55 @@ function App() {
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+            <article className="card">
+              <h3>Client-wise Visit History</h3>
+              <div className="scrollArea">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Client</th>
+                      <th>City</th>
+                      <th>Total visits</th>
+                      <th>First visit</th>
+                      <th>Last visit</th>
+                      <th>Last visit type</th>
+                      <th>Last salesman</th>
+                      <th>Map</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientWiseVisitRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="muted">
+                          No visits found for the selected filters.
+                        </td>
+                      </tr>
+                    ) : (
+                      clientWiseVisitRows.map((row) => (
+                        <tr key={row.customerId}>
+                          <td>{row.customerName}</td>
+                          <td>{row.city}</td>
+                          <td>{row.visits}</td>
+                          <td>{new Date(row.firstVisitAt).toLocaleString()}</td>
+                          <td>{new Date(row.lastVisitAt).toLocaleString()}</td>
+                          <td>{row.lastVisitType}</td>
+                          <td>{row.lastSalesmanName}</td>
+                          <td>
+                            <a
+                              href={googleMapsSearchUrl(row.lat, row.lng)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              Maps
+                            </a>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
