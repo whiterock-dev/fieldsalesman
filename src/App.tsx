@@ -562,15 +562,19 @@ function App() {
       (authSession.user.user_metadata?.full_name as string | undefined) || authSession.user.email || 'User'
     const uid = authSession.user.id
     void (async () => {
+      const accountEmail = normalizeEmail(authSession.user.email ?? '')
       const { data: existing } = await supabase.from('profiles').select('id').eq('id', uid).maybeSingle()
       if (!existing) {
         const { error } = await supabase.from('profiles').upsert(
-          { id: uid, full_name: displayName, role: matched.role },
+          { id: uid, full_name: displayName, role: matched.role, email: accountEmail },
           { onConflict: 'id' },
         )
         if (error) console.warn('Profile bootstrap:', error.message)
       } else {
-        const { error } = await supabase.from('profiles').update({ full_name: displayName }).eq('id', uid)
+        const { error } = await supabase
+          .from('profiles')
+          .update({ full_name: displayName, email: accountEmail })
+          .eq('id', uid)
         if (error) console.warn('Profile name update:', error.message)
       }
     })()
@@ -608,7 +612,7 @@ function App() {
         { data: liveRows, error: liveErr },
       ] = await Promise.all([
         sb.from('app_invites').select('email, role, added_at').order('added_at', { ascending: true }),
-        sb.from('profiles').select('id, full_name, role'),
+        sb.from('profiles').select('id, full_name, role, email'),
         sb.from('customers').select('*').order('created_at', { ascending: false }),
         sb.from('followups').select('*').order('due_date', { ascending: true }),
         sb.from('visits').select('*').order('captured_at', { ascending: false }).limit(200),
@@ -624,18 +628,39 @@ function App() {
       if (meetingResult.error) console.warn('meeting_responses:', meetingResult.error.message)
       if (liveErr) console.warn('live_locations:', liveErr.message)
 
-      if (!invitesErr && inviteRows) {
+      const meetingRows = meetingResult.error ? [] : (meetingResult.data ?? [])
+      const safeProfileRows = profilesErr ? [] : (profileRows ?? [])
+
+      let inviteRowsForState = inviteRows ?? []
+      if (!invitesErr && inviteRowsForState.length && safeProfileRows.length) {
+        const emailToRole = new Map<string, string>()
+        for (const p of safeProfileRows) {
+          const raw = (p as { email?: string | null }).email
+          if (raw && typeof raw === 'string') emailToRole.set(normalizeEmail(raw), p.role as string)
+        }
+        inviteRowsForState = [...inviteRowsForState]
+        for (let i = 0; i < inviteRowsForState.length; i++) {
+          const row = inviteRowsForState[i] as { email: string; role: string; added_at: string }
+          const em = normalizeEmail(row.email)
+          const want = emailToRole.get(em)
+          if (want && want !== row.role) {
+            const { error: upErr } = await sb.from('app_invites').update({ role: want }).eq('email', em)
+            if (upErr) console.warn('reconcile invite role to profile:', upErr.message)
+            else inviteRowsForState[i] = { ...row, role: want }
+          }
+        }
+      }
+
+      if (!invitesErr) {
         setInvitedUsers(
-          inviteRows.map((r) => ({
-            email: normalizeEmail(r.email as string),
-            role: r.role as Role,
-            addedAt: r.added_at as string,
+          inviteRowsForState.map((r) => ({
+            email: normalizeEmail((r as { email: string }).email),
+            role: (r as { role: string }).role as Role,
+            addedAt: (r as { added_at: string }).added_at,
           })),
         )
       }
 
-      const meetingRows = meetingResult.error ? [] : (meetingResult.data ?? [])
-      const safeProfileRows = profilesErr ? [] : (profileRows ?? [])
       const safeCustomerRows = customersErr ? [] : (customerRows ?? [])
       const safeFollowupRows = followupsErr ? [] : (followupRows ?? [])
       const safeVisitRows = visitsErr ? [] : (visitRows ?? [])
@@ -646,10 +671,12 @@ function App() {
         safeProfileRows.map((r) => {
           const name = (r.full_name as string) ?? 'User'
           profileNameById.set(r.id as string, name)
+          const rawEmail = (r as { email?: string | null }).email
           return {
             id: r.id as string,
             fullName: name,
             role: (r.role as Role) ?? 'salesman',
+            email: rawEmail && typeof rawEmail === 'string' ? normalizeEmail(rawEmail) : undefined,
           }
         }),
       )
@@ -2213,6 +2240,7 @@ function App() {
                     <thead>
                       <tr>
                         <th>Name</th>
+                        <th>Email</th>
                         <th>Role</th>
                         <th>User id</th>
                       </tr>
@@ -2220,7 +2248,7 @@ function App() {
                     <tbody>
                       {teamProfiles.length === 0 ? (
                         <tr>
-                          <td colSpan={3} className="muted">
+                          <td colSpan={4} className="muted">
                             No profiles loaded yet. Data loads from Supabase after sign-in.
                           </td>
                         </tr>
@@ -2231,6 +2259,7 @@ function App() {
                           .map((p) => (
                             <tr key={p.id}>
                               <td>{p.fullName}</td>
+                              <td className="muted settingsEmailCell">{p.email ?? '—'}</td>
                               <td>
                                 <span className="roleBadge">{p.role.replace(/_/g, ' ')}</span>
                               </td>

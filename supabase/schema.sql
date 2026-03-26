@@ -10,6 +10,7 @@ create table if not exists profiles (
   id text primary key,
   full_name text not null,
   role text not null check (role in ('owner', 'sub_admin', 'super_salesman', 'salesman')),
+  email text,
   created_at timestamptz not null default now()
 );
 

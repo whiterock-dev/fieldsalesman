@@ -161,7 +161,7 @@ Deno.serve(async (req) => {
 
     const displayName = email.split('@')[0] || 'User'
     const { error: profErr } = await admin.from('profiles').upsert(
-      { id: userId, full_name: displayName, role },
+      { id: userId, full_name: displayName, role, email },
       { onConflict: 'id' },
     )
     if (profErr) {
