@@ -1301,14 +1301,14 @@ function App() {
         if (error) {
           setMessage(
             error.message.includes('Failed to fetch') || error.message.includes('404')
-              ? 'Invite failed: deploy the Edge Function `invite-user-with-password` (see supabase/functions) and run `supabase functions deploy invite-user-with-password`.'
+              ? 'Invite failed: deploy the Edge Function `invite-user-with-password` and run `supabase functions deploy invite-user-with-password` (or `npm run deploy:function:invite`).'
               : `Invite failed: ${error.message}`,
           )
           return
         }
-        const payload = data as { error?: string; ok?: boolean } | null
-        if (payload?.error) {
-          setMessage(`Invite failed: ${payload.error}`)
+        const payload = data as { ok?: boolean; error?: string } | null
+        if (!payload?.ok) {
+          setMessage(`Invite failed: ${payload?.error ?? 'Unknown error'}`)
           return
         }
         setInvitedUsers((previous) => {

@@ -5,6 +5,14 @@ const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+/** Always HTTP 200 + JSON so supabase.functions.invoke returns `data` (non-2xx becomes a generic client error). */
+function json(body: Record<string, unknown>) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
+}
+
 function allowedTargetRoles(inviterRole: string): string[] | null {
   if (inviterRole === 'owner') return ['owner', 'salesman', 'sub_admin', 'super_salesman']
   if (inviterRole === 'sub_admin') return ['salesman', 'super_salesman']
@@ -44,18 +52,12 @@ Deno.serve(async (req) => {
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     if (!supabaseUrl || !anonKey || !serviceKey) {
-      return new Response(JSON.stringify({ error: 'Server misconfigured' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+      return json({ ok: false, error: 'Server misconfigured (missing Supabase env in Edge Function)' })
     }
 
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing authorization' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+      return json({ ok: false, error: 'Missing authorization' })
     }
 
     const userClient = createClient(supabaseUrl, anonKey, {
@@ -66,10 +68,7 @@ Deno.serve(async (req) => {
       error: userErr,
     } = await userClient.auth.getUser()
     if (userErr || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+      return json({ ok: false, error: userErr?.message ?? 'Unauthorized' })
     }
 
     const admin = createClient(supabaseUrl, serviceKey, {
@@ -83,18 +82,25 @@ Deno.serve(async (req) => {
       .maybeSingle()
 
     if (profileErr) {
-      return new Response(JSON.stringify({ error: profileErr.message }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+      return json({ ok: false, error: `profiles: ${profileErr.message}` })
     }
 
-    const inviterRole = profile?.role as string | undefined
+    let inviterRole = profile?.role as string | undefined
+    if (!inviterRole && user.email) {
+      const { data: inv } = await admin
+        .from('app_invites')
+        .select('role')
+        .eq('email', user.email.trim().toLowerCase())
+        .maybeSingle()
+      inviterRole = inv?.role as string | undefined
+    }
+
     const allowed = inviterRole ? allowedTargetRoles(inviterRole) : null
     if (!allowed) {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      return json({
+        ok: false,
+        error:
+          'Forbidden: your role cannot invite users, or your profile is missing. Ensure a row exists in public.profiles for your user id, or that your email is listed in app_invites with an owner/sub_admin/super_salesman role.',
       })
     }
 
@@ -106,26 +112,18 @@ Deno.serve(async (req) => {
     const password = String(body.password ?? '')
 
     if (!email.includes('@')) {
-      return new Response(JSON.stringify({ error: 'Invalid email' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+      return json({ ok: false, error: 'Invalid email' })
     }
 
     if (!allowed.includes(role)) {
-      return new Response(JSON.stringify({ error: 'You cannot invite that role' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+      return json({ ok: false, error: 'You cannot invite that role' })
     }
 
     if (!validPassword(password)) {
-      return new Response(
-        JSON.stringify({
-          error: 'Password must be at least 8 characters with uppercase, lowercase, and a number',
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      )
+      return json({
+        ok: false,
+        error: 'Password must be at least 8 characters with uppercase, lowercase, and a number',
+      })
     }
 
     const existingId = await findUserIdByEmail(admin, email)
@@ -137,10 +135,7 @@ Deno.serve(async (req) => {
         email_confirm: true,
       })
       if (updErr) {
-        return new Response(JSON.stringify({ error: updErr.message }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
+        return json({ ok: false, error: updErr.message })
       }
       userId = existingId
     } else {
@@ -150,10 +145,7 @@ Deno.serve(async (req) => {
         email_confirm: true,
       })
       if (createErr || !created.user?.id) {
-        return new Response(JSON.stringify({ error: createErr?.message ?? 'Could not create user' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
+        return json({ ok: false, error: createErr?.message ?? 'Could not create user' })
       }
       userId = created.user.id
     }
@@ -164,10 +156,7 @@ Deno.serve(async (req) => {
       { onConflict: 'email' },
     )
     if (invErr) {
-      return new Response(JSON.stringify({ error: `Invite row: ${invErr.message}` }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+      return json({ ok: false, error: `Invite row: ${invErr.message}` })
     }
 
     const displayName = email.split('@')[0] || 'User'
@@ -176,21 +165,12 @@ Deno.serve(async (req) => {
       { onConflict: 'id' },
     )
     if (profErr) {
-      return new Response(JSON.stringify({ error: `Profile: ${profErr.message}` }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+      return json({ ok: false, error: `Profile: ${profErr.message}` })
     }
 
-    return new Response(JSON.stringify({ ok: true, email, role }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+    return json({ ok: true, email, role })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+    return json({ ok: false, error: msg })
   }
 })
