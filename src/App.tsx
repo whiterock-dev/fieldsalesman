@@ -275,7 +275,6 @@ function App() {
 
   const scheduleWorkspaceReloadRef = useRef<(() => void) | null>(null)
   const [online, setOnline] = useState<boolean>(navigator.onLine)
-  const [syncing, setSyncing] = useState(false)
   const [geo, setGeo] = useState<{ lat: number; lng: number; accuracy: number; capturedAt: string } | null>(null)
   const [visitType, setVisitType] = useState<VisitType>('New lead')
   const [selectedCustomerId, setSelectedCustomerId] = useState('new')
@@ -915,8 +914,6 @@ function App() {
     () => kpiRows.filter((row) => (!kpiDateFilter || row.date === kpiDateFilter) && (kpiSalesmanFilter === 'all' || row.salesmanId === kpiSalesmanFilter)),
     [kpiDateFilter, kpiRows, kpiSalesmanFilter],
   )
-
-  const queuedVisitCount = visits.filter((item) => item.status === 'queued').length
 
   const dedupedCustomers = useMemo(() => {
     const seen = new Map<string, Customer>()
@@ -1695,7 +1692,10 @@ function App() {
       visitStartedAt,
     }
 
-    setVisits((previous) => [payload, ...previous])
+    setVisits((previous) => {
+      if (previous.some((v) => v.id === payload.id)) return previous
+      return [payload, ...previous]
+    })
     if (!supabase || !online) {
       setMeetingResponses((previous) => [
         { id: `m-${Date.now()}`, customerName, salesmanName: activeSalesman.name, response: notes.trim(), createdAt: capturedAt },
@@ -1787,55 +1787,6 @@ function App() {
     setPhotoHasEmbeddedWatermark(false)
     stopVisitCamera()
     setMessage(online ? 'Visit saved and synced.' : 'Visit saved offline. Sync later with same captured time.')
-  }
-
-  const syncQueued = async () => {
-    if (!online) return setMessage('You are offline. Connect internet to sync queued visits.')
-    if (!supabase) return setMessage('Supabase is not configured. Add .env.local to enable live sync.')
-
-    const queued = visits.filter((item) => item.status === 'queued')
-    if (!queued.length) return setMessage('No queued visits.')
-    setSyncing(true)
-
-    for (const visit of queued) {
-      const { data: createdVisit, error } = await supabase.rpc('create_visit_enforced', {
-        p_visit_id: visit.id,
-        p_customer_id: visit.customerId,
-        p_salesman_id: visit.salesmanId,
-        p_visit_type: visit.visitType,
-        p_captured_at: visit.capturedAt,
-        p_lat: visit.lat,
-        p_lng: visit.lng,
-        p_accuracy_meters: visit.accuracy,
-        p_photo_path: visit.photoDataUrl,
-        p_notes: visit.notes,
-        p_next_action: visit.nextAction || null,
-        p_follow_up_date: visit.followUpDate || null,
-        p_visit_started_at: visit.visitStartedAt ?? null,
-        p_max_gps_accuracy_meters: visit.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
-      })
-      if (!error) {
-        const visitRowId =
-          createdVisit && typeof createdVisit === 'object' && 'id' in createdVisit
-            ? String((createdVisit as { id: string }).id)
-            : visit.id
-        const { error: meetingErr } = await supabase.from('meeting_responses').upsert(
-          {
-            id: `m-${visit.id}`,
-            customer_name: visit.customerName,
-            salesman_name: visit.salesmanName,
-            response: visit.notes,
-            created_at: visit.capturedAt,
-            visit_id: visitRowId,
-          },
-          { onConflict: 'id' },
-        )
-        if (meetingErr) console.warn('meeting_responses sync:', meetingErr.message)
-        setVisits((previous) => previous.map((item) => (item.id === visit.id ? { ...item, status: 'synced' } : item)))
-      }
-    }
-    setSyncing(false)
-    setMessage('Queued visits sync attempt completed.')
   }
 
   const visitSessionCustomerLabel = visitSession
@@ -2088,7 +2039,7 @@ function App() {
                 <p className="muted">Customers: {customers.length}</p>
                 <p className="muted">Open follow-ups: {followUps.filter((f) => f.status !== 'closed').length}</p>
                 <p className="muted">Visits logged: {visits.length}</p>
-                <p className="muted">Queued offline visits: {queuedVisitCount}</p>
+
               </article>
               <article className="card">
                 <h3>Quick links</h3>
@@ -2638,27 +2589,42 @@ function App() {
           <section className="panel">
             <h2>Live tracking</h2>
             <article className="card">
-              <div className="inlineActions">
-                <button type="button" onClick={startLiveTracking}>
-                  Start tracking
-                </button>
-                <button type="button" className="secondary" onClick={stopLiveTracking}>
-                  Stop tracking
-                </button>
-                <button type="button" className="secondary" onClick={() => void syncQueued()} disabled={syncing}>
-                  {syncing ? 'Syncing…' : 'Sync offline visits'}
-                </button>
+              <p className="muted">
+                Share your real-time GPS position while in the field. Your location is recorded every few seconds
+                and visible to admins on the map.
+              </p>
+              <div className="rowBetween">
+                <p>
+                  Status:{' '}
+                  <span className={watchIdRef.current !== null ? 'statusTag ok' : 'statusTag warning'}>
+                    {watchIdRef.current !== null ? 'Tracking active' : 'Stopped'}
+                  </span>
+                </p>
+                <div className="inlineActions">
+                  {watchIdRef.current === null ? (
+                    <button type="button" onClick={startLiveTracking}>
+                      Start tracking
+                    </button>
+                  ) : (
+                    <button type="button" className="secondary" onClick={stopLiveTracking}>
+                      Stop tracking
+                    </button>
+                  )}
+                </div>
               </div>
-              <p className="muted">Latest pings (newest first):</p>
-              <ul className="miniList">
-                {mapLivePoints.slice(0, 8).map((point, index) => (
-                  <li key={`${point.time}-${index}`}>
-                    {new Date(point.time).toLocaleTimeString()} | {point.lat.toFixed(5)}, {point.lng.toFixed(5)} (±
-                    {Math.round(point.accuracy)}m)
-                  </li>
-                ))}
-              </ul>
             </article>
+            {mapLivePoints.length > 0 ? (
+              <article className="card">
+                <h3>Recent pings</h3>
+                <ul className="miniList">
+                  {mapLivePoints.slice(0, 12).map((point, index) => (
+                    <li key={`${point.time}-${index}`}>
+                      {new Date(point.time).toLocaleTimeString()} — {point.lat.toFixed(5)}, {point.lng.toFixed(5)} (±{Math.round(point.accuracy)}m)
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ) : null}
           </section>
         )
       case 'field_customers':
@@ -2886,7 +2852,6 @@ function App() {
               </span>
             ) : null}
             <span className={online ? 'statusTag ok' : 'statusTag warning'}>{online ? 'Online' : 'Offline'}</span>
-            <span className="statusTag queueTag">Q:{queuedVisitCount}</span>
             {showLogOut ? (
               <button type="button" className="secondary topLogoutBtn" onClick={() => void handleSignOut()}>
                 Log out
