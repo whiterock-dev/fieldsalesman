@@ -78,11 +78,12 @@ body {
 }
 
 .loginTitle--ims {
-  font-size: 1.5rem;
+  font-size: clamp(1.05rem, 3.2vw, 1.35rem);
   font-weight: 700;
   color: #0a0a0a;
   letter-spacing: -0.02em;
   margin: 0 0 0.35rem;
+  line-height: 1.25;
 }
 
 .loginSubtitle {
@@ -139,6 +140,111 @@ body {
   color: #1e40af;
   background: #eff6ff;
   border: 1px solid #bfdbfe;
+}
+
+.loginEmailForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  text-align: left;
+  margin-bottom: 0.25rem;
+}
+
+.loginFieldLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.loginFieldInput {
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  font-size: 0.95rem;
+  background: #fff;
+}
+
+.loginFieldInput:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 0;
+  border-color: #2563eb;
+}
+
+.loginPasswordHint {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin: 0;
+  line-height: 1.35;
+}
+
+.loginSubmitBtn {
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.65rem 1rem;
+  border-radius: 8px;
+  border: none;
+  background: #0a0a0a;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.loginSubmitBtn:hover {
+  background: #252530;
+}
+
+.loginModeLink {
+  align-self: center;
+  margin-top: 0.15rem;
+  padding: 0.35rem;
+  background: none;
+  border: none;
+  color: #2563eb;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.loginSignupHint {
+  font-size: 0.78rem;
+  color: #6b7280;
+  line-height: 1.45;
+  margin: 0.35rem 0 0;
+  text-align: center;
+}
+
+.loginInlineLink {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  color: #2563eb;
+  font-size: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.loginDivider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  color: #9ca3af;
+  font-size: 0.8rem;
+}
+
+.loginDivider::before,
+.loginDivider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
 }
 
 .loginGoogleBtn {

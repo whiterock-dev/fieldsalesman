@@ -85,7 +85,7 @@ create table if not exists meeting_responses (
 
 create index if not exists idx_meeting_responses_created_at on meeting_responses (created_at desc);
 
--- Server-side 30m rule for existing customers.
+-- Server-side: existing-customer visits must be within 100m of pin; GPS max accuracy via p_max_gps_accuracy_meters.
 create or replace function public.create_visit_enforced(
   p_visit_id text,
   p_customer_id text,
@@ -112,6 +112,7 @@ declare
   v_distance double precision;
   v_visit visits;
   v_max_acc double precision;
+  v_radius_m double precision := 100;
 begin
   if p_visit_id is null or btrim(p_visit_id) = '' then
     raise exception 'Visit id is required';
@@ -132,14 +133,13 @@ begin
   end if;
 
   if p_visit_type = 'Existing customer' then
-    -- Approximate earth distance in meters.
     v_distance :=
       6371000 * acos(
         cos(radians(v_customer.lat)) * cos(radians(p_lat)) * cos(radians(p_lng) - radians(v_customer.lng))
         + sin(radians(v_customer.lat)) * sin(radians(p_lat))
       );
-    if v_distance > 30 then
-      raise exception 'Visit rejected: outside 30m customer radius (%.2f m)', v_distance;
+    if v_distance > v_radius_m then
+      raise exception 'Visit rejected: outside %sm customer radius (%.2f m)', v_radius_m, v_distance;
     end if;
   else
     v_distance := null;

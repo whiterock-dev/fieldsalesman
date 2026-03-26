@@ -1,45 +1,35 @@
+import { useState, type FormEvent } from 'react'
+import { PASSWORD_POLICY_HINT } from '../lib/passwordPolicy'
+
 type LoginScreenProps = {
   supabaseConfigured: boolean
   message?: string
-  /** When true, message uses error styling; otherwise success/info styling */
   messageIsError?: boolean
-  onGoogleSignIn: () => void
-}
-
-function GoogleGIcon() {
-  return (
-    <svg className="loginGoogleSvg" viewBox="0 0 48 48" width="20" height="20" aria-hidden>
-      <path
-        fill="#EA4335"
-        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-      />
-      <path
-        fill="#4285F4"
-        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6C44.43 37.96 46.98 31.85 46.98 24.55z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-      />
-      <path
-        fill="#34A853"
-        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-      />
-      <path fill="none" d="M0 0h48v48H0z" />
-    </svg>
-  )
+  onEmailSignIn: (email: string, password: string) => void | Promise<void>
+  onEmailSignUp: (email: string, password: string) => void | Promise<void>
 }
 
 export function LoginScreen({
   supabaseConfigured,
   message,
   messageIsError = false,
-  onGoogleSignIn,
+  onEmailSignIn,
+  onEmailSignUp,
 }: LoginScreenProps) {
+  const [mode, setMode] = useState<'sign_in' | 'sign_up'>('sign_in')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault()
+    if (mode === 'sign_up') void onEmailSignUp(email, password)
+    else void onEmailSignIn(email, password)
+  }
+
   return (
     <div className="loginScreen loginScreen--ims">
       <div className="loginCard loginCard--ims">
-        <h1 className="loginTitle loginTitle--ims">Field Salesman</h1>
+        <h1 className="loginTitle loginTitle--ims">Whiterock Field Salesman</h1>
         <p className="loginSubtitle loginSubtitle--ims">Visits, tracking &amp; CRM</p>
 
         {!supabaseConfigured ? (
@@ -56,10 +46,50 @@ export function LoginScreen({
         ) : null}
 
         {supabaseConfigured ? (
-          <button type="button" className="loginGoogleBtn loginGoogleBtn--ims" onClick={onGoogleSignIn}>
-            <GoogleGIcon />
-            Sign in with Google
-          </button>
+          <form className="loginEmailForm" onSubmit={handleSubmit}>
+            <label className="loginFieldLabel">
+              Email
+              <input
+                className="loginFieldInput"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(ev) => setEmail(ev.target.value)}
+                placeholder="you@company.com"
+              />
+            </label>
+            <label className="loginFieldLabel">
+              Password
+              <input
+                className="loginFieldInput"
+                type="password"
+                autoComplete={mode === 'sign_up' ? 'new-password' : 'current-password'}
+                value={password}
+                onChange={(ev) => setPassword(ev.target.value)}
+                placeholder="••••••••"
+              />
+            </label>
+            <p className="loginPasswordHint">{PASSWORD_POLICY_HINT}</p>
+            <button type="submit" className="loginSubmitBtn">
+              {mode === 'sign_up' ? 'Create account' : 'Sign in'}
+            </button>
+            <button
+              type="button"
+              className="loginModeLink"
+              onClick={() => setMode((m) => (m === 'sign_in' ? 'sign_up' : 'sign_in'))}
+            >
+              {mode === 'sign_in' ? 'Need an account? Sign up' : 'Already have an account? Sign in'}
+            </button>
+            {mode === 'sign_up' ? (
+              <p className="loginSignupHint">
+                If this email is <strong>already registered</strong>, switch to{' '}
+                <button type="button" className="loginInlineLink" onClick={() => setMode('sign_in')}>
+                  Sign in
+                </button>
+                —do not create again.
+              </p>
+            ) : null}
+          </form>
         ) : null}
       </div>
     </div>

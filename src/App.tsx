@@ -4,6 +4,8 @@ import { DealerMap } from './components/DealerMap'
 import { LoginScreen } from './components/LoginScreen'
 import { findInviteForEmail, normalizeEmail, type InvitedUser } from './lib/invites'
 import { addableRolesFor, type Role } from './lib/roles'
+import { friendlyAuthMessage } from './lib/authMessages'
+import { isValidPassword, PASSWORD_POLICY_HINT } from './lib/passwordPolicy'
 import { supabase, supabaseEnabled } from './lib/supabase'
 import { colorForSalesmanId, salesmanColorMap } from './mapColors'
 
@@ -75,10 +77,8 @@ type VisitSession = {
   quickLead: {
     name: string
     phone: string
-    whatsapp: string
     address: string
     city: string
-    tags: string
   }
 }
 type MeetingResponse = { id: string; customerName: string; salesmanName: string; response: string; createdAt: string }
@@ -91,8 +91,6 @@ type KpiRow = {
   firstVisitTime: string
   lastVisitTime: string
   visitCount: number
-  startTime: string
-  endTime: string
 }
 type NavId =
   | 'dashboard'
@@ -114,7 +112,7 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
     id: 'add_visit',
     label: 'Add visit',
     section: 'Field',
-    show: (r) => r === 'salesman' || r === 'super_salesman' || r === 'owner' || r === 'sub_admin',
+    show: (r) => r === 'salesman' || r === 'super_salesman',
   },
   { id: 'field_followups', label: 'Pending follow-ups', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
   { id: 'field_tracking', label: 'Live tracking', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
@@ -161,7 +159,8 @@ function syncNavToLocation(view: NavId) {
 const GPS_THRESHOLD_METERS = 30
 /** New leads have no prior map pin — allow looser GPS (phones often 30–80m). */
 const GPS_THRESHOLD_NEW_LEAD_METERS = 80
-const RADIUS_THRESHOLD_METERS = 30
+/** Max distance from customer map pin for existing-customer visits (GPS accuracy still ≤ 30m). */
+const RADIUS_THRESHOLD_METERS = 100
 const VISIT_TYPES: VisitType[] = ['New lead', 'Existing customer', 'Follow-up', 'Collection', 'Complaint']
 
 const INITIAL_CUSTOMERS: Customer[] = [
@@ -243,8 +242,6 @@ function kpiFromVisits(visits: VisitRecord[], salesmen: Salesman[]): KpiRow[] {
       firstVisitTime: kpiDateTimeLabel(firstIso),
       lastVisitTime: kpiDateTimeLabel(lastIso),
       visitCount: sorted.length,
-      startTime: kpiDateTimeLabel(firstIso),
-      endTime: kpiDateTimeLabel(lastIso),
     }
   }).sort((a, b) => b.date.localeCompare(a.date))
 }
@@ -275,10 +272,8 @@ function App() {
   const [selectedCustomerId, setSelectedCustomerId] = useState('new')
   const [quickLeadName, setQuickLeadName] = useState('')
   const [quickLeadPhone, setQuickLeadPhone] = useState('')
-  const [quickLeadWhatsapp, setQuickLeadWhatsapp] = useState('')
   const [quickLeadAddress, setQuickLeadAddress] = useState('')
   const [quickLeadCity, setQuickLeadCity] = useState('')
-  const [quickLeadTags, setQuickLeadTags] = useState('')
   const [notes, setNotes] = useState('')
   const [nextAction, setNextAction] = useState('')
   const [followUpDate, setFollowUpDate] = useState('')
@@ -304,6 +299,9 @@ function App() {
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<Role>('salesman')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [settingsNewPassword, setSettingsNewPassword] = useState('')
+  const [settingsConfirmPassword, setSettingsConfirmPassword] = useState('')
+  const [settingsPasswordMessage, setSettingsPasswordMessage] = useState('')
 
   const salesmen = useMemo(
     () =>
@@ -319,7 +317,7 @@ function App() {
     if (findInviteForEmail(invitedUsers, email)) return true
     /** While invites are still loading from Supabase, keep the shell open; sign-out waits until `inviteSourceReady`. */
     if (supabaseEnabled && !inviteSourceReady) return true
-    /** First Google sign-in while invite list is empty becomes owner (effect uses functional update; only one wins). */
+    /** First sign-in while invite list is empty becomes owner (effect uses functional update; only one wins). */
     if (invitedUsers.length === 0) return true
     return false
   }, [authSession, invitedUsers, inviteSourceReady])
@@ -724,7 +722,7 @@ function App() {
 
     void channel.subscribe((status) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.warn('Field Salesman realtime:', status)
+        console.warn('Whiterock Field Salesman realtime:', status)
       }
     })
 
@@ -782,7 +780,12 @@ function App() {
   }, [role, livePoints, activeSalesman.id])
 
   const mapRecentVisits = useMemo(() => {
-    const slice = visits.slice(0, 40)
+    const isFieldSalesmanVisit = (v: VisitRecord) => {
+      const p = teamProfiles.find((x) => x.id === v.salesmanId)
+      if (!p) return true
+      return p.role === 'salesman' || p.role === 'super_salesman'
+    }
+    const slice = visits.filter(isFieldSalesmanVisit).slice(0, 40)
     if (role === 'salesman') {
       return slice
         .filter((v) => v.salesmanId === activeSalesman.id)
@@ -805,7 +808,7 @@ function App() {
       salesmanName: v.salesmanName,
       salesmanId: v.salesmanId,
     }))
-  }, [role, visits, activeSalesman.id])
+  }, [role, visits, activeSalesman.id, teamProfiles])
 
   const visitHistoryRows = useMemo(() => {
     const rows = role === 'salesman' ? visits.filter((v) => v.salesmanId === activeSalesman.id) : visits
@@ -1148,10 +1151,8 @@ function App() {
       quickLead: {
         name: quickLeadName.trim(),
         phone: quickLeadPhone.trim(),
-        whatsapp: quickLeadWhatsapp.trim() || quickLeadPhone.trim(),
         address: quickLeadAddress.trim() || 'Address pending',
         city: quickLeadCity.trim() || 'Unknown',
-        tags: quickLeadTags,
       },
     })
     setGeo(null)
@@ -1211,18 +1212,76 @@ function App() {
     watchIdRef.current = null
   }
 
-  const signInWithGoogle = async () => {
+  const signInWithEmailPassword = async (email: string, password: string) => {
     setLoginMessage('')
     setLoginMessageIsError(false)
     if (!supabase) return
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${window.location.origin}/` },
+    const trimmed = email.trim()
+    if (!trimmed || !password) {
+      setLoginMessageIsError(true)
+      setLoginMessage('Enter email and password.')
+      return
+    }
+    if (!isValidPassword(password)) {
+      setLoginMessageIsError(true)
+      setLoginMessage(PASSWORD_POLICY_HINT)
+      return
+    }
+    const { error } = await supabase.auth.signInWithPassword({ email: trimmed, password })
+    if (error) {
+      setLoginMessageIsError(true)
+      setLoginMessage(friendlyAuthMessage(error.message, 'sign_in'))
+    }
+  }
+
+  const signUpWithEmailPassword = async (email: string, password: string) => {
+    setLoginMessage('')
+    setLoginMessageIsError(false)
+    if (!supabase) return
+    const trimmed = email.trim()
+    if (!trimmed || !password) {
+      setLoginMessageIsError(true)
+      setLoginMessage('Enter email and password.')
+      return
+    }
+    if (!isValidPassword(password)) {
+      setLoginMessageIsError(true)
+      setLoginMessage(PASSWORD_POLICY_HINT)
+      return
+    }
+    const { error } = await supabase.auth.signUp({
+      email: trimmed,
+      password,
+      options: { emailRedirectTo: `${window.location.origin}/` },
     })
     if (error) {
       setLoginMessageIsError(true)
-      setLoginMessage(error.message)
+      setLoginMessage(friendlyAuthMessage(error.message, 'sign_up'))
+      return
     }
+    setLoginMessageIsError(false)
+    setLoginMessage('If email confirmation is enabled, check your inbox—then sign in. Otherwise you can sign in now.')
+  }
+
+  const updateAccountPassword = async () => {
+    setSettingsPasswordMessage('')
+    if (!supabase || !authSession) return
+    if (settingsNewPassword !== settingsConfirmPassword) {
+      setSettingsPasswordMessage('New passwords do not match.')
+      return
+    }
+    if (!isValidPassword(settingsNewPassword)) {
+      setSettingsPasswordMessage(PASSWORD_POLICY_HINT)
+      return
+    }
+    const { error } = await supabase.auth.updateUser({ password: settingsNewPassword })
+    if (error) {
+      setSettingsPasswordMessage(error.message)
+      return
+    }
+    setSettingsNewPassword('')
+    setSettingsConfirmPassword('')
+    setSettingsPasswordMessage('Password updated.')
   }
 
   const handleSignOut = async () => {
@@ -1272,14 +1331,14 @@ function App() {
           return [...previous, { email, role: inviteRole, addedAt }]
         })
         setInviteEmail('')
-        setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They sign in with Google using that email only.`)
+        setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They must sign in using that exact email.`)
         scheduleWorkspaceReloadRef.current?.()
       })()
       return
     }
     setInvitedUsers((previous) => [...previous, { email, role: inviteRole, addedAt }])
     setInviteEmail('')
-    setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They sign in with Google using that email only.`)
+    setMessage(`Invited ${email} as ${inviteRole.replace(/_/g, ' ')}. They must sign in using that exact email.`)
   }
 
   const removeInvitedUser = (email: string) => {
@@ -1344,15 +1403,14 @@ function App() {
 
     if (session.selectedCustomerId === 'new') {
       const ql = session.quickLead
-      const tagList = ql.tags.split(',').map((item) => item.trim()).filter(Boolean)
       const newCustomer: Customer = {
         id: `c-${Date.now()}`,
         name: ql.name,
         phone: ql.phone,
-        whatsapp: ql.whatsapp,
+        whatsapp: ql.phone,
         address: ql.address,
         city: ql.city,
-        tags: tagList,
+        tags: [],
         assignedSalesmanId: activeSalesman.id,
         lat: geo.lat,
         lng: geo.lng,
@@ -1498,10 +1556,8 @@ function App() {
     setSelectedCustomerId('new')
     setQuickLeadName('')
     setQuickLeadPhone('')
-    setQuickLeadWhatsapp('')
     setQuickLeadAddress('')
     setQuickLeadCity('')
-    setQuickLeadTags('')
     setVisitType('New lead')
     setNotes('')
     setNextAction('')
@@ -1665,20 +1721,12 @@ function App() {
                 <input value={quickLeadPhone} onChange={(event) => setQuickLeadPhone(event.target.value)} />
               </label>
               <label>
-                WhatsApp
-                <input value={quickLeadWhatsapp} onChange={(event) => setQuickLeadWhatsapp(event.target.value)} />
-              </label>
-              <label>
                 Address
                 <input value={quickLeadAddress} onChange={(event) => setQuickLeadAddress(event.target.value)} />
               </label>
               <label>
                 City / area
                 <input value={quickLeadCity} onChange={(event) => setQuickLeadCity(event.target.value)} />
-              </label>
-              <label>
-                Tags (comma separated)
-                <input value={quickLeadTags} onChange={(event) => setQuickLeadTags(event.target.value)} />
               </label>
             </>
           ) : null}
@@ -1828,8 +1876,8 @@ function App() {
           <section className="panel">
             <h2>Map</h2>
             <p className="muted">
-              Each salesman has a consistent color on customer pins, live pings, and recent visit dots. Unassigned
-              customers use gray.
+              Each salesman has a consistent color on customer pins and on recent visit dots (field salesmen only).
+              Unassigned customers use gray. Live GPS pings are on the Live tracking screen, not here.
             </p>
             {salesmen.length ? (
               <div className="mapColorKey">
@@ -1855,7 +1903,7 @@ function App() {
                 assignedSalesmanId: c.assignedSalesmanId,
                 salesmanName: salesmen.find((x) => x.id === c.assignedSalesmanId)?.name,
               }))}
-              livePoints={mapLivePoints}
+              livePoints={[]}
               recentVisits={mapRecentVisits}
               salesmen={salesmen}
             />
@@ -1878,7 +1926,6 @@ function App() {
                   <tr>
                     <th>Salesman</th>
                     <th>Overdue count</th>
-                    <th>Due tasks</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1886,7 +1933,6 @@ function App() {
                     <tr key={salesman.id}>
                       <td>{salesman.name}</td>
                       <td>{overdue.length}</td>
-                      <td>{overdue.map((item) => item.dueDate).join(', ') || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1932,8 +1978,8 @@ function App() {
             <article className="card">
               <h3>Account</h3>
               <p className="muted">
-                Signed in with Google. Your role comes from the invite list. There is no password — use the same Google
-                account as the invited email.
+                Your role comes from the invite list. Sign in with <strong>email and password</strong> using the same
+                email you were invited with.
               </p>
               {authSession?.user?.email ? (
                 <p>
@@ -1952,14 +1998,50 @@ function App() {
               </div>
             </article>
 
+            {supabaseEnabled && authSession ? (
+              <article className="card">
+                <h3>Change password</h3>
+                <p className="muted">Use a new password that meets the same rules as at sign-up. You can change it anytime.</p>
+                {settingsPasswordMessage ? <p className="muted">{settingsPasswordMessage}</p> : null}
+                <div className="formGrid">
+                  <label>
+                    New password
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      value={settingsNewPassword}
+                      onChange={(event) => setSettingsNewPassword(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Confirm new password
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      value={settingsConfirmPassword}
+                      onChange={(event) => setSettingsConfirmPassword(event.target.value)}
+                    />
+                  </label>
+                </div>
+                <p className="muted" style={{ fontSize: '0.85rem' }}>
+                  {PASSWORD_POLICY_HINT}
+                </p>
+                <div className="inlineActions">
+                  <button type="button" onClick={() => void updateAccountPassword()}>
+                    Update password
+                  </button>
+                </div>
+              </article>
+            ) : null}
+
             {addableTeamRoles.length ? (
               <article className="card">
                 <h3>Add user (invite)</h3>
                 <p className="muted">
-                  Enter the person&apos;s email and role. They must sign in with <strong>Google using that exact email</strong>{' '}
-                  (no password field). <strong>Owner</strong> can invite owner, salesman, sub-admin, and super-salesman.{' '}
-                  <strong>Sub-admin</strong> can invite salesman and super-salesman. <strong>Super-salesman</strong> can
-                  invite salesman.
+                  Enter the person&apos;s email and role. They must use <strong>that exact email</strong> to sign in.
+                  <strong>Owner</strong> can invite owner, salesman, sub-admin, and
+                  super-salesman. <strong>Sub-admin</strong> can invite salesman and super-salesman.{' '}
+                  <strong>Super-salesman</strong> can invite salesman.
                 </p>
                 <div className="formGrid">
                   <label>
@@ -1993,7 +2075,7 @@ function App() {
 
             <article className="card">
               <h3>Invited emails ({invitedUsers.length})</h3>
-              <p className="muted">Only these Google accounts can sign in (when using Supabase + Google).</p>
+              <p className="muted">Only these invited emails can access the app (after they register or sign in with a password).</p>
               <div className="scrollArea">
                 <table>
                   <thead>
@@ -2008,7 +2090,7 @@ function App() {
                     {invitedUsers.length === 0 ? (
                       <tr>
                         <td colSpan={role === 'owner' ? 4 : 3} className="muted">
-                          No invites yet. The first Google sign-in while this list is empty is added as <strong>owner</strong>.
+                          No invites yet. The first sign-in while this list is empty is added as <strong>owner</strong>.
                           After that, owners add everyone (including more owners) here under Add user.
                         </td>
                       </tr>
@@ -2104,8 +2186,6 @@ function App() {
                       <th>Total working hrs</th>
                       <th>Last − first visit</th>
                       <th>Visits</th>
-                      <th>Start</th>
-                      <th>End</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2118,8 +2198,6 @@ function App() {
                           {item.lastVisitTime} − {item.firstVisitTime}
                         </td>
                         <td>{item.visitCount}</td>
-                        <td>{item.startTime}</td>
-                        <td>{item.endTime}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2273,7 +2351,8 @@ function App() {
         supabaseConfigured={supabaseEnabled}
         message={loginMessage}
         messageIsError={loginMessageIsError}
-        onGoogleSignIn={() => void signInWithGoogle()}
+        onEmailSignIn={(email, password) => void signInWithEmailPassword(email, password)}
+        onEmailSignUp={(email, password) => void signUpWithEmailPassword(email, password)}
       />
     )
   }
@@ -2297,7 +2376,7 @@ function App() {
         aria-label="Main navigation"
       >
         <div className="sidebarBrand">
-          <h1>Field Salesman</h1>
+          <h1>Whiterock Field Salesman</h1>
           <p>Visits, tracking &amp; CRM</p>
         </div>
         <nav className="sidebarNav" aria-label="Sections">
@@ -2320,13 +2399,6 @@ function App() {
             </div>
           ))}
         </nav>
-        {showLogOut ? (
-          <div className="sidebarFooter">
-            <button type="button" className="secondary sidebarLogoutBtn" onClick={() => void handleSignOut()}>
-              Log out
-            </button>
-          </div>
-        ) : null}
       </aside>
 
       <div className="mainArea">
@@ -2343,14 +2415,14 @@ function App() {
               <span className="menuToggleIcon" aria-hidden />
             </button>
             <div className="topBarTitles">
-              <h1 className="topBarTitle">Field Salesman</h1>
+              <h1 className="topBarTitle">Whiterock Field Salesman</h1>
               <p className="muted topBarSubtitle">{activeViewLabel}</p>
             </div>
           </div>
 
           <div className="topControls">
             {authSession?.user?.email ? (
-              <span className="topUserEmail" title="Signed in with Google">
+              <span className="topUserEmail" title="Signed-in account">
                 {authSession.user.email}
               </span>
             ) : null}

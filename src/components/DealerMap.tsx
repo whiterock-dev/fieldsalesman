@@ -204,11 +204,14 @@ export function DealerMap({
           <i className="legend-pin dealer" style={{ background: UNASSIGNED_PIN_COLOR }} /> Customers (color = assigned
           salesman)
         </span>
+        {livePoints.length ? (
+          <span>
+            <i className="legend-dot live" style={{ background: '#9333ea' }} /> Live ping (same color as that salesman)
+          </span>
+        ) : null}
         <span>
-          <i className="legend-dot live" style={{ background: '#9333ea' }} /> Live ping (same color as that salesman)
-        </span>
-        <span>
-          <i className="legend-dot visit" style={{ background: '#16a34a' }} /> Recent visits (salesman color)
+          <i className="legend-dot visit" style={{ background: '#16a34a' }} /> Recent visits (field salesmen; salesman
+          color)
         </span>
       </div>
     </div>
