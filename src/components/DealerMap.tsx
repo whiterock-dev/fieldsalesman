@@ -5,7 +5,7 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import L from 'leaflet'
 import { CircleMarker, MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -81,11 +81,35 @@ type VisitPoint = {
 
 function FitBounds({ points }: { points: L.LatLngExpression[] }) {
   const map = useMap()
+  const lastFitKeyRef = useRef<string>('')
   useEffect(() => {
     if (points.length === 0) return
+    const key = points
+      .map((p) => {
+        const ll = Array.isArray(p) ? p : [0, 0]
+        return `${Number(ll[0]).toFixed(5)},${Number(ll[1]).toFixed(5)}`
+      })
+      .join('|')
+    if (key === lastFitKeyRef.current) return
+    lastFitKeyRef.current = key
     const bounds = L.latLngBounds(points)
     map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15 })
   }, [map, points])
+  return null
+}
+
+function ResizeInvalidate() {
+  const map = useMap()
+  useEffect(() => {
+    const refresh = () => map.invalidateSize()
+    refresh()
+    const t = window.setTimeout(refresh, 250)
+    window.addEventListener('resize', refresh)
+    return () => {
+      window.clearTimeout(t)
+      window.removeEventListener('resize', refresh)
+    }
+  }, [map])
   return null
 }
 
@@ -134,11 +158,19 @@ export function DealerMap({
 
   return (
     <div className={`dealer-map-wrap ${className}`.trim()}>
-      <MapContainer center={center} zoom={zoom} scrollWheelZoom className="dealer-map">
+      <MapContainer
+        center={center}
+        zoom={zoom}
+        scrollWheelZoom={false}
+        touchZoom
+        zoomControl
+        className="dealer-map"
+      >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        <ResizeInvalidate />
         {showFit ? <FitBounds points={boundsPoints} /> : null}
 
         {customers.map((c) => (

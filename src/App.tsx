@@ -1222,8 +1222,9 @@ function App() {
       locationRequestIdRef.current += 1
       clearVisitLocationWatch()
       setVisitSession(null)
+      if (/^(Arrival|Leave) locked/i.test(message)) setMessage('')
     }
-  }, [activeView, clearVisitLocationWatch])
+  }, [activeView, clearVisitLocationWatch, message])
 
   const lockVisitLocation = async (phase: 'arrival' | 'leave') => {
     setMessage('')
