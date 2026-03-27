@@ -920,6 +920,15 @@ function App() {
       ),
     [pendingFollowUpsForSalesman, salesmanFollowUpDateFilter],
   )
+  const openFollowUpsCount = useMemo(() => {
+    const byId = new Map<string, FollowUp>()
+    for (const f of followUps) byId.set(f.id, f)
+    let count = 0
+    for (const f of byId.values()) {
+      if (f.status !== 'closed') count += 1
+    }
+    return count
+  }, [followUps])
   const archivedFollowUpsForSalesman = useMemo(
     () =>
       followUps
@@ -931,6 +940,17 @@ function App() {
         )
         .sort((a, b) => b.dueDate.localeCompare(a.dueDate)),
     [followUps, activeSalesman.id, salesmanFollowUpDateFilter],
+  )
+  const syncedVisits = useMemo(() => {
+    const byId = new Map<string, VisitRecord>()
+    for (const v of visits) {
+      if (v.status === 'synced') byId.set(v.id, v)
+    }
+    return [...byId.values()]
+  }, [visits])
+  const syncedVisitsTodayCount = useMemo(
+    () => syncedVisits.filter((v) => v.capturedAt.slice(0, 10) === todayIso).length,
+    [syncedVisits, todayIso],
   )
   const kpiRows = useMemo(() => kpiFromVisits(visits, salesmen), [visits, salesmen])
   const filteredKpiRows = useMemo(
@@ -2179,9 +2199,9 @@ function App() {
             <div className="grid two">
               <article className="card">
                 <h3>Summary</h3>
-                <p className="muted">Customers: {customers.length}</p>
-                <p className="muted">Open follow-ups: {followUps.filter((f) => f.status !== 'closed').length}</p>
-                <p className="muted">Visits logged: {visits.length}</p>
+                <p className="muted">Customers: {dedupedCustomers.length}</p>
+                <p className="muted">Open follow-ups: {openFollowUpsCount}</p>
+                <p className="muted">Visits logged: {syncedVisits.length}</p>
 
               </article>
               <article className="card">
@@ -2214,8 +2234,8 @@ function App() {
                 <article className="card">
                   <h3>Admin metrics</h3>
                   <p className="muted">Field salesmen: {salesmen.length}</p>
-                  <p className="muted">Total visits: {visits.length}</p>
-                  <p className="muted">Visits today: {visits.filter((v) => v.capturedAt.slice(0, 10) === todayIso).length}</p>
+                  <p className="muted">Total visits: {syncedVisits.length}</p>
+                  <p className="muted">Visits today: {syncedVisitsTodayCount}</p>
                 </article>
               )}
               {(role === 'salesman' || role === 'super_salesman') && (
