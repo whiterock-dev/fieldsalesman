@@ -167,11 +167,11 @@ function syncNavToLocation(view: NavId) {
   if (current !== target) window.history.replaceState(null, '', target)
 }
 
-/** Max reported GPS uncertainty allowed when visiting an existing customer (tight geo-fence). */
-const GPS_THRESHOLD_METERS = 30
-/** New leads have no prior map pin — allow looser GPS (phones often 30–80m). */
+/** Max reported GPS uncertainty allowed for existing-customer visit flows. */
+const GPS_THRESHOLD_METERS = 100
+/** New leads have no prior map pin — keep a slightly tighter GPS expectation. */
 const GPS_THRESHOLD_NEW_LEAD_METERS = 80
-/** Max distance from customer map pin for existing-customer visits (GPS accuracy still ≤ 30m). */
+/** Max distance from customer map pin for existing-customer visits. */
 const RADIUS_THRESHOLD_METERS = 100
 const INITIAL_CUSTOMERS: Customer[] = [
   {
@@ -920,6 +920,18 @@ function App() {
       ),
     [pendingFollowUpsForSalesman, salesmanFollowUpDateFilter],
   )
+  const archivedFollowUpsForSalesman = useMemo(
+    () =>
+      followUps
+        .filter(
+          (item) =>
+            item.salesmanId === activeSalesman.id &&
+            item.status === 'closed' &&
+            (salesmanFollowUpDateFilter ? item.dueDate === salesmanFollowUpDateFilter : true),
+        )
+        .sort((a, b) => b.dueDate.localeCompare(a.dueDate)),
+    [followUps, activeSalesman.id, salesmanFollowUpDateFilter],
+  )
   const kpiRows = useMemo(() => kpiFromVisits(visits, salesmen), [visits, salesmen])
   const filteredKpiRows = useMemo(
     () => kpiRows.filter((row) => (!kpiDateFilter || row.date === kpiDateFilter) && (kpiSalesmanFilter === 'all' || row.salesmanId === kpiSalesmanFilter)),
@@ -1111,6 +1123,17 @@ function App() {
       }),
     [meetingResponses, meetingDateFilter, meetingSalesmanFilter],
   )
+  const messageLooksLikeError = useMemo(() => {
+    if (!message) return false
+    return /(failed|error|rejected|could not|cannot|required|must|denied|outside|not found|invalid|timed out|warning)/i.test(message)
+  }, [message])
+  const displayedGpsThreshold = visitSession
+    ? visitSession.selectedCustomerId === 'new'
+      ? GPS_THRESHOLD_NEW_LEAD_METERS
+      : GPS_THRESHOLD_METERS
+    : selectedCustomerId === 'new'
+      ? GPS_THRESHOLD_NEW_LEAD_METERS
+      : GPS_THRESHOLD_METERS
 
   useEffect(() => {
     if (!visitPhotoModal) return
@@ -2016,7 +2039,7 @@ function App() {
         </p>
       ) : null}
       {geo && !locationLocking ? (
-        <p className="muted">
+        <p className={`muted locationLockNote ${geo.accuracy <= displayedGpsThreshold ? 'ok' : 'warn'}`}>
           {visitSession ? 'Leave' : 'Arrival'} locked {new Date(geo.capturedAt).toLocaleString()} | {geo.lat.toFixed(6)},{' '}
           {geo.lng.toFixed(6)} | ±{Math.round(geo.accuracy)}m
         </p>
@@ -2728,7 +2751,8 @@ function App() {
                 </label>
               </div>
               <p className="muted">
-                Due today: {followUpsDueTodayForSalesman.length} · Overdue: {overdueFollowUpsForSalesman.length}
+                Due today: {followUpsDueTodayForSalesman.length} · Overdue: {overdueFollowUpsForSalesman.length} · Archived:{' '}
+                {archivedFollowUpsForSalesman.length}
               </p>
               <ul className="list">
                 {filteredPendingFollowUpsForSalesman.map((item) => {
@@ -2796,6 +2820,30 @@ function App() {
                     </li>
                   )
                 })}
+              </ul>
+              <h3>Archived follow-ups</h3>
+              <ul className="list">
+                {archivedFollowUpsForSalesman.length === 0 ? (
+                  <li>
+                    <div>
+                      <strong>No archived follow-ups</strong>
+                      <p className="muted">Completed follow-ups will appear here.</p>
+                    </div>
+                  </li>
+                ) : (
+                  archivedFollowUpsForSalesman.map((item) => {
+                    const customer = customers.find((entry) => entry.id === item.customerId)
+                    return (
+                      <li key={`arch-${item.id}`}>
+                        <div>
+                          <strong>{customer?.name ?? 'Unknown customer'}</strong> — done for {item.dueDate}
+                          <p className="muted">{item.remarks}</p>
+                        </div>
+                        <span className="statusTag ok">completed</span>
+                      </li>
+                    )
+                  })
+                )}
               </ul>
             </article>
           </section>
@@ -3127,7 +3175,7 @@ function App() {
         </header>
 
         <div className="contentArea">
-          {message ? <p className="message">{message}</p> : null}
+          {message ? <p className={`message ${messageLooksLikeError ? 'messageError' : 'messageInfo'}`}>{message}</p> : null}
           {mainContent}
         </div>
       </div>

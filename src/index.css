@@ -680,10 +680,41 @@ button:focus-visible {
   box-shadow: var(--shadow-sm);
 }
 
+.message.messageError {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.message.messageInfo {
+  color: #1e3a8a;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
 .message.messageSuccess {
   background: rgba(22, 163, 74, 0.08);
   border-color: rgba(22, 163, 74, 0.25);
   color: var(--text);
+}
+
+.locationLockNote {
+  font-weight: 600;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+}
+
+.locationLockNote.ok {
+  color: #166534;
+  background: #ecfdf5;
+  border-color: #86efac;
+}
+
+.locationLockNote.warn {
+  color: #9a3412;
+  background: #fff7ed;
+  border-color: #fdba74;
 }
 
 .settingsPanel {
