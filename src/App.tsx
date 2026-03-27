@@ -118,7 +118,7 @@ type NavId =
   | 'visits'
 
 const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) => boolean }[] = [
-  { id: 'dashboard', label: 'Dashboard', section: 'Overview', show: () => true },
+  { id: 'dashboard', label: 'Dashboard', section: 'Overview', show: (r) => r !== 'salesman' },
   { id: 'map', label: 'Map', section: 'Overview', show: () => true },
   {
     id: 'add_visit',
@@ -127,7 +127,7 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
     show: (r) => r === 'salesman' || r === 'super_salesman',
   },
   { id: 'field_followups', label: 'Pending follow-ups', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
-  { id: 'field_tracking', label: 'Live tracking', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
+  { id: 'field_tracking', label: 'Live tracking', section: 'Field', show: (r) => r === 'super_salesman' },
   { id: 'field_customers', label: 'My customers', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
   { id: 'admin_overdue', label: 'Overdue follow-ups', section: 'Admin', show: (r) => r !== 'salesman' },
   { id: 'admin_meetings', label: 'Meeting responses', section: 'Admin', show: (r) => r !== 'salesman' },
@@ -141,7 +141,7 @@ function isNavId(id: string): id is NavId {
 }
 
 function parseNavFromLocation(): NavId {
-  if (typeof window === 'undefined') return 'dashboard'
+  if (typeof window === 'undefined') return 'field_followups'
   const raw = window.location.hash.replace(/^#\/?/, '').trim()
   if (raw && isNavId(raw)) return raw
   try {
@@ -150,7 +150,7 @@ function parseNavFromLocation(): NavId {
   } catch {
     /* private mode */
   }
-  return 'dashboard'
+  return 'field_followups'
 }
 
 function syncNavToLocation(view: NavId) {
@@ -369,7 +369,7 @@ function App() {
   const allowedNavIds = useMemo(() => NAV_ITEMS.filter((item) => item.show(role)).map((item) => item.id), [role])
 
   useEffect(() => {
-    if (!allowedNavIds.includes(activeView)) setActiveView('dashboard')
+    if (!allowedNavIds.includes(activeView)) setActiveView(allowedNavIds[0] ?? 'dashboard')
   }, [allowedNavIds, activeView])
 
   useEffect(() => {
@@ -1590,7 +1590,7 @@ function App() {
       setVisits([])
       setMeetingResponses([])
       setLivePoints([])
-      setActiveView('dashboard')
+      setActiveView('field_followups')
       setMobileNavOpen(false)
       setSigningOut(false)
     }
