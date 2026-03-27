@@ -173,8 +173,6 @@ const GPS_THRESHOLD_METERS = 30
 const GPS_THRESHOLD_NEW_LEAD_METERS = 80
 /** Max distance from customer map pin for existing-customer visits (GPS accuracy still ≤ 30m). */
 const RADIUS_THRESHOLD_METERS = 100
-const VISIT_TYPES: VisitType[] = ['New lead', 'Existing customer', 'Follow-up', 'Collection', 'Complaint']
-
 const INITIAL_CUSTOMERS: Customer[] = [
   {
     id: 'c1',
@@ -279,7 +277,6 @@ function App() {
   const scheduleWorkspaceReloadRef = useRef<(() => void) | null>(null)
   const [online, setOnline] = useState<boolean>(navigator.onLine)
   const [geo, setGeo] = useState<{ lat: number; lng: number; accuracy: number; capturedAt: string } | null>(null)
-  const [visitType, setVisitType] = useState<VisitType>('New lead')
   const [selectedCustomerId, setSelectedCustomerId] = useState('new')
   const [quickLeadPhone, setQuickLeadPhone] = useState('')
   const [quickLeadAddress, setQuickLeadAddress] = useState('')
@@ -327,7 +324,9 @@ function App() {
   const [visitHistoryClientFilter, setVisitHistoryClientFilter] = useState('')
   const [visitHistoryCityFilter, setVisitHistoryCityFilter] = useState('')
   const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
+  const [overdueSalesmanFilter, setOverdueSalesmanFilter] = useState('all')
   const [meetingDateFilter, setMeetingDateFilter] = useState('')
+  const [meetingSalesmanFilter, setMeetingSalesmanFilter] = useState('all')
   const [salesmanFollowUpDateFilter, setSalesmanFollowUpDateFilter] = useState('')
 
   const salesmen = useMemo(
@@ -897,6 +896,13 @@ function App() {
       })
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
   }, [followUps, customerById, latestVisitByCustomerId, salesmen])
+  const filteredOverdueRowsDetailed = useMemo(
+    () =>
+      overdueRowsDetailed.filter((row) =>
+        overdueSalesmanFilter === 'all' ? true : row.salesmanId === overdueSalesmanFilter,
+      ),
+    [overdueRowsDetailed, overdueSalesmanFilter],
+  )
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), [])
   const followUpsDueTodayForSalesman = useMemo(
     () => pendingFollowUpsForSalesman.filter((item) => item.dueDate === todayIso),
@@ -1087,12 +1093,22 @@ function App() {
     }
     return [...grouped.values()].sort((a, b) => b.lastVisitAt.localeCompare(a.lastVisitAt))
   }, [visitHistoryRows, customerById])
+  const meetingSalesmanOptions = useMemo(() => {
+    const seen = new Set<string>()
+    for (const m of meetingResponses) {
+      const n = m.salesmanName.trim()
+      if (n) seen.add(n)
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b))
+  }, [meetingResponses])
   const filteredMeetingResponses = useMemo(
     () =>
-      meetingResponses.filter((m) =>
-        meetingDateFilter ? m.createdAt.slice(0, 10) === meetingDateFilter : true,
-      ),
-    [meetingResponses, meetingDateFilter],
+      meetingResponses.filter((m) => {
+        const dateOk = meetingDateFilter ? m.createdAt.slice(0, 10) === meetingDateFilter : true
+        const salesmanOk = meetingSalesmanFilter === 'all' ? true : m.salesmanName === meetingSalesmanFilter
+        return dateOk && salesmanOk
+      }),
+    [meetingResponses, meetingDateFilter, meetingSalesmanFilter],
   )
 
   useEffect(() => {
@@ -1424,10 +1440,11 @@ function App() {
         )
       }
     }
+    const selectedVisitType: VisitType = selectedCustomerId === 'new' ? 'New lead' : 'Existing customer'
     setVisitSession({
       startGeo: { ...geo },
       selectedCustomerId,
-      visitType,
+      visitType: selectedVisitType,
       quickLead: {
         name: visitCustomerSearch.trim(),
         phone: quickLeadPhone.trim(),
@@ -1898,7 +1915,6 @@ function App() {
     setQuickLeadPhone('')
     setQuickLeadAddress('')
     setVisitCustomerSearch('')
-    setVisitType('New lead')
     setNotes('')
     setNextAction('')
     setFollowUpDate('')
@@ -1947,11 +1963,11 @@ function App() {
             <strong>Step 1 — Arrival.</strong> Mark where you arrived. <strong>Existing customer:</strong> GPS uncertainty
             must be ≤ {GPS_THRESHOLD_METERS}m and you must be within {RADIUS_THRESHOLD_METERS}m of their pin.{' '}
             <strong>New lead:</strong> GPS uncertainty can be up to {GPS_THRESHOLD_NEW_LEAD_METERS}m. Then choose customer
-            and visit type and tap <strong>Start visit</strong>.
+            and tap <strong>Start visit</strong>.
           </p>
           <div className="inlineActions">
             <button type="button" onClick={markVisitLocation} disabled={locationLocking}>
-              {locationLocking ? 'Getting location…' : 'Mark arrival location'}
+              {locationLocking ? 'Fetching location…' : 'Fetch location'}
             </button>
             {locationLocking ? (
               <button type="button" className="secondary" onClick={cancelMarkLocation}>
@@ -2011,16 +2027,6 @@ function App() {
             </>
           ) : null}
 
-          <label>
-            Visit type
-            <select value={visitType} onChange={(event) => setVisitType(event.target.value as VisitType)}>
-              {VISIT_TYPES.map((item) => (
-                <option value={item} key={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
       ) : (
         <div className="formGrid">
@@ -2251,6 +2257,19 @@ function App() {
           <section className="panel">
             <h2>Overdue follow-ups</h2>
             <article className="card">
+              <div className="inlineFilters">
+                <label>
+                  Salesman
+                  <select value={overdueSalesmanFilter} onChange={(event) => setOverdueSalesmanFilter(event.target.value)}>
+                    <option value="all">All field salesmen</option>
+                    {salesmen.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <div className="scrollArea">
                 <table>
                   <thead>
@@ -2267,14 +2286,14 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {overdueRowsDetailed.length === 0 ? (
+                    {filteredOverdueRowsDetailed.length === 0 ? (
                       <tr>
                         <td colSpan={9} className="muted">
                           No overdue follow-ups.
                         </td>
                       </tr>
                     ) : (
-                      overdueRowsDetailed.map((row) => (
+                      filteredOverdueRowsDetailed.map((row) => (
                         <tr key={row.id}>
                           <td>{row.salesmanName}</td>
                           <td>{row.customerName}</td>
@@ -2306,6 +2325,17 @@ function App() {
                   Date
                   <input type="date" value={meetingDateFilter} onChange={(event) => setMeetingDateFilter(event.target.value)} />
                 </label>
+                <label>
+                  Salesman
+                  <select value={meetingSalesmanFilter} onChange={(event) => setMeetingSalesmanFilter(event.target.value)}>
+                    <option value="all">All</option>
+                    {meetingSalesmanOptions.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
               <div className="scrollArea">
                 <table>
@@ -2316,18 +2346,36 @@ function App() {
                       <th>Customer</th>
                       <th>Response</th>
                       <th>Next action</th>
+                      <th>Photo</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredMeetingResponses.slice(0, 80).map((item) => (
-                      <tr key={item.id}>
-                        <td>{new Date(item.createdAt).toLocaleString()}</td>
-                        <td>{item.salesmanName}</td>
-                        <td>{item.customerName}</td>
-                        <td>{item.response}</td>
-                        <td>{(item.visitId && visitById.get(item.visitId)?.nextAction) || '—'}</td>
-                      </tr>
-                    ))}
+                    {filteredMeetingResponses.slice(0, 80).map((item) => {
+                      const linkedVisit = item.visitId ? visitById.get(item.visitId) : undefined
+                      return (
+                        <tr key={item.id}>
+                          <td>{new Date(item.createdAt).toLocaleString()}</td>
+                          <td>{item.salesmanName}</td>
+                          <td>{item.customerName}</td>
+                          <td>{item.response}</td>
+                          <td>{linkedVisit?.nextAction || '—'}</td>
+                          <td>
+                            {linkedVisit?.photoDataUrl ? (
+                              <button
+                                type="button"
+                                className="secondary"
+                                onClick={() => void openVisitPhoto(linkedVisit)}
+                                disabled={visitPhotoOpeningId === linkedVisit.id}
+                              >
+                                {visitPhotoOpeningId === linkedVisit.id ? 'Opening…' : 'View photo'}
+                              </button>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
