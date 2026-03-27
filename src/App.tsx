@@ -294,6 +294,7 @@ function App() {
   const [photoPreview, setPhotoPreview] = useState('')
   /** True when image was taken from live camera with timestamp+GPS already drawn on canvas */
   const [photoHasEmbeddedWatermark, setPhotoHasEmbeddedWatermark] = useState(false)
+  const [savingVisit, setSavingVisit] = useState(false)
   const [visitCameraOn, setVisitCameraOn] = useState(false)
   const [visitPhotoModal, setVisitPhotoModal] = useState<{ src: string; caption: string } | null>(null)
   const [visitPhotoOpeningId, setVisitPhotoOpeningId] = useState<string | null>(null)
@@ -1621,26 +1622,34 @@ function App() {
     setInvitedUsers((previous) => previous.filter((u) => normalizeEmail(u.email) !== n))
   }
 
+  const failVisitSave = (text: string) => {
+    setMessage(text)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const saveVisit = async () => {
+    if (savingVisit) return
+    setSavingVisit(true)
+    try {
     setMessage('')
-    if (!activeSalesman.id) return setMessage('Sign in again, then save the visit.')
-    if (!visitSession) return setMessage('Start a visit at arrival first, then end it when you leave.')
-    if (!geo) return setMessage('Mark your leave location before saving.')
+    if (!activeSalesman.id) return failVisitSave('Sign in again, then save the visit.')
+    if (!visitSession) return failVisitSave('Start a visit at arrival first, then end it when you leave.')
+    if (!geo) return failVisitSave('Mark your leave location before saving.')
     const session = visitSession
     const maxGpsAccuracy =
       session.selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS
     if (geo.accuracy > maxGpsAccuracy) {
-      return setMessage(
+      return failVisitSave(
         session.selectedCustomerId === 'new'
           ? `GPS accuracy must be under ${GPS_THRESHOLD_NEW_LEAD_METERS}m when ending a new lead visit. Current: ${Math.round(geo.accuracy)}m`
           : `GPS accuracy must be under ${GPS_THRESHOLD_METERS}m when ending an existing-customer visit. Current: ${Math.round(geo.accuracy)}m`,
       )
     }
-    if (!photoFile) return setMessage('Take a mandatory photo using the camera (gallery upload is not allowed).')
+    if (!photoFile) return failVisitSave('Take a mandatory photo using the camera (gallery upload is not allowed).')
     if (!photoHasEmbeddedWatermark || !photoPreview.startsWith('data:image')) {
-      return setMessage('Use Open camera and Capture photo. Images must come from the live camera with timestamp and location on the picture.')
+      return failVisitSave('Use Open camera and Capture photo. Images must come from the live camera with timestamp and location on the picture.')
     }
-    if (!notes.trim()) return setMessage('Meeting notes are required.')
+    if (!notes.trim()) return failVisitSave('Meeting notes are required.')
 
     if (supabase && online) {
       const displayName =
@@ -1652,7 +1661,7 @@ function App() {
         { onConflict: 'id' },
       )
       if (profileErr) {
-        return setMessage(
+        return failVisitSave(
           `Profile sync failed (required before saving customers): ${profileErr.message}`,
         )
       }
@@ -1694,18 +1703,18 @@ function App() {
           lat: newCustomer.lat,
           lng: newCustomer.lng,
         })
-        if (error) return setMessage(`Customer save failed: ${error.message}`)
+        if (error) return failVisitSave(`Customer save failed: ${error.message}`)
       }
     } else {
       selectedCustomer = customers.find((item) => item.id === session.selectedCustomerId)
-      if (!selectedCustomer) return setMessage('Customer not found.')
+      if (!selectedCustomer) return failVisitSave('Customer not found.')
       customerName = selectedCustomer.name
     }
 
     if (selectedCustomer && session.selectedCustomerId !== 'new') {
       const radius = distanceMeters(geo.lat, geo.lng, selectedCustomer.lat, selectedCustomer.lng)
       if (radius > RADIUS_THRESHOLD_METERS) {
-        return setMessage(`Outside ${RADIUS_THRESHOLD_METERS}m radius at leave time. Current distance: ${Math.round(radius)}m`)
+        return failVisitSave(`Outside ${RADIUS_THRESHOLD_METERS}m radius at leave time. Current distance: ${Math.round(radius)}m`)
       }
     }
 
@@ -1718,7 +1727,7 @@ function App() {
       try {
         photoPath = await uploadVisitPhoto(visitId, watermarkedPhoto)
       } catch (error) {
-        return setMessage(`Photo upload failed: ${(error as Error).message}`)
+        return failVisitSave(`Photo upload failed: ${(error as Error).message}`)
       }
     }
 
@@ -1796,7 +1805,7 @@ function App() {
       })
       if (error) {
         setVisits((previous) => previous.filter((v) => v.id !== payload.id))
-        return setMessage(`Visit rejected by server: ${error.message}`)
+        return failVisitSave(`Visit rejected by server: ${error.message}`)
       }
       const visitRowId =
         createdVisit && typeof createdVisit === 'object' && 'id' in createdVisit
@@ -1837,6 +1846,11 @@ function App() {
     setPhotoHasEmbeddedWatermark(false)
     stopVisitCamera()
     setMessage(online ? 'Visit saved and synced.' : 'Visit saved offline. Sync later with same captured time.')
+    } catch (error) {
+      failVisitSave(`Could not save visit: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSavingVisit(false)
+    }
   }
 
   const visitSessionCustomerLabel = visitSession
@@ -2068,8 +2082,8 @@ function App() {
           {photoPreview ? <img src={photoPreview} alt="Saved visit photo" className="photoPreview" /> : null}
 
           <div className="inlineActions">
-            <button type="button" onClick={() => void saveVisit()}>
-              End visit &amp; save
+            <button type="button" onClick={() => void saveVisit()} disabled={savingVisit}>
+              {savingVisit ? 'Saving visit…' : 'End visit & save'}
             </button>
           </div>
         </>
