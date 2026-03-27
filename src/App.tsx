@@ -311,6 +311,8 @@ function App() {
   const visitCameraStreamRef = useRef<MediaStream | null>(null)
   const visitVideoRef = useRef<HTMLVideoElement>(null)
   const [locationLocking, setLocationLocking] = useState(false)
+  const [signingIn, setSigningIn] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
   const [visitSession, setVisitSession] = useState<VisitSession | null>(null)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteName, setInviteName] = useState('')
@@ -1466,20 +1468,33 @@ function App() {
   }
 
   const signInWithEmailPassword = async (email: string, password: string) => {
+    if (signingIn) return
+    setSigningIn(true)
     setLoginMessage('')
     setLoginMessageIsError(false)
-    if (!supabase) return
+    if (!supabase) {
+      setSigningIn(false)
+      return
+    }
     const emailNorm = normalizeEmail(email)
     if (!emailNorm || !password) {
       setLoginMessageIsError(true)
       setLoginMessage('Enter email and password.')
+      setSigningIn(false)
       return
     }
-    /** Do not enforce password *format* on sign-in — only Supabase knows the real rules; client rules caused false rejects after a valid password change. */
-    const { error } = await supabase.auth.signInWithPassword({ email: emailNorm, password })
-    if (error) {
+    try {
+      /** Do not enforce password *format* on sign-in — only Supabase knows the real rules; client rules caused false rejects after a valid password change. */
+      const { error } = await supabase.auth.signInWithPassword({ email: emailNorm, password })
+      if (error) {
+        setLoginMessageIsError(true)
+        setLoginMessage(formatSignInError(error))
+      }
+    } catch (error) {
       setLoginMessageIsError(true)
-      setLoginMessage(formatSignInError(error))
+      setLoginMessage(`Sign-in failed: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSigningIn(false)
     }
   }
 
@@ -1505,12 +1520,18 @@ function App() {
   }
 
   const handleSignOut = async () => {
+    if (signingOut) return
+    setSigningOut(true)
     setMessage('')
     try {
       if (supabase) {
         // Local scope avoids logout hangs on flaky mobile networks.
-        const { error } = await supabase.auth.signOut({ scope: 'local' })
-        if (error) console.warn('signOut:', error.message)
+        const localResult = await supabase.auth.signOut({ scope: 'local' })
+        if (localResult.error) {
+          console.warn('signOut(local):', localResult.error.message)
+          const globalResult = await supabase.auth.signOut()
+          if (globalResult.error) console.warn('signOut(global fallback):', globalResult.error.message)
+        }
       }
     } catch (error) {
       console.warn('signOut unexpected:', error)
@@ -1530,6 +1551,7 @@ function App() {
       setLivePoints([])
       setActiveView('dashboard')
       setMobileNavOpen(false)
+      setSigningOut(false)
     }
   }
 
@@ -2346,8 +2368,8 @@ function App() {
               </p>
               <div className="inlineActions">
                 {supabaseEnabled && authSession ? (
-                  <button type="button" className="secondary" onClick={() => void handleSignOut()}>
-                    Log out
+                  <button type="button" className="secondary" onClick={() => void handleSignOut()} disabled={signingOut}>
+                    {signingOut ? 'Logging out...' : 'Log out'}
                   </button>
                 ) : null}
               </div>
@@ -2904,6 +2926,7 @@ function App() {
         supabaseConfigured={supabaseEnabled}
         message={loginMessage}
         messageIsError={loginMessageIsError}
+        isSigningIn={signingIn}
         onEmailSignIn={(email, password) => void signInWithEmailPassword(email, password)}
       />
     )
@@ -2980,8 +3003,8 @@ function App() {
             ) : null}
             <span className={online ? 'statusTag ok' : 'statusTag warning'}>{online ? 'Online' : 'Offline'}</span>
             {showLogOut ? (
-              <button type="button" className="secondary topLogoutBtn" onClick={() => void handleSignOut()}>
-                Log out
+              <button type="button" className="secondary topLogoutBtn" onClick={() => void handleSignOut()} disabled={signingOut}>
+                {signingOut ? 'Logging out...' : 'Log out'}
               </button>
             ) : null}
           </div>

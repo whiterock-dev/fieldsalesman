@@ -11,6 +11,7 @@ type LoginScreenProps = {
   supabaseConfigured: boolean
   message?: string
   messageIsError?: boolean
+  isSigningIn?: boolean
   onEmailSignIn: (email: string, password: string) => void | Promise<void>
 }
 
@@ -18,6 +19,7 @@ export function LoginScreen({
   supabaseConfigured,
   message,
   messageIsError = false,
+  isSigningIn = false,
   onEmailSignIn,
 }: LoginScreenProps) {
   const [email, setEmail] = useState('')
@@ -72,8 +74,8 @@ export function LoginScreen({
               />
             </label>
             <p className="loginPasswordHint">Accounts are created by an admin in Settings. Use the email and password they gave you.</p>
-            <button type="submit" className="loginSubmitBtn">
-              Sign in
+            <button type="submit" className="loginSubmitBtn" disabled={isSigningIn}>
+              {isSigningIn ? 'Signing in...' : 'Sign in'}
             </button>
             <p className="loginSignupHint">New users are added in <strong>Settings</strong> by an admin (email + role + password).</p>
           </form>
