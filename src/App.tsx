@@ -84,7 +84,6 @@ type VisitSession = {
     name: string
     phone: string
     address: string
-    city: string
   }
 }
 type MeetingResponse = {
@@ -282,10 +281,8 @@ function App() {
   const [geo, setGeo] = useState<{ lat: number; lng: number; accuracy: number; capturedAt: string } | null>(null)
   const [visitType, setVisitType] = useState<VisitType>('New lead')
   const [selectedCustomerId, setSelectedCustomerId] = useState('new')
-  const [quickLeadName, setQuickLeadName] = useState('')
   const [quickLeadPhone, setQuickLeadPhone] = useState('')
   const [quickLeadAddress, setQuickLeadAddress] = useState('')
-  const [quickLeadCity, setQuickLeadCity] = useState('')
   const [visitCustomerSearch, setVisitCustomerSearch] = useState('')
   const [notes, setNotes] = useState('')
   const [nextAction, setNextAction] = useState('')
@@ -938,6 +935,34 @@ function App() {
     return dedupedCustomers
   }, [role, dedupedCustomers, activeSalesman.id])
 
+  const filteredCustomerSuggestions = useMemo(() => {
+    const q = visitCustomerSearch.trim().toLowerCase()
+    return dedupedCustomers
+      .filter((item) => {
+        if (!q) return true
+        return (
+          item.name.toLowerCase().includes(q) ||
+          item.phone.toLowerCase().includes(q) ||
+          item.city.toLowerCase().includes(q)
+        )
+      })
+      .slice(0, 20)
+  }, [dedupedCustomers, visitCustomerSearch])
+
+  const handleCustomerSearchChange = (value: string) => {
+    setVisitCustomerSearch(value)
+    const q = value.trim().toLowerCase()
+    if (!q) {
+      setSelectedCustomerId('new')
+      return
+    }
+    const matched = dedupedCustomers.find((item) => {
+      const label = `${item.name} (${item.city})`.toLowerCase()
+      return label === q || item.name.toLowerCase() === q
+    })
+    setSelectedCustomerId(matched ? matched.id : 'new')
+  }
+
   const mapCustomers = useMemo(() => {
     if (role === 'salesman' || role === 'super_salesman') {
       const mine = dedupedCustomers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
@@ -1160,88 +1185,98 @@ function App() {
     }
   }, [activeView, clearVisitLocationWatch])
 
-  /**
-   * Uses getCurrentPosition (reliable completion) instead of watchPosition, which often never fires on desktop
-   * or hangs without callbacks. Safety timeout always clears the "locking" UI.
-   */
-  const markVisitLocation = () => {
+  const lockVisitLocation = async (phase: 'arrival' | 'leave') => {
     setMessage('')
     clearVisitLocationWatch()
 
     if (!navigator.geolocation) {
       setMessage('This browser does not support geolocation.')
-      return
+      return null
     }
 
     const requestId = ++locationRequestIdRef.current
     setLocationLocking(true)
 
-    const stopSafetyTimer = () => {
-      if (visitLocationTimeoutRef.current !== null) {
-        clearTimeout(visitLocationTimeoutRef.current)
-        visitLocationTimeoutRef.current = null
+    return await new Promise<{ lat: number; lng: number; accuracy: number; capturedAt: string } | null>((resolve) => {
+      let settled = false
+      const finish = (value: { lat: number; lng: number; accuracy: number; capturedAt: string } | null) => {
+        if (settled) return
+        settled = true
+        if (visitLocationTimeoutRef.current !== null) {
+          clearTimeout(visitLocationTimeoutRef.current)
+          visitLocationTimeoutRef.current = null
+        }
+        setLocationLocking(false)
+        resolve(value)
       }
-    }
 
-    const endLocking = () => {
-      stopSafetyTimer()
-      setLocationLocking(false)
-    }
+      visitLocationTimeoutRef.current = window.setTimeout(() => {
+        visitLocationTimeoutRef.current = null
+        if (locationRequestIdRef.current !== requestId) return finish(null)
+        setMessage(
+          'Location is taking too long. Allow location for this site (address bar -> site settings), use a secure app URL, enable system Location/GPS, and try again - desktop often needs Wi-Fi location or a phone hotspot.',
+        )
+        finish(null)
+      }, 22000)
 
-    visitLocationTimeoutRef.current = window.setTimeout(() => {
-      visitLocationTimeoutRef.current = null
-      if (locationRequestIdRef.current !== requestId) return
-      setLocationLocking(false)
-      setMessage(
-        'Location is taking too long. Allow location for this site (address bar -> site settings), use a secure app URL, enable system Location/GPS, and try again - desktop often needs Wi-Fi location or a phone hotspot.',
-      )
-    }, 22000)
+      try {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            if (locationRequestIdRef.current !== requestId) return finish(null)
+            const acc = position.coords.accuracy
+            const lat = position.coords.latitude
+            const lng = position.coords.longitude
+            const capturedAt = new Date().toISOString()
+            const point = { lat, lng, accuracy: acc, capturedAt }
+            setGeo(point)
+            if (phase === 'leave') {
+              setMessage(
+                acc <= GPS_THRESHOLD_METERS
+                  ? `Leave location locked: ±${Math.round(acc)}m — OK to capture photo and end visit.`
+                  : acc <= GPS_THRESHOLD_NEW_LEAD_METERS
+                    ? `Leave location locked: ±${Math.round(acc)}m — OK if this visit is a new lead (existing customer needs ≤${GPS_THRESHOLD_METERS}m).`
+                    : `Leave location locked: ±${Math.round(acc)}m — tighten GPS (≤${visitSession?.selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS}m) before ending.`,
+              )
+            } else {
+              setMessage(
+                acc <= GPS_THRESHOLD_METERS
+                  ? `Arrival locked: ±${Math.round(acc)}m — OK for existing customers and new leads.`
+                  : acc <= GPS_THRESHOLD_NEW_LEAD_METERS
+                    ? `Arrival locked: ±${Math.round(acc)}m — OK for new lead only (existing customer visits need ≤${GPS_THRESHOLD_METERS}m).`
+                    : `Arrival locked: ±${Math.round(acc)}m — need ≤${GPS_THRESHOLD_NEW_LEAD_METERS}m for new lead, ≤${GPS_THRESHOLD_METERS}m for existing customer.`,
+              )
+            }
+            finish(point)
+          },
+          (error) => {
+            if (locationRequestIdRef.current !== requestId) return finish(null)
+            const geoError = error as GeolocationPositionError
+            let hint = error.message
+            if (geoError.code === 1) {
+              hint = 'Permission denied — allow Location for this page (lock icon in the address bar).'
+            } else if (geoError.code === 2) {
+              hint = 'Position unavailable — turn on device location / GPS services.'
+            } else if (geoError.code === 3) {
+              hint = 'Request timed out — try outdoors or a stronger GPS/Wi-Fi signal.'
+            }
+            setMessage(`Could not lock location: ${hint}`)
+            finish(null)
+          },
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 18000 },
+        )
+      } catch {
+        if (locationRequestIdRef.current !== requestId) return finish(null)
+        setMessage('Geolocation failed unexpectedly. Try another browser or check HTTPS.')
+        finish(null)
+      }
+    })
+  }
 
-    try {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          if (locationRequestIdRef.current !== requestId) return
-          endLocking()
-          const acc = position.coords.accuracy
-          const lat = position.coords.latitude
-          const lng = position.coords.longitude
-          const capturedAt = new Date().toISOString()
-          setGeo({ lat, lng, accuracy: acc, capturedAt })
-          setMessage(
-            visitSession
-              ? acc <= GPS_THRESHOLD_METERS
-                ? `Leave location locked: ±${Math.round(acc)}m — OK to capture photo and end visit.`
-                : acc <= GPS_THRESHOLD_NEW_LEAD_METERS
-                  ? `Leave location locked: ±${Math.round(acc)}m — OK if this visit was a new lead (existing customer needs ≤${GPS_THRESHOLD_METERS}m).`
-                  : `Leave location locked: ±${Math.round(acc)}m — tighten GPS (≤${visitSession.selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS}m) before ending.`
-              : acc <= GPS_THRESHOLD_METERS
-                ? `Arrival locked: ±${Math.round(acc)}m — OK for existing customers and new leads.`
-                : acc <= GPS_THRESHOLD_NEW_LEAD_METERS
-                  ? `Arrival locked: ±${Math.round(acc)}m — OK for new lead only (existing customer visits need ≤${GPS_THRESHOLD_METERS}m).`
-                  : `Arrival locked: ±${Math.round(acc)}m — need ≤${GPS_THRESHOLD_NEW_LEAD_METERS}m for new lead, ≤${GPS_THRESHOLD_METERS}m for existing customer.`,
-          )
-        },
-        (error) => {
-          if (locationRequestIdRef.current !== requestId) return
-          endLocking()
-          const geoError = error as GeolocationPositionError
-          let hint = error.message
-          if (geoError.code === 1) {
-            hint = 'Permission denied — allow Location for this page (lock icon in the address bar).'
-          } else if (geoError.code === 2) {
-            hint = 'Position unavailable — turn on device location / GPS services.'
-          } else if (geoError.code === 3) {
-            hint = 'Request timed out — try outdoors or a stronger GPS/Wi‑Fi signal.'
-          }
-          setMessage(`Could not lock location: ${hint}`)
-        },
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 18000 },
-      )
-    } catch {
-      if (locationRequestIdRef.current !== requestId) return
-      endLocking()
-      setMessage('Geolocation failed unexpectedly. Try another browser or check HTTPS.')
-    }
+  /**
+   * Manual location lock is kept for arrival.
+   */
+  const markVisitLocation = () => {
+    void lockVisitLocation(visitSession ? 'leave' : 'arrival')
   }
 
   const cancelMarkLocation = () => {
@@ -1252,14 +1287,6 @@ function App() {
 
   const startVisitCamera = async () => {
     setMessage('')
-    if (!geo) {
-      setMessage(
-        visitSession
-          ? 'Mark your leave location first — the photo will include that GPS and timestamps on the image.'
-          : 'Mark your arrival location first — after you start the visit you will mark leave location for the photo.',
-      )
-      return
-    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setMessage('Camera API not available. Use HTTPS and a device with a camera.')
       return
@@ -1308,8 +1335,10 @@ function App() {
 
   const captureVisitPhoto = async () => {
     setMessage('')
+    let currentGeo = geo
+    if (visitSession && !currentGeo) currentGeo = await lockVisitLocation('leave')
     const video = visitVideoRef.current
-    if (!video || !geo) return
+    if (!video || !currentGeo) return
     if (video.readyState < 2) {
       setMessage('Wait for the preview to appear, then tap Capture photo again.')
       return
@@ -1329,11 +1358,7 @@ function App() {
     const pad = Math.max(14, Math.floor(vw * 0.02))
     const lineHeight = Math.max(24, Math.floor(vh * 0.038))
     const fontSize = Math.max(17, Math.floor(vw * 0.034))
-    const lines = [
-      `Photo time: ${new Date().toLocaleString()}`,
-      `Location: ${geo.lat.toFixed(6)}, ${geo.lng.toFixed(6)}  (GPS ±${Math.round(geo.accuracy)}m)`,
-      `Visit GPS capture: ${new Date(geo.capturedAt).toLocaleString()}`,
-    ]
+    const lines = [`Photo time: ${new Date().toLocaleString()}`]
     const boxH = pad * 2 + lines.length * lineHeight
     ctx.fillStyle = 'rgba(0,0,0,0.75)'
     ctx.fillRect(pad, vh - boxH - pad, vw - pad * 2, boxH)
@@ -1386,8 +1411,8 @@ function App() {
       )
     }
     if (selectedCustomerId === 'new') {
-      if (!quickLeadName.trim() || !quickLeadPhone.trim()) {
-        return setMessage('Quick lead needs at least name and phone before starting the visit.')
+      if (!visitCustomerSearch.trim() || !quickLeadPhone.trim()) {
+        return setMessage('Enter customer name and phone before starting a new lead visit.')
       }
     } else {
       const selectedCustomer = customers.find((item) => item.id === selectedCustomerId)
@@ -1404,15 +1429,14 @@ function App() {
       selectedCustomerId,
       visitType,
       quickLead: {
-        name: quickLeadName.trim(),
+        name: visitCustomerSearch.trim(),
         phone: quickLeadPhone.trim(),
         address: quickLeadAddress.trim() || 'Address pending',
-        city: quickLeadCity.trim() || 'Unknown',
       },
     })
     setGeo(null)
     clearVisitPhoto()
-    setMessage('Visit started. When you leave, mark your leave location, then photo and notes — tap End visit & save.')
+    setMessage('Visit started. Open camera, capture, and then tap End visit & save.')
   }
 
   const retakeVisitPhoto = () => {
@@ -1668,15 +1692,19 @@ function App() {
     setMessage('')
     if (!activeSalesman.id) return failVisitSave('Sign in again, then save the visit.')
     if (!visitSession) return failVisitSave('Start a visit at arrival first, then end it when you leave.')
-    if (!geo) return failVisitSave('Mark your leave location before saving.')
+    let leaveGeo = geo
+    if (!leaveGeo) {
+      leaveGeo = await lockVisitLocation('leave')
+      if (!leaveGeo) return failVisitSave('Could not get leave location. Allow GPS and try again.')
+    }
     const session = visitSession
     const maxGpsAccuracy =
       session.selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS
-    if (geo.accuracy > maxGpsAccuracy) {
+    if (leaveGeo.accuracy > maxGpsAccuracy) {
       return failVisitSave(
         session.selectedCustomerId === 'new'
-          ? `GPS accuracy must be under ${GPS_THRESHOLD_NEW_LEAD_METERS}m when ending a new lead visit. Current: ${Math.round(geo.accuracy)}m`
-          : `GPS accuracy must be under ${GPS_THRESHOLD_METERS}m when ending an existing-customer visit. Current: ${Math.round(geo.accuracy)}m`,
+          ? `GPS accuracy must be under ${GPS_THRESHOLD_NEW_LEAD_METERS}m when ending a new lead visit. Current: ${Math.round(leaveGeo.accuracy)}m`
+          : `GPS accuracy must be under ${GPS_THRESHOLD_METERS}m when ending an existing-customer visit. Current: ${Math.round(leaveGeo.accuracy)}m`,
       )
     }
     if (!photoFile) return failVisitSave('Take a mandatory photo using the camera (gallery upload is not allowed).')
@@ -1714,11 +1742,11 @@ function App() {
         phone: ql.phone,
         whatsapp: ql.phone,
         address: ql.address,
-        city: ql.city,
+        city: 'Unknown',
         tags: [],
         assignedSalesmanId: activeSalesman.id,
-        lat: geo.lat,
-        lng: geo.lng,
+        lat: leaveGeo.lat,
+        lng: leaveGeo.lng,
       }
       customerName = newCustomer.name
       customerId = newCustomer.id
@@ -1746,7 +1774,7 @@ function App() {
     }
 
     if (selectedCustomer && session.selectedCustomerId !== 'new') {
-      const radius = distanceMeters(geo.lat, geo.lng, selectedCustomer.lat, selectedCustomer.lng)
+      const radius = distanceMeters(leaveGeo.lat, leaveGeo.lng, selectedCustomer.lat, selectedCustomer.lng)
       if (radius > RADIUS_THRESHOLD_METERS) {
         return failVisitSave(`Outside ${RADIUS_THRESHOLD_METERS}m radius at leave time. Current distance: ${Math.round(radius)}m`)
       }
@@ -1754,7 +1782,7 @@ function App() {
 
     const watermarkedPhoto = photoPreview
     const visitId = `v-${Date.now()}`
-    const capturedAt = geo.capturedAt
+    const capturedAt = leaveGeo.capturedAt
     let photoPath = watermarkedPhoto
 
     if (supabase && online) {
@@ -1771,9 +1799,9 @@ function App() {
       customerName,
       salesmanId: activeSalesman.id,
       salesmanName: activeSalesman.name,
-      lat: geo.lat,
-      lng: geo.lng,
-      accuracy: geo.accuracy,
+      lat: leaveGeo.lat,
+      lng: leaveGeo.lng,
+      accuracy: leaveGeo.accuracy,
       capturedAt,
       photoDataUrl: photoPath,
       visitType: session.visitType,
@@ -1867,10 +1895,9 @@ function App() {
     setVisitSession(null)
     setGeo(null)
     setSelectedCustomerId('new')
-    setQuickLeadName('')
     setQuickLeadPhone('')
     setQuickLeadAddress('')
-    setQuickLeadCity('')
+    setVisitCustomerSearch('')
     setVisitType('New lead')
     setNotes('')
     setNextAction('')
@@ -1936,26 +1963,15 @@ function App() {
       ) : (
         <>
           <p className="muted">
-            <strong>Step 2 — Leaving.</strong> When you are done, mark your <strong>leave</strong> location (can be the same
-            spot or where you wrap up). Same GPS rules apply. Then add notes, photo, and <strong>End visit &amp; save</strong>.
+            <strong>Step 2 — Capture &amp; end.</strong> Open camera, capture photo, and tap <strong>End visit &amp; save</strong>.
+            Leave location is captured automatically during capture/save.
           </p>
-          <div className="inlineActions">
-            <button type="button" onClick={markVisitLocation} disabled={locationLocking}>
-              {locationLocking ? 'Getting location…' : 'Mark leave location'}
-            </button>
-            {locationLocking ? (
-              <button type="button" className="secondary" onClick={cancelMarkLocation}>
-                Cancel
-              </button>
-            ) : null}
-          </div>
         </>
       )}
 
       {locationLocking ? (
         <p className="muted">
-          Requesting location (usually under 20s). If this never finishes, tap <strong>Cancel</strong> and check site
-          permissions on your secure app URL.
+          Requesting location (usually under 20s). If this never finishes, check site permissions on your secure app URL.
         </p>
       ) : null}
       {geo && !locationLocking ? (
@@ -1968,41 +1984,22 @@ function App() {
       {!visitSession ? (
         <div className="formGrid">
           <label>
-            Search customer
-            <input
-              value={visitCustomerSearch}
-              onChange={(event) => setVisitCustomerSearch(event.target.value)}
-              placeholder="Name, phone, city"
-            />
-          </label>
-          <label>
             Customer
-            <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}>
-              <option value="new">+ Quick create new lead</option>
-              {dedupedCustomers
-                .filter((item) => {
-                  const q = visitCustomerSearch.trim().toLowerCase()
-                  if (!q) return true
-                  return (
-                    item.name.toLowerCase().includes(q) ||
-                    item.phone.toLowerCase().includes(q) ||
-                    item.city.toLowerCase().includes(q)
-                  )
-                })
-                .map((item) => (
-                <option value={item.id} key={item.id}>
-                  {item.name} ({item.city})
-                </option>
-                ))}
-            </select>
+            <input
+              list="existing-customer-suggestions"
+              value={visitCustomerSearch}
+              onChange={(event) => handleCustomerSearchChange(event.target.value)}
+              placeholder="Type customer name (suggestions for existing customers)"
+            />
+            <datalist id="existing-customer-suggestions">
+              {filteredCustomerSuggestions.map((item) => (
+                <option key={item.id} value={`${item.name} (${item.city})`} />
+              ))}
+            </datalist>
           </label>
 
           {selectedCustomerId === 'new' ? (
             <>
-              <label>
-                Lead name
-                <input value={quickLeadName} onChange={(event) => setQuickLeadName(event.target.value)} />
-              </label>
               <label>
                 Phone
                 <input value={quickLeadPhone} onChange={(event) => setQuickLeadPhone(event.target.value)} />
@@ -2010,10 +2007,6 @@ function App() {
               <label>
                 Address
                 <input value={quickLeadAddress} onChange={(event) => setQuickLeadAddress(event.target.value)} />
-              </label>
-              <label>
-                City / area
-                <input value={quickLeadCity} onChange={(event) => setQuickLeadCity(event.target.value)} />
               </label>
             </>
           ) : null}
@@ -2073,9 +2066,6 @@ function App() {
               Open the camera and capture. The image includes timestamp and your <strong>leave</strong> location GPS.
               Gallery is not used. After a shot you can <strong>Retake</strong> or <strong>End visit &amp; save</strong> below.
             </p>
-            {!geo ? (
-              <p className="muted visit-camera-warn">Mark leave location above before opening the camera.</p>
-            ) : null}
             <video
               ref={visitVideoRef}
               className="visit-camera-video"
@@ -2089,7 +2079,7 @@ function App() {
                 <button
                   type="button"
                   className="visit-camera-primary"
-                  disabled={!geo || locationLocking}
+                  disabled={locationLocking}
                   onClick={() => void startVisitCamera()}
                 >
                   Open camera
