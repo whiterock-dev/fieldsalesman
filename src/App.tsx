@@ -328,6 +328,7 @@ function App() {
   const [meetingDateFilter, setMeetingDateFilter] = useState('')
   const [meetingSalesmanFilter, setMeetingSalesmanFilter] = useState('all')
   const [salesmanFollowUpDateFilter, setSalesmanFollowUpDateFilter] = useState('')
+  const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
 
   const salesmen = useMemo(
     () =>
@@ -1411,6 +1412,30 @@ function App() {
     setGeo(null)
     clearVisitPhoto()
     setMessage('Visit cancelled.')
+  }
+
+  const markFollowUpComplete = async (id: string) => {
+    setFollowUps((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'closed' as FollowUpStatus } : f)))
+    if (supabase && online) {
+      const { error } = await supabase.from('followups').update({ status: 'closed' }).eq('id', id)
+      if (error) setMessage(`Could not mark complete: ${error.message}`)
+      else scheduleWorkspaceReloadRef.current?.()
+    }
+  }
+
+  const saveFollowUpEdit = async (updated: FollowUp) => {
+    setFollowUps((prev) => prev.map((f) => (f.id === updated.id ? updated : f)))
+    setEditingFollowUp(null)
+    if (supabase && online) {
+      const { error } = await supabase.from('followups').update({
+        due_date: updated.dueDate,
+        priority: updated.priority,
+        status: updated.status,
+        remarks: updated.remarks,
+      }).eq('id', updated.id)
+      if (error) setMessage(`Could not save follow-up: ${error.message}`)
+      else scheduleWorkspaceReloadRef.current?.()
+    }
   }
 
   const startVisitSession = () => {
@@ -2708,13 +2733,66 @@ function App() {
               <ul className="list">
                 {filteredPendingFollowUpsForSalesman.map((item) => {
                   const customer = customers.find((entry) => entry.id === item.customerId)
+                  const isEditing = editingFollowUp?.id === item.id
                   return (
-                    <li key={item.id}>
-                      <div>
-                        <strong>{customer?.name ?? 'Unknown customer'}</strong> — due {item.dueDate}
-                        <p className="muted">{item.remarks}</p>
+                    <li key={item.id} style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <strong>{customer?.name ?? 'Unknown customer'}</strong> — due {item.dueDate}
+                          <p className="muted">{item.remarks}</p>
+                        </div>
+                        <span className={`statusTag ${item.priority === 'high' ? 'warning' : ''}`}>{item.priority}</span>
                       </div>
-                      <span className={`statusTag ${item.priority === 'high' ? 'warning' : ''}`}>{item.priority}</span>
+                      {isEditing && editingFollowUp ? (
+                        <div className="formGrid" style={{ marginTop: '4px' }}>
+                          <label>
+                            Due date
+                            <input
+                              type="date"
+                              value={editingFollowUp.dueDate}
+                              onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
+                            />
+                          </label>
+                          <label>
+                            Priority
+                            <select
+                              value={editingFollowUp.priority}
+                              onChange={(e) => setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })}
+                            >
+                              <option value="low">Low</option>
+                              <option value="medium">Medium</option>
+                              <option value="high">High</option>
+                            </select>
+                          </label>
+                          <label>
+                            Status
+                            <select
+                              value={editingFollowUp.status}
+                              onChange={(e) => setEditingFollowUp({ ...editingFollowUp, status: e.target.value as FollowUpStatus })}
+                            >
+                              <option value="pending">Pending</option>
+                              <option value="in_progress">In progress</option>
+                              <option value="closed">Closed</option>
+                            </select>
+                          </label>
+                          <label>
+                            Remarks
+                            <textarea
+                              value={editingFollowUp.remarks}
+                              onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
+                            />
+                          </label>
+                          <div className="inlineActions">
+                            <button type="button" onClick={() => void saveFollowUpEdit(editingFollowUp)}>Save</button>
+                            <button type="button" className="secondary" onClick={() => setEditingFollowUp(null)}>Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="inlineActions">
+                          <button type="button" onClick={() => void markFollowUpComplete(item.id)}>Mark complete</button>
+                          <button type="button" className="secondary" onClick={() => setEditingFollowUp({ ...item })}>Edit</button>
+                        </div>
+                      )}
                     </li>
                   )
                 })}
