@@ -1505,20 +1505,32 @@ function App() {
   }
 
   const handleSignOut = async () => {
-    await supabase?.auth.signOut()
-    setInviteSuccessMessage('')
-    setAuthSession(null)
-    localStorage.removeItem('fs_offline_demo')
-    localStorage.removeItem('fs_invited_users')
-    setInvitedUsers([])
-    setTeamProfiles([])
-    setCustomers(supabaseEnabled ? [] : INITIAL_CUSTOMERS)
-    setFollowUps(supabaseEnabled ? [] : INITIAL_FOLLOWUPS)
-    setVisits([])
-    setMeetingResponses([])
-    setLivePoints([])
-    setActiveView('dashboard')
-    setMobileNavOpen(false)
+    setMessage('')
+    try {
+      if (supabase) {
+        // Local scope avoids logout hangs on flaky mobile networks.
+        const { error } = await supabase.auth.signOut({ scope: 'local' })
+        if (error) console.warn('signOut:', error.message)
+      }
+    } catch (error) {
+      console.warn('signOut unexpected:', error)
+    } finally {
+      setInviteSuccessMessage('')
+      setAuthSession(null)
+      setLoginMessage('')
+      setLoginMessageIsError(false)
+      localStorage.removeItem('fs_offline_demo')
+      localStorage.removeItem('fs_invited_users')
+      setInvitedUsers([])
+      setTeamProfiles([])
+      setCustomers(supabaseEnabled ? [] : INITIAL_CUSTOMERS)
+      setFollowUps(supabaseEnabled ? [] : INITIAL_FOLLOWUPS)
+      setVisits([])
+      setMeetingResponses([])
+      setLivePoints([])
+      setActiveView('dashboard')
+      setMobileNavOpen(false)
+    }
   }
 
   const addInvitedUser = () => {
