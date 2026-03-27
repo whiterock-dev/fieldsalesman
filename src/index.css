@@ -853,6 +853,67 @@ button.secondary.danger:hover {
   color: var(--text);
 }
 
+.dashboardMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.dashboardMetricTile {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.7rem 0.75rem;
+  min-height: 94px;
+}
+
+.dashboardMetricTile.softBlue {
+  background: #eef6ff;
+}
+
+.dashboardMetricTile.softPeach {
+  background: #fff4ec;
+}
+
+.dashboardMetricTile.softMint {
+  background: #ecfbf3;
+}
+
+.dashboardMetricTile.softLavender {
+  background: #f2efff;
+}
+
+.dashboardMetricTile.softSky {
+  background: #eef9ff;
+}
+
+.dashboardMetricTile.softRose {
+  background: #fff1f5;
+}
+
+.dashboardMetricLabel {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.dashboardMetricValue {
+  margin: 0.2rem 0 0.15rem;
+  font-size: 1.22rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.dashboardMetricDesc {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
 .muted {
   color: var(--text-muted);
   font-size: 0.8rem;
@@ -1438,6 +1499,10 @@ a:hover {
 
   .grid.two,
   .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboardMetricGrid {
     grid-template-columns: 1fr;
   }
 }

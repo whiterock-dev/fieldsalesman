@@ -140,8 +140,12 @@ function isNavId(id: string): id is NavId {
   return NAV_ITEMS.some((item) => item.id === id)
 }
 
+function defaultViewForRole(role: Role): NavId {
+  return role === 'salesman' ? 'field_followups' : 'dashboard'
+}
+
 function parseNavFromLocation(): NavId {
-  if (typeof window === 'undefined') return 'field_followups'
+  if (typeof window === 'undefined') return 'dashboard'
   const raw = window.location.hash.replace(/^#\/?/, '').trim()
   if (raw && isNavId(raw)) return raw
   try {
@@ -150,7 +154,7 @@ function parseNavFromLocation(): NavId {
   } catch {
     /* private mode */
   }
-  return 'field_followups'
+  return 'dashboard'
 }
 
 function syncNavToLocation(view: NavId) {
@@ -300,6 +304,7 @@ function App() {
   const [activeView, setActiveView] = useState<NavId>(parseNavFromLocation)
   const [inviteSourceReady, setInviteSourceReady] = useState(() => !supabaseEnabled)
   const watchIdRef = useRef<number | null>(null)
+  const lastResolvedUserIdRef = useRef<string | null>(null)
   const visitLocationTimeoutRef = useRef<number | null>(null)
   const locationRequestIdRef = useRef(0)
   const visitCameraStreamRef = useRef<MediaStream | null>(null)
@@ -370,8 +375,22 @@ function App() {
   const allowedNavIds = useMemo(() => NAV_ITEMS.filter((item) => item.show(role)).map((item) => item.id), [role])
 
   useEffect(() => {
-    if (!allowedNavIds.includes(activeView)) setActiveView(allowedNavIds[0] ?? 'dashboard')
-  }, [allowedNavIds, activeView])
+    if (!allowedNavIds.includes(activeView)) {
+      const preferred = defaultViewForRole(role)
+      setActiveView(allowedNavIds.includes(preferred) ? preferred : (allowedNavIds[0] ?? 'dashboard'))
+    }
+  }, [allowedNavIds, activeView, role])
+
+  useEffect(() => {
+    const uid = authSession?.user?.id ?? null
+    if (!uid) {
+      lastResolvedUserIdRef.current = null
+      return
+    }
+    if (lastResolvedUserIdRef.current === uid) return
+    lastResolvedUserIdRef.current = uid
+    setActiveView(defaultViewForRole(role))
+  }, [authSession?.user?.id, role])
 
   useEffect(() => {
     if (activeView !== 'settings') setInviteSuccessMessage('')
@@ -2199,10 +2218,24 @@ function App() {
             <div className="grid two">
               <article className="card">
                 <h3>Summary</h3>
-                <p className="muted">Customers: {dedupedCustomers.length}</p>
-                <p className="muted">Open follow-ups: {openFollowUpsCount}</p>
-                <p className="muted">Visits logged: {syncedVisits.length}</p>
-
+                <div className="dashboardMetricGrid">
+                  <div className="dashboardMetricTile softBlue">
+                    <p className="dashboardMetricLabel">Customers</p>
+                    <p className="dashboardMetricValue">{dedupedCustomers.length}</p>
+                    <p className="dashboardMetricDesc">Unique customer records synced in CRM.</p>
+                  </div>
+                  <div className="dashboardMetricTile softPeach">
+                    <p className="dashboardMetricLabel">Open follow-ups</p>
+                    <p className="dashboardMetricValue">{openFollowUpsCount}</p>
+                    <p className="dashboardMetricDesc">Pending and in-progress follow-up tasks.</p>
+                  </div>
+                  <div className="dashboardMetricTile softMint">
+                    <p className="dashboardMetricLabel">Visits logged</p>
+                    <p className="dashboardMetricValue">{syncedVisits.length}</p>
+                    <p className="dashboardMetricDesc">Successfully synced field visits only.</p>
+                  </div>
+                </div>
+                <p className="muted">Live updates: realtime sync with periodic 15s refresh fallback.</p>
               </article>
               <article className="card">
                 <h3>Quick links</h3>
@@ -2233,9 +2266,23 @@ function App() {
               {(role === 'owner' || role === 'sub_admin') && (
                 <article className="card">
                   <h3>Admin metrics</h3>
-                  <p className="muted">Field salesmen: {salesmen.length}</p>
-                  <p className="muted">Total visits: {syncedVisits.length}</p>
-                  <p className="muted">Visits today: {syncedVisitsTodayCount}</p>
+                  <div className="dashboardMetricGrid">
+                    <div className="dashboardMetricTile softLavender">
+                      <p className="dashboardMetricLabel">Field salesmen</p>
+                      <p className="dashboardMetricValue">{salesmen.length}</p>
+                      <p className="dashboardMetricDesc">Active salesman/super-salesman profiles.</p>
+                    </div>
+                    <div className="dashboardMetricTile softSky">
+                      <p className="dashboardMetricLabel">Total visits</p>
+                      <p className="dashboardMetricValue">{syncedVisits.length}</p>
+                      <p className="dashboardMetricDesc">All synced visits across your team.</p>
+                    </div>
+                    <div className="dashboardMetricTile softRose">
+                      <p className="dashboardMetricLabel">Visits today</p>
+                      <p className="dashboardMetricValue">{syncedVisitsTodayCount}</p>
+                      <p className="dashboardMetricDesc">Synced visits captured on today&apos;s date.</p>
+                    </div>
+                  </div>
                 </article>
               )}
               {(role === 'salesman' || role === 'super_salesman') && (
