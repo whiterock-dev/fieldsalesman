@@ -5,7 +5,7 @@ import { LoginScreen } from './components/LoginScreen'
 import { findInviteForEmail, normalizeEmail, type InvitedUser } from './lib/invites'
 import { addableRolesFor, type Role } from './lib/roles'
 import { formatSignInError } from './lib/authMessages'
-import { parseTenDigitMobile } from './lib/mobilePhone'
+import { clampTenDigitMobileInput, parseTenDigitMobile } from './lib/mobilePhone'
 import { isValidPassword, PASSWORD_POLICY_HINT } from './lib/passwordPolicy'
 import { supabase, supabaseEnabled } from './lib/supabase'
 import { colorForSalesmanId, salesmanColorMap } from './mapColors'
@@ -2123,7 +2123,8 @@ function App() {
                   autoComplete="tel"
                   placeholder="9876543210"
                   value={quickLeadPhone}
-                  onChange={(event) => setQuickLeadPhone(event.target.value)}
+                  onChange={(event) => setQuickLeadPhone(clampTenDigitMobileInput(event.target.value))}
+                  title="10 digits; optional +91 is normalized automatically"
                 />
               </label>
               <label>
@@ -2637,8 +2638,9 @@ function App() {
                       inputMode="numeric"
                       autoComplete="tel"
                       value={invitePhone}
-                      onChange={(event) => setInvitePhone(event.target.value)}
+                      onChange={(event) => setInvitePhone(clampTenDigitMobileInput(event.target.value))}
                       placeholder="9876543210 or +91 9876543210"
+                      title="Up to 10 digits; optional +91 is normalized automatically"
                     />
                   </label>
                   {supabaseEnabled ? (
