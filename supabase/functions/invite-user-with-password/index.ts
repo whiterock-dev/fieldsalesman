@@ -31,6 +31,15 @@ function validPassword(p: string): boolean {
   return p.length >= 8 && /[a-z]/.test(p) && /[A-Z]/.test(p) && /[0-9]/.test(p)
 }
 
+/** 10-digit mobile; optional +91 or leading 0 stripped. */
+function parseTenDigitMobile(raw: string): string | null {
+  let d = raw.replace(/\D/g, '')
+  if (d.length === 12 && d.startsWith('91')) d = d.slice(2)
+  if (d.length === 11 && d.startsWith('0')) d = d.slice(1)
+  if (d.length === 10) return d
+  return null
+}
+
 async function findUserIdByEmail(
   admin: ReturnType<typeof createClient>,
   email: string,
@@ -122,7 +131,7 @@ Deno.serve(async (req) => {
     const email = String(body.email ?? '')
       .trim()
       .toLowerCase()
-    const phone = String(body.phone ?? '').trim()
+    let phone = String(body.phone ?? '').trim()
     const role = String(body.role ?? '').trim()
     const password = String(body.password ?? '')
 
@@ -144,8 +153,12 @@ Deno.serve(async (req) => {
         error: 'Password must be at least 8 characters with uppercase, lowercase, and a number',
       })
     }
-    if (phone && !/^[0-9+\-\s]{7,20}$/.test(phone)) {
-      return json({ ok: false, error: 'Invalid phone number format' })
+    if (phone) {
+      const normalized = parseTenDigitMobile(phone)
+      if (!normalized) {
+        return json({ ok: false, error: 'Mobile number must be exactly 10 digits' })
+      }
+      phone = normalized
     }
 
     const existingId = await findUserIdByEmail(admin, email)
