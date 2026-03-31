@@ -5,6 +5,7 @@ import { LoginScreen } from './components/LoginScreen'
 import { findInviteForEmail, normalizeEmail, type InvitedUser } from './lib/invites'
 import { addableRolesFor, type Role } from './lib/roles'
 import { formatSignInError } from './lib/authMessages'
+import { parseTenDigitMobile } from './lib/mobilePhone'
 import { isValidPassword, PASSWORD_POLICY_HINT } from './lib/passwordPolicy'
 import { supabase, supabaseEnabled } from './lib/supabase'
 import { colorForSalesmanId, salesmanColorMap } from './mapColors'
@@ -1514,10 +1515,16 @@ function App() {
           : `GPS accuracy must be under ${GPS_THRESHOLD_METERS}m to start an existing-customer visit. Current: ${Math.round(geo.accuracy)}m`,
       )
     }
+    let leadPhoneForSession = quickLeadPhone.trim()
     if (selectedCustomerId === 'new') {
       if (!visitCustomerSearch.trim() || !quickLeadPhone.trim()) {
         return setMessage('Enter customer name and phone before starting a new lead visit.')
       }
+      const leadMobile = parseTenDigitMobile(quickLeadPhone)
+      if (!leadMobile) {
+        return setMessage('Enter a valid 10-digit mobile number.')
+      }
+      leadPhoneForSession = leadMobile
     } else {
       const selectedCustomer = customers.find((item) => item.id === selectedCustomerId)
       if (!selectedCustomer) return setMessage('Customer not found.')
@@ -1535,7 +1542,7 @@ function App() {
       visitType: selectedVisitType,
       quickLead: {
         name: visitCustomerSearch.trim(),
-        phone: quickLeadPhone.trim(),
+        phone: leadPhoneForSession,
         address: quickLeadAddress.trim() || 'Address pending',
       },
     })
@@ -1689,17 +1696,22 @@ function App() {
     setInviteSuccessMessage('')
     const fullName = inviteName.trim()
     const email = normalizeEmail(inviteEmail)
-    const phone = invitePhone.trim()
+    const phoneRaw = invitePhone.trim()
+    let phone = ''
+    if (phoneRaw) {
+      const parsed = parseTenDigitMobile(phoneRaw)
+      if (!parsed) {
+        setMessage('Enter a valid 10-digit mobile number, or leave phone blank.')
+        return
+      }
+      phone = parsed
+    }
     if (!fullName) {
       setMessage('Enter full name.')
       return
     }
     if (!email.includes('@')) {
       setMessage('Enter a valid email address.')
-      return
-    }
-    if (phone && !/^[0-9+\-\s]{7,20}$/.test(phone)) {
-      setMessage('Enter a valid phone number (digits, +, -, space).')
       return
     }
     if (!addableTeamRoles.includes(inviteRole)) {
@@ -2105,8 +2117,14 @@ function App() {
           {selectedCustomerId === 'new' ? (
             <>
               <label>
-                Phone
-                <input value={quickLeadPhone} onChange={(event) => setQuickLeadPhone(event.target.value)} />
+                Phone (10 digits)
+                <input
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  placeholder="9876543210"
+                  value={quickLeadPhone}
+                  onChange={(event) => setQuickLeadPhone(event.target.value)}
+                />
               </label>
               <label>
                 Address
@@ -2614,11 +2632,13 @@ function App() {
                     </select>
                   </label>
                   <label>
-                    Phone number
+                    Phone number (optional, 10 digits)
                     <input
+                      inputMode="numeric"
+                      autoComplete="tel"
                       value={invitePhone}
                       onChange={(event) => setInvitePhone(event.target.value)}
-                      placeholder="+91 98xxxxxx"
+                      placeholder="9876543210 or +91 9876543210"
                     />
                   </label>
                   {supabaseEnabled ? (

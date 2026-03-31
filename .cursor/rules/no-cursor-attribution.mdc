@@ -1,0 +1,9 @@
+---
+description: Do not add Cursor "Made-with" or similar tool attribution anywhere in this project
+alwaysApply: true
+---
+
+# No third-party IDE attribution
+
+- Never add text such as **Made-with: Cursor**, "Made with Cursor", or similar tool/IDE attribution to commits (including trailers), pull request descriptions, UI copy, HTML, `README`, `CHANGELOG`, comments, or generated files.
+- Prefer neutral, product-appropriate copy only (e.g. WhiteRock / Nerdshouse branding already used in the repo).
