@@ -24,16 +24,16 @@
   --shadow-md: 0 4px 24px rgba(15, 23, 42, 0.06);
   --focus-ring: 0 0 0 3px rgba(17, 24, 39, 0.08);
   font-family:
-    'Inter',
+    "Inter",
     system-ui,
     -apple-system,
-    'Segoe UI',
+    "Segoe UI",
     Roboto,
-    'Helvetica Neue',
+    "Helvetica Neue",
     sans-serif;
   color: var(--text);
   background: var(--bg);
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -265,7 +265,7 @@ body {
 
 .loginDivider::before,
 .loginDivider::after {
-  content: '';
+  content: "";
   flex: 1;
   height: 1px;
   background: #e5e7eb;
@@ -376,7 +376,9 @@ body {
   height: 2px;
   background: var(--text);
   border-radius: 1px;
-  box-shadow: 0 -5px 0 var(--text), 0 5px 0 var(--text);
+  box-shadow:
+    0 -5px 0 var(--text),
+    0 5px 0 var(--text);
 }
 
 .sidebarBackdrop {
@@ -604,7 +606,9 @@ button {
   font-weight: 500;
   font-size: 0.84rem;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 button:hover {
@@ -636,7 +640,9 @@ a.secondary {
   font-size: 0.84rem;
   text-decoration: none;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 a.secondary:hover {
@@ -936,6 +942,25 @@ button.secondary.danger:hover {
   align-items: end;
 }
 
+.myCustomersHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.myCustomersSearchWrap {
+  margin-left: auto;
+  min-width: 240px;
+  max-width: 380px;
+  width: 36%;
+}
+
+.myCustomersSearchInput {
+  width: 100%;
+  border: 1px solid #8a8f98;
+}
+
 .formGrid {
   display: grid;
   gap: 0.65rem;
@@ -957,7 +982,7 @@ button.secondary.danger:hover {
 }
 
 .statusTag:not(.queueTag)::before {
-  content: '';
+  content: "";
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -1495,6 +1520,18 @@ a:hover {
   .rowBetween {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .myCustomersHeader {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .myCustomersSearchWrap {
+    margin-left: 0;
+    min-width: 0;
+    max-width: none;
+    width: 100%;
   }
 
   .grid.two,
