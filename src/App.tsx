@@ -10,6 +10,8 @@ import { isValidPassword, PASSWORD_POLICY_HINT } from './lib/passwordPolicy'
 import { supabase, supabaseEnabled } from './lib/supabase'
 import { colorForSalesmanId, salesmanColorMap } from './mapColors'
 import { googleMapsSearchUrl } from './lib/maps'
+import { formatDate, formatDateTime } from './lib/dateUtils'
+import { exportToCsv } from './lib/exportUtils'
 
 const DealerMap = lazy(async () => {
   const module = await import('./components/DealerMap')
@@ -131,7 +133,7 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
   { id: 'field_tracking', label: 'Live tracking', section: 'Field', show: (r) => r === 'super_salesman' },
   { id: 'field_customers', label: 'My customers', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
   { id: 'admin_overdue', label: 'Overdue follow-ups', section: 'Admin', show: (r) => r !== 'salesman' },
-  { id: 'admin_meetings', label: 'Meeting responses', section: 'Admin', show: (r) => r !== 'salesman' },
+  { id: 'admin_meetings', label: 'Meeting responses', section: 'Admin', show: () => true },
   { id: 'admin_kpi', label: 'KPI table', section: 'Admin', show: (r) => r !== 'salesman' },
   { id: 'settings', label: 'Settings', section: 'Account', show: () => true },
   { id: 'visits', label: 'Visit history', section: 'Overview', show: () => true },
@@ -232,8 +234,12 @@ function distanceMeters(aLat: number, aLng: number, bLat: number, bLng: number) 
   return earthRadius * c
 }
 
-function kpiDateTimeLabel(iso: string) {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
+function kpiTimeLabel(iso: string) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
 }
 
 function kpiFromVisits(visits: VisitRecord[], salesmen: Salesman[]): KpiRow[] {
@@ -254,8 +260,8 @@ function kpiFromVisits(visits: VisitRecord[], salesmen: Salesman[]): KpiRow[] {
       salesmanName,
       date,
       totalWorkingHours: hoursBetween(firstIso, lastIso),
-      firstVisitTime: kpiDateTimeLabel(firstIso),
-      lastVisitTime: kpiDateTimeLabel(lastIso),
+      firstVisitTime: kpiTimeLabel(firstIso),
+      lastVisitTime: kpiTimeLabel(lastIso),
       visitCount: sorted.length,
     }
   }).sort((a, b) => b.date.localeCompare(a.date))
@@ -333,8 +339,19 @@ function App() {
   const [overdueSalesmanFilter, setOverdueSalesmanFilter] = useState('all')
   const [meetingDateFilter, setMeetingDateFilter] = useState('')
   const [meetingSalesmanFilter, setMeetingSalesmanFilter] = useState('all')
-  const [salesmanFollowUpDateFilter, setSalesmanFollowUpDateFilter] = useState('')
+  const [salesmanFollowUpDateFrom, setSalesmanFollowUpDateFrom] = useState('')
+  const [salesmanFollowUpDateTo, setSalesmanFollowUpDateTo] = useState('')
+  const [salesmanFollowUpPriorityFilter, setSalesmanFollowUpPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
+  const [myCustomersNameFilter, setMyCustomersNameFilter] = useState('')
+  const [myCustomersNameFilterDebounced, setMyCustomersNameFilterDebounced] = useState('')
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setMyCustomersNameFilterDebounced(myCustomersNameFilter)
+    }, 800)
+    return () => window.clearTimeout(timeoutId)
+  }, [myCustomersNameFilter])
 
   const salesmen = useMemo(
     () =>
@@ -934,11 +951,20 @@ function App() {
     [pendingFollowUpsForSalesman, todayIso],
   )
   const filteredPendingFollowUpsForSalesman = useMemo(
-    () =>
-      pendingFollowUpsForSalesman.filter((item) =>
-        salesmanFollowUpDateFilter ? item.dueDate === salesmanFollowUpDateFilter : true,
-      ),
-    [pendingFollowUpsForSalesman, salesmanFollowUpDateFilter],
+    () => {
+      return pendingFollowUpsForSalesman.filter((item) => {
+        const onOrAfterFrom = salesmanFollowUpDateFrom ? item.dueDate >= salesmanFollowUpDateFrom : true
+        const onOrBeforeTo = salesmanFollowUpDateTo ? item.dueDate <= salesmanFollowUpDateTo : true
+        const priorityOk = salesmanFollowUpPriorityFilter === 'all' ? true : item.priority === salesmanFollowUpPriorityFilter
+        return onOrAfterFrom && onOrBeforeTo && priorityOk
+      })
+    },
+    [
+      pendingFollowUpsForSalesman,
+      salesmanFollowUpDateFrom,
+      salesmanFollowUpDateTo,
+      salesmanFollowUpPriorityFilter,
+    ],
   )
   const openFollowUpsCount = useMemo(() => {
     const byId = new Map<string, FollowUp>()
@@ -955,11 +981,10 @@ function App() {
         .filter(
           (item) =>
             item.salesmanId === activeSalesman.id &&
-            item.status === 'closed' &&
-            (salesmanFollowUpDateFilter ? item.dueDate === salesmanFollowUpDateFilter : true),
+            item.status === 'closed'
         )
         .sort((a, b) => b.dueDate.localeCompare(a.dueDate)),
-    [followUps, activeSalesman.id, salesmanFollowUpDateFilter],
+    [followUps, activeSalesman.id, salesmanFollowUpDateFrom, salesmanFollowUpDateTo, salesmanFollowUpPriorityFilter],
   )
   const syncedVisits = useMemo(() => {
     const byId = new Map<string, VisitRecord>()
@@ -987,12 +1012,34 @@ function App() {
   }, [customers])
 
   const myCustomers = useMemo(() => {
-    if (role === 'salesman' || role === 'super_salesman') {
-      const mine = dedupedCustomers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
-      return mine.length ? mine : dedupedCustomers
+    if (role === 'salesman') {
+      return dedupedCustomers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
+    }
+    if (role === 'super_salesman') {
+      return dedupedCustomers
     }
     return dedupedCustomers
   }, [role, dedupedCustomers, activeSalesman.id])
+
+  const myCustomerIds = useMemo(() => new Set(myCustomers.map((c) => c.id)), [myCustomers])
+  const myCustomerNames = useMemo(
+    () => new Set(myCustomers.map((c) => c.name.trim().toLowerCase())),
+    [myCustomers],
+  )
+
+  const profileNameById = useMemo(() => {
+    const byId = new Map<string, string>()
+    for (const profile of teamProfiles) {
+      byId.set(profile.id, profile.fullName)
+    }
+    return byId
+  }, [teamProfiles])
+
+  const filteredMyCustomers = useMemo(() => {
+    const q = myCustomersNameFilterDebounced.trim().toLowerCase()
+    if (!q) return myCustomers
+    return myCustomers.filter((item) => item.name.toLowerCase().includes(q))
+  }, [myCustomers, myCustomersNameFilterDebounced])
 
   const filteredCustomerSuggestions = useMemo(() => {
     const q = visitCustomerSearch.trim().toLowerCase()
@@ -1147,22 +1194,75 @@ function App() {
     return [...grouped.values()].sort((a, b) => b.lastVisitAt.localeCompare(a.lastVisitAt))
   }, [visitHistoryRows, customerById])
   const meetingSalesmanOptions = useMemo(() => {
+    const scopedRows =
+      role === 'salesman'
+        ? meetingResponses.filter((m) => {
+          const linkedVisit = m.visitId ? visitById.get(m.visitId) : undefined
+          if (linkedVisit) return myCustomerIds.has(linkedVisit.customerId)
+          return myCustomerNames.has(m.customerName.trim().toLowerCase())
+        })
+        : meetingResponses
     const seen = new Set<string>()
-    for (const m of meetingResponses) {
+    for (const m of scopedRows) {
       const n = m.salesmanName.trim()
       if (n) seen.add(n)
     }
     return [...seen.values()].sort((a, b) => a.localeCompare(b))
-  }, [meetingResponses])
+  }, [role, meetingResponses, visitById, myCustomerIds, myCustomerNames])
   const filteredMeetingResponses = useMemo(
-    () =>
-      meetingResponses.filter((m) => {
+    () => {
+      const roleScopedRows =
+        role === 'salesman'
+          ? meetingResponses.filter((m) => {
+            const linkedVisit = m.visitId ? visitById.get(m.visitId) : undefined
+            if (linkedVisit) return myCustomerIds.has(linkedVisit.customerId)
+            return myCustomerNames.has(m.customerName.trim().toLowerCase())
+          })
+          : meetingResponses
+      return roleScopedRows.filter((m) => {
         const dateOk = meetingDateFilter ? m.createdAt.slice(0, 10) === meetingDateFilter : true
         const salesmanOk = meetingSalesmanFilter === 'all' ? true : m.salesmanName === meetingSalesmanFilter
         return dateOk && salesmanOk
-      }),
-    [meetingResponses, meetingDateFilter, meetingSalesmanFilter],
+      })
+    },
+    [
+      role,
+      meetingResponses,
+      visitById,
+      myCustomerIds,
+      myCustomerNames,
+      meetingDateFilter,
+      meetingSalesmanFilter,
+    ],
   )
+  const exportVisitHistoryCsv = () => {
+    const headers = ['Arrived', 'Ended', 'Salesman', 'Customer', 'City', 'Type', 'GPS', 'Status']
+    const rows = visitHistoryRows.map((visit) => [
+      visit.visitStartedAt ? formatDateTime(visit.visitStartedAt) : '—',
+      formatDateTime(visit.capturedAt),
+      visit.salesmanName,
+      visit.customerName,
+      customerById.get(visit.customerId)?.city ?? '—',
+      visit.visitType,
+      `${visit.lat.toFixed(4)}, ${visit.lng.toFixed(4)} (±${Math.round(visit.accuracy)}m)`,
+      visit.status,
+    ])
+    exportToCsv(`visit_history_${new Date().toISOString().slice(0, 10)}`, headers, rows)
+  }
+
+  const exportClientWiseVisitHistoryCsv = () => {
+    const headers = ['Client', 'City', 'Total visits', 'First visit', 'Last visit', 'Last visit type', 'Last salesman']
+    const rows = clientWiseVisitRows.map((row) => [
+      row.customerName,
+      row.city,
+      row.visits,
+      formatDateTime(row.firstVisitAt),
+      formatDateTime(row.lastVisitAt),
+      row.lastVisitType,
+      row.lastSalesmanName,
+    ])
+    exportToCsv(`client_wise_visit_history_${new Date().toISOString().slice(0, 10)}`, headers, rows)
+  }
   const messageLooksLikeError = useMemo(() => {
     if (!message) return false
     return /(failed|error|rejected|could not|cannot|required|must|denied|outside|not found|invalid|timed out|warning)/i.test(message)
@@ -1191,7 +1291,7 @@ function App() {
       setMessage('No photo stored for this visit.')
       return
     }
-    const caption = `${visit.customerName} · ${visit.salesmanName} · ${new Date(visit.capturedAt).toLocaleString()}`
+    const caption = `${visit.customerName} · ${visit.salesmanName} · ${formatDateTime(visit.capturedAt)}`
     if (raw.startsWith('data:') || /^https?:\/\//i.test(raw)) {
       setVisitPhotoModal({ src: raw, caption })
       return
@@ -1439,7 +1539,7 @@ function App() {
     const pad = Math.max(14, Math.floor(vw * 0.02))
     const lineHeight = Math.max(24, Math.floor(vh * 0.038))
     const fontSize = Math.max(17, Math.floor(vw * 0.034))
-    const lines = [`Photo time: ${new Date().toLocaleString()}`]
+    const lines = [`Photo time: ${formatDateTime(new Date())}`]
     const boxH = pad * 2 + lines.length * lineHeight
     ctx.fillStyle = 'rgba(0,0,0,0.75)'
     ctx.fillRect(pad, vh - boxH - pad, vw - pad * 2, boxH)
@@ -1806,223 +1906,223 @@ function App() {
     if (savingVisit) return
     setSavingVisit(true)
     try {
-    setMessage('')
-    if (!activeSalesman.id) return failVisitSave('Sign in again, then save the visit.')
-    if (!visitSession) return failVisitSave('Start a visit at arrival first, then end it when you leave.')
-    let leaveGeo = geo
-    if (!leaveGeo) {
-      leaveGeo = await lockVisitLocation('leave')
-      if (!leaveGeo) return failVisitSave('Could not get leave location. Allow GPS and try again.')
-    }
-    const session = visitSession
-    const maxGpsAccuracy =
-      session.selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS
-    if (leaveGeo.accuracy > maxGpsAccuracy) {
-      return failVisitSave(
-        session.selectedCustomerId === 'new'
-          ? `GPS accuracy must be under ${GPS_THRESHOLD_NEW_LEAD_METERS}m when ending a new lead visit. Current: ${Math.round(leaveGeo.accuracy)}m`
-          : `GPS accuracy must be under ${GPS_THRESHOLD_METERS}m when ending an existing-customer visit. Current: ${Math.round(leaveGeo.accuracy)}m`,
-      )
-    }
-    if (!photoFile) return failVisitSave('Take a mandatory photo using the camera (gallery upload is not allowed).')
-    if (!photoHasEmbeddedWatermark || !photoPreview.startsWith('data:image')) {
-      return failVisitSave('Use Open camera and Capture photo. Images must come from the live camera with timestamp and location on the picture.')
-    }
-    if (!notes.trim()) return failVisitSave('Meeting notes are required.')
-
-    if (supabase && online) {
-      const displayName =
-        (authSession?.user?.user_metadata?.full_name as string | undefined) ||
-        authSession?.user?.email ||
-        activeSalesman.name
-      const { error: profileErr } = await supabase.from('profiles').upsert(
-        { id: activeSalesman.id, full_name: displayName, role, email: normalizeEmail(authSession?.user?.email ?? '') },
-        { onConflict: 'id' },
-      )
-      if (profileErr) {
+      setMessage('')
+      if (!activeSalesman.id) return failVisitSave('Sign in again, then save the visit.')
+      if (!visitSession) return failVisitSave('Start a visit at arrival first, then end it when you leave.')
+      let leaveGeo = geo
+      if (!leaveGeo) {
+        leaveGeo = await lockVisitLocation('leave')
+        if (!leaveGeo) return failVisitSave('Could not get leave location. Allow GPS and try again.')
+      }
+      const session = visitSession
+      const maxGpsAccuracy =
+        session.selectedCustomerId === 'new' ? GPS_THRESHOLD_NEW_LEAD_METERS : GPS_THRESHOLD_METERS
+      if (leaveGeo.accuracy > maxGpsAccuracy) {
         return failVisitSave(
-          `Profile sync failed (required before saving customers): ${profileErr.message}`,
+          session.selectedCustomerId === 'new'
+            ? `GPS accuracy must be under ${GPS_THRESHOLD_NEW_LEAD_METERS}m when ending a new lead visit. Current: ${Math.round(leaveGeo.accuracy)}m`
+            : `GPS accuracy must be under ${GPS_THRESHOLD_METERS}m when ending an existing-customer visit. Current: ${Math.round(leaveGeo.accuracy)}m`,
         )
       }
-    }
+      if (!photoFile) return failVisitSave('Take a mandatory photo using the camera (gallery upload is not allowed).')
+      if (!photoHasEmbeddedWatermark || !photoPreview.startsWith('data:image')) {
+        return failVisitSave('Use Open camera and Capture photo. Images must come from the live camera with timestamp and location on the picture.')
+      }
+      if (!notes.trim()) return failVisitSave('Meeting notes are required.')
 
-    let customerName = ''
-    let customerId = session.selectedCustomerId
-    let selectedCustomer: Customer | undefined
-    const visitStartedAt = session.startGeo.capturedAt
+      if (supabase && online) {
+        const displayName =
+          (authSession?.user?.user_metadata?.full_name as string | undefined) ||
+          authSession?.user?.email ||
+          activeSalesman.name
+        const { error: profileErr } = await supabase.from('profiles').upsert(
+          { id: activeSalesman.id, full_name: displayName, role, email: normalizeEmail(authSession?.user?.email ?? '') },
+          { onConflict: 'id' },
+        )
+        if (profileErr) {
+          return failVisitSave(
+            `Profile sync failed (required before saving customers): ${profileErr.message}`,
+          )
+        }
+      }
 
-    if (session.selectedCustomerId === 'new') {
-      const ql = session.quickLead
-      const newCustomer: Customer = {
-        id: `c-${Date.now()}`,
-        name: ql.name,
-        phone: ql.phone,
-        whatsapp: ql.phone,
-        address: ql.address,
-        city: 'Unknown',
-        tags: [],
-        assignedSalesmanId: activeSalesman.id,
+      let customerName = ''
+      let customerId = session.selectedCustomerId
+      let selectedCustomer: Customer | undefined
+      const visitStartedAt = session.startGeo.capturedAt
+
+      if (session.selectedCustomerId === 'new') {
+        const ql = session.quickLead
+        const newCustomer: Customer = {
+          id: `c-${Date.now()}`,
+          name: ql.name,
+          phone: ql.phone,
+          whatsapp: ql.phone,
+          address: ql.address,
+          city: 'Unknown',
+          tags: [],
+          assignedSalesmanId: activeSalesman.id,
+          lat: leaveGeo.lat,
+          lng: leaveGeo.lng,
+        }
+        customerName = newCustomer.name
+        customerId = newCustomer.id
+        selectedCustomer = newCustomer
+        setCustomers((previous) => [newCustomer, ...previous])
+        if (supabase && online) {
+          const { error } = await supabase.from('customers').upsert({
+            id: newCustomer.id,
+            name: newCustomer.name,
+            phone: newCustomer.phone,
+            whatsapp: newCustomer.whatsapp,
+            address: newCustomer.address,
+            city: newCustomer.city,
+            tags: newCustomer.tags,
+            assigned_salesman_id: newCustomer.assignedSalesmanId,
+            lat: newCustomer.lat,
+            lng: newCustomer.lng,
+          })
+          if (error) return failVisitSave(`Customer save failed: ${error.message}`)
+        }
+      } else {
+        selectedCustomer = customers.find((item) => item.id === session.selectedCustomerId)
+        if (!selectedCustomer) return failVisitSave('Customer not found.')
+        customerName = selectedCustomer.name
+      }
+
+      if (selectedCustomer && session.selectedCustomerId !== 'new') {
+        const radius = distanceMeters(leaveGeo.lat, leaveGeo.lng, selectedCustomer.lat, selectedCustomer.lng)
+        if (radius > RADIUS_THRESHOLD_METERS) {
+          return failVisitSave(`Outside ${RADIUS_THRESHOLD_METERS}m radius at leave time. Current distance: ${Math.round(radius)}m`)
+        }
+      }
+
+      const watermarkedPhoto = photoPreview
+      const visitId = `v-${Date.now()}`
+      const capturedAt = leaveGeo.capturedAt
+      let photoPath = watermarkedPhoto
+
+      if (supabase && online) {
+        try {
+          photoPath = await uploadVisitPhoto(visitId, watermarkedPhoto)
+        } catch (error) {
+          return failVisitSave(`Photo upload failed: ${(error as Error).message}`)
+        }
+      }
+
+      const payload: VisitRecord = {
+        id: visitId,
+        customerId,
+        customerName,
+        salesmanId: activeSalesman.id,
+        salesmanName: activeSalesman.name,
         lat: leaveGeo.lat,
         lng: leaveGeo.lng,
+        accuracy: leaveGeo.accuracy,
+        capturedAt,
+        photoDataUrl: photoPath,
+        visitType: session.visitType,
+        notes: notes.trim(),
+        nextAction: nextAction.trim(),
+        followUpDate: followUpDate || undefined,
+        status: online ? 'synced' : 'queued',
+        maxGpsAccuracyMeters: maxGpsAccuracy,
+        visitStartedAt,
       }
-      customerName = newCustomer.name
-      customerId = newCustomer.id
-      selectedCustomer = newCustomer
-      setCustomers((previous) => [newCustomer, ...previous])
-      if (supabase && online) {
-        const { error } = await supabase.from('customers').upsert({
-          id: newCustomer.id,
-          name: newCustomer.name,
-          phone: newCustomer.phone,
-          whatsapp: newCustomer.whatsapp,
-          address: newCustomer.address,
-          city: newCustomer.city,
-          tags: newCustomer.tags,
-          assigned_salesman_id: newCustomer.assignedSalesmanId,
-          lat: newCustomer.lat,
-          lng: newCustomer.lng,
-        })
-        if (error) return failVisitSave(`Customer save failed: ${error.message}`)
-      }
-    } else {
-      selectedCustomer = customers.find((item) => item.id === session.selectedCustomerId)
-      if (!selectedCustomer) return failVisitSave('Customer not found.')
-      customerName = selectedCustomer.name
-    }
 
-    if (selectedCustomer && session.selectedCustomerId !== 'new') {
-      const radius = distanceMeters(leaveGeo.lat, leaveGeo.lng, selectedCustomer.lat, selectedCustomer.lng)
-      if (radius > RADIUS_THRESHOLD_METERS) {
-        return failVisitSave(`Outside ${RADIUS_THRESHOLD_METERS}m radius at leave time. Current distance: ${Math.round(radius)}m`)
-      }
-    }
-
-    const watermarkedPhoto = photoPreview
-    const visitId = `v-${Date.now()}`
-    const capturedAt = leaveGeo.capturedAt
-    let photoPath = watermarkedPhoto
-
-    if (supabase && online) {
-      try {
-        photoPath = await uploadVisitPhoto(visitId, watermarkedPhoto)
-      } catch (error) {
-        return failVisitSave(`Photo upload failed: ${(error as Error).message}`)
-      }
-    }
-
-    const payload: VisitRecord = {
-      id: visitId,
-      customerId,
-      customerName,
-      salesmanId: activeSalesman.id,
-      salesmanName: activeSalesman.name,
-      lat: leaveGeo.lat,
-      lng: leaveGeo.lng,
-      accuracy: leaveGeo.accuracy,
-      capturedAt,
-      photoDataUrl: photoPath,
-      visitType: session.visitType,
-      notes: notes.trim(),
-      nextAction: nextAction.trim(),
-      followUpDate: followUpDate || undefined,
-      status: online ? 'synced' : 'queued',
-      maxGpsAccuracyMeters: maxGpsAccuracy,
-      visitStartedAt,
-    }
-
-    setVisits((previous) => {
-      if (previous.some((v) => v.id === payload.id)) return previous
-      return [payload, ...previous]
-    })
-    if (!supabase || !online) {
-      setMeetingResponses((previous) => [
-        { id: `m-${Date.now()}`, customerName, salesmanName: activeSalesman.name, response: notes.trim(), createdAt: capturedAt },
-        ...previous,
-      ])
-    }
-    if (followUpDate) {
-      const nextFollowUp: FollowUp = {
-        id: `f-${Date.now()}`,
-        customerId,
-        dueDate: followUpDate,
-        priority: 'medium',
-        status: 'pending',
-        remarks: nextAction.trim() || 'Follow-up from visit',
-        salesmanId: activeSalesman.id,
-      }
-      setFollowUps((previous) => [nextFollowUp, ...previous])
-      if (supabase && online) {
-        const { error } = await supabase.from('followups').upsert({
-          id: nextFollowUp.id,
-          customer_id: nextFollowUp.customerId,
-          salesman_id: nextFollowUp.salesmanId,
-          due_date: nextFollowUp.dueDate,
-          priority: nextFollowUp.priority,
-          status: nextFollowUp.status,
-          remarks: nextFollowUp.remarks,
-        })
-        if (error) setMessage(`Follow-up save warning: ${error.message}`)
-      }
-    }
-
-    if (supabase && online) {
-      const { data: createdVisit, error } = await supabase.rpc('create_visit_enforced', {
-        p_visit_id: payload.id,
-        p_customer_id: payload.customerId,
-        p_salesman_id: payload.salesmanId,
-        p_visit_type: payload.visitType,
-        p_captured_at: payload.capturedAt,
-        p_lat: payload.lat,
-        p_lng: payload.lng,
-        p_accuracy_meters: payload.accuracy,
-        p_photo_path: payload.photoDataUrl,
-        p_notes: payload.notes,
-        p_next_action: payload.nextAction || null,
-        p_follow_up_date: payload.followUpDate || null,
-        p_visit_started_at: payload.visitStartedAt ?? null,
-        p_max_gps_accuracy_meters: payload.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
+      setVisits((previous) => {
+        if (previous.some((v) => v.id === payload.id)) return previous
+        return [payload, ...previous]
       })
-      if (error) {
-        setVisits((previous) => previous.filter((v) => v.id !== payload.id))
-        return failVisitSave(`Visit rejected by server: ${error.message}`)
+      if (!supabase || !online) {
+        setMeetingResponses((previous) => [
+          { id: `m-${Date.now()}`, customerName, salesmanName: activeSalesman.name, response: notes.trim(), createdAt: capturedAt },
+          ...previous,
+        ])
       }
-      const visitRowId =
-        createdVisit && typeof createdVisit === 'object' && 'id' in createdVisit
-          ? String((createdVisit as { id: string }).id)
-          : visitId
-      const meetingId = `m-${visitId}`
-      const { error: meetingErr } = await supabase.from('meeting_responses').insert({
-        id: meetingId,
-        customer_name: customerName,
-        salesman_name: activeSalesman.name,
-        response: notes.trim(),
-        created_at: capturedAt,
-        visit_id: visitRowId,
-      })
-      if (meetingErr) {
-        console.warn('meeting_responses insert:', meetingErr.message)
+      if (followUpDate) {
+        const nextFollowUp: FollowUp = {
+          id: `f-${Date.now()}`,
+          customerId,
+          dueDate: followUpDate,
+          priority: 'medium',
+          status: 'pending',
+          remarks: nextAction.trim() || 'Follow-up from visit',
+          salesmanId: activeSalesman.id,
+        }
+        setFollowUps((previous) => [nextFollowUp, ...previous])
+        if (supabase && online) {
+          const { error } = await supabase.from('followups').upsert({
+            id: nextFollowUp.id,
+            customer_id: nextFollowUp.customerId,
+            salesman_id: nextFollowUp.salesmanId,
+            due_date: nextFollowUp.dueDate,
+            priority: nextFollowUp.priority,
+            status: nextFollowUp.status,
+            remarks: nextFollowUp.remarks,
+          })
+          if (error) setMessage(`Follow-up save warning: ${error.message}`)
+        }
       }
-      if (visitRowId !== payload.id) {
-        setVisits((previous) =>
-          previous.map((v) => (v.id === payload.id ? { ...v, id: visitRowId } : v)),
-        )
-      }
-    }
 
-    setVisitSession(null)
-    setGeo(null)
-    setSelectedCustomerId('new')
-    setQuickLeadPhone('')
-    setQuickLeadAddress('')
-    setVisitCustomerSearch('')
-    setNotes('')
-    setNextAction('')
-    setFollowUpDate('')
-    setPhotoFile(null)
-    setPhotoPreview('')
-    setPhotoHasEmbeddedWatermark(false)
-    stopVisitCamera()
-    setMessage(online ? 'Visit saved and synced.' : 'Visit saved offline. Sync later with same captured time.')
+      if (supabase && online) {
+        const { data: createdVisit, error } = await supabase.rpc('create_visit_enforced', {
+          p_visit_id: payload.id,
+          p_customer_id: payload.customerId,
+          p_salesman_id: payload.salesmanId,
+          p_visit_type: payload.visitType,
+          p_captured_at: payload.capturedAt,
+          p_lat: payload.lat,
+          p_lng: payload.lng,
+          p_accuracy_meters: payload.accuracy,
+          p_photo_path: payload.photoDataUrl,
+          p_notes: payload.notes,
+          p_next_action: payload.nextAction || null,
+          p_follow_up_date: payload.followUpDate || null,
+          p_visit_started_at: payload.visitStartedAt ?? null,
+          p_max_gps_accuracy_meters: payload.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
+        })
+        if (error) {
+          setVisits((previous) => previous.filter((v) => v.id !== payload.id))
+          return failVisitSave(`Visit rejected by server: ${error.message}`)
+        }
+        const visitRowId =
+          createdVisit && typeof createdVisit === 'object' && 'id' in createdVisit
+            ? String((createdVisit as { id: string }).id)
+            : visitId
+        const meetingId = `m-${visitId}`
+        const { error: meetingErr } = await supabase.from('meeting_responses').insert({
+          id: meetingId,
+          customer_name: customerName,
+          salesman_name: activeSalesman.name,
+          response: notes.trim(),
+          created_at: capturedAt,
+          visit_id: visitRowId,
+        })
+        if (meetingErr) {
+          console.warn('meeting_responses insert:', meetingErr.message)
+        }
+        if (visitRowId !== payload.id) {
+          setVisits((previous) =>
+            previous.map((v) => (v.id === payload.id ? { ...v, id: visitRowId } : v)),
+          )
+        }
+      }
+
+      setVisitSession(null)
+      setGeo(null)
+      setSelectedCustomerId('new')
+      setQuickLeadPhone('')
+      setQuickLeadAddress('')
+      setVisitCustomerSearch('')
+      setNotes('')
+      setNextAction('')
+      setFollowUpDate('')
+      setPhotoFile(null)
+      setPhotoPreview('')
+      setPhotoHasEmbeddedWatermark(false)
+      stopVisitCamera()
+      setMessage(online ? 'Visit saved and synced.' : 'Visit saved offline. Sync later with same captured time.')
     } catch (error) {
       failVisitSave(`Could not save visit: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
@@ -2047,7 +2147,7 @@ function App() {
         <div className="visit-session-banner" role="status">
           <p>
             <strong>Visit in progress</strong> — {visitSessionCustomerLabel} · {visitSession.visitType} · arrived{' '}
-            {new Date(visitSession.startGeo.capturedAt).toLocaleString()}
+            {formatDateTime(visitSession.startGeo.capturedAt)}
           </p>
           <div className="inlineActions">
             <button type="button" className="secondary" onClick={cancelVisitSession}>
@@ -2092,7 +2192,7 @@ function App() {
       ) : null}
       {geo && !locationLocking ? (
         <p className={`muted locationLockNote ${geo.accuracy <= displayedGpsThreshold ? 'ok' : 'warn'}`}>
-          {visitSession ? 'Leave' : 'Arrival'} locked {new Date(geo.capturedAt).toLocaleString()} | {geo.lat.toFixed(6)},{' '}
+          {visitSession ? 'Leave' : 'Arrival'} locked {formatDateTime(geo.capturedAt)} | {geo.lat.toFixed(6)},{' '}
           {geo.lng.toFixed(6)} | ±{Math.round(geo.accuracy)}m
         </p>
       ) : null}
@@ -2309,17 +2409,25 @@ function App() {
                   <h3>Follow-up snapshot</h3>
                   <div className="inlineFilters">
                     <label>
-                      Follow-up date
+                      Follow-up from
                       <input
                         type="date"
-                        value={salesmanFollowUpDateFilter}
-                        onChange={(event) => setSalesmanFollowUpDateFilter(event.target.value)}
+                        value={salesmanFollowUpDateFrom}
+                        onChange={(event) => setSalesmanFollowUpDateFrom(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Follow-up to
+                      <input
+                        type="date"
+                        value={salesmanFollowUpDateTo}
+                        onChange={(event) => setSalesmanFollowUpDateTo(event.target.value)}
                       />
                     </label>
                   </div>
                   <p className="muted">Due today: {followUpsDueTodayForSalesman.length}</p>
                   <p className="muted">Overdue: {overdueFollowUpsForSalesman.length}</p>
-                  <p className="muted">Matching selected date: {filteredPendingFollowUpsForSalesman.length}</p>
+                  <p className="muted">Matching selected range: {filteredPendingFollowUpsForSalesman.length}</p>
                 </article>
               )}
             </div>
@@ -2434,12 +2542,12 @@ function App() {
                           <td>{row.customerName}</td>
                           <td>{row.customerCity}</td>
                           <td>{row.customerPhone}</td>
-                          <td>{row.dueDate}</td>
+                          <td>{formatDate(row.dueDate)}</td>
                           <td>{row.priority}</td>
                           <td>{row.status}</td>
                           <td>{row.remarks || '—'}</td>
                           <td>
-                            {row.lastVisitAt ? `${new Date(row.lastVisitAt).toLocaleDateString()} (${row.lastVisitType})` : '—'}
+                            {row.lastVisitAt ? `${formatDate(row.lastVisitAt)} (${row.lastVisitType})` : '—'}
                           </td>
                         </tr>
                       ))
@@ -2453,7 +2561,33 @@ function App() {
       case 'admin_meetings':
         return (
           <section className="panel">
-            <h2>Meeting responses</h2>
+            <div className="rowBetween" style={{ alignItems: 'center' }}>
+              <h2>Meeting responses</h2>
+              {role === 'owner' && (
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    const headers = ['Time', 'Salesman', 'Customer', 'Response', 'Next action'];
+                    const rows = filteredMeetingResponses.map((item) => {
+                      const linkedVisit = item.visitId ? visitById.get(item.visitId) : undefined;
+                      return [
+                        formatDateTime(item.createdAt),
+                        item.salesmanName,
+                        item.customerName,
+                        item.response,
+                        linkedVisit?.nextAction || '—'
+                      ];
+                    });
+                    exportToCsv(`meeting_responses_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+                  }}
+                  style={{ display: 'flex', alignItems: 'center' }}
+                >
+                  <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: '6px' }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                  Export Data
+                </button>
+              )}
+            </div>
             <article className="card">
               <div className="inlineFilters">
                 <label>
@@ -2489,7 +2623,7 @@ function App() {
                       const linkedVisit = item.visitId ? visitById.get(item.visitId) : undefined
                       return (
                         <tr key={item.id}>
-                          <td>{new Date(item.createdAt).toLocaleString()}</td>
+                          <td>{formatDateTime(item.createdAt)}</td>
                           <td>{item.salesmanName}</td>
                           <td>{item.customerName}</td>
                           <td>{item.response}</td>
@@ -2713,7 +2847,7 @@ function App() {
                               <td>
                                 <span className="roleBadge">{u.role.replace(/_/g, ' ')}</span>
                               </td>
-                              <td className="muted settingsDateCell">{new Date(u.addedAt).toLocaleString()}</td>
+                              <td className="muted settingsDateCell">{formatDateTime(u.addedAt)}</td>
                               {canRemoveInvites ? (
                                 <td className="settingsActionsCell">
                                   <button type="button" className="secondary danger" onClick={() => removeInvitedUser(u.email)}>
@@ -2800,23 +2934,23 @@ function App() {
                 <table>
                   <thead>
                     <tr>
-                      <th>Salesman</th>
                       <th>Date</th>
+                      <th>Salesman</th>
+                      <th>Total Visits</th>
+                      <th>First meeting</th>
+                      <th>Last meeting</th>
                       <th>Total working hrs</th>
-                      <th>Last − first visit</th>
-                      <th>Visits</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredKpiRows.map((item) => (
                       <tr key={`${item.salesmanId}-${item.date}`}>
+                        <td>{formatDate(item.date)}</td>
                         <td>{item.salesmanName}</td>
-                        <td>{item.date}</td>
-                        <td>{item.totalWorkingHours}</td>
-                        <td>
-                          {item.lastVisitTime} − {item.firstVisitTime}
-                        </td>
                         <td>{item.visitCount}</td>
+                        <td>{item.firstVisitTime}</td>
+                        <td>{item.lastVisitTime}</td>
+                        <td>{item.totalWorkingHours}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2832,12 +2966,34 @@ function App() {
             <article className="card">
               <div className="inlineFilters">
                 <label>
-                  Follow-up date
+                  Follow-up from
                   <input
                     type="date"
-                    value={salesmanFollowUpDateFilter}
-                    onChange={(event) => setSalesmanFollowUpDateFilter(event.target.value)}
+                    value={salesmanFollowUpDateFrom}
+                    onChange={(event) => setSalesmanFollowUpDateFrom(event.target.value)}
                   />
+                </label>
+                <label>
+                  Follow-up to
+                  <input
+                    type="date"
+                    value={salesmanFollowUpDateTo}
+                    onChange={(event) => setSalesmanFollowUpDateTo(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Priority
+                  <select
+                    value={salesmanFollowUpPriorityFilter}
+                    onChange={(event) =>
+                      setSalesmanFollowUpPriorityFilter(event.target.value as 'all' | FollowUp['priority'])
+                    }
+                  >
+                    <option value="all">All priorities</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
                 </label>
               </div>
               <p className="muted">
@@ -2852,7 +3008,7 @@ function App() {
                     <li key={item.id} style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div>
-                          <strong>{customer?.name ?? 'Unknown customer'}</strong> — due {item.dueDate}
+                          <strong>{customer?.name ?? 'Unknown customer'}</strong> — due {formatDate(item.dueDate)}
                           <p className="muted">{item.remarks}</p>
                         </div>
                         <span className={`statusTag ${item.priority === 'high' ? 'warning' : ''}`}>{item.priority}</span>
@@ -2926,7 +3082,7 @@ function App() {
                     return (
                       <li key={`arch-${item.id}`}>
                         <div>
-                          <strong>{customer?.name ?? 'Unknown customer'}</strong> — done for {item.dueDate}
+                          <strong>{customer?.name ?? 'Unknown customer'}</strong> — done for {formatDate(item.dueDate)}
                           <p className="muted">{item.remarks}</p>
                         </div>
                         <span className="statusTag ok">completed</span>
@@ -2973,7 +3129,7 @@ function App() {
                 <ul className="miniList">
                   {mapLivePoints.slice(0, 12).map((point, index) => (
                     <li key={`${point.time}-${index}`}>
-                      {new Date(point.time).toLocaleTimeString()} — {point.lat.toFixed(5)}, {point.lng.toFixed(5)} (±{Math.round(point.accuracy)}m)
+                      {formatDateTime(point.time)} — {point.lat.toFixed(5)}, {point.lng.toFixed(5)} (±{Math.round(point.accuracy)}m)
                     </li>
                   ))}
                 </ul>
@@ -2984,32 +3140,45 @@ function App() {
       case 'field_customers':
         return (
           <section className="panel">
-            <h2>My customers</h2>
+            <div className="myCustomersHeader">
+              <h2>My customers</h2>
+              <label className="myCustomersSearchWrap">
+                <input
+                  className="myCustomersSearchInput"
+                  value={myCustomersNameFilter}
+                  onChange={(event) => setMyCustomersNameFilter(event.target.value)}
+                  placeholder="Search customer by name"
+                />
+              </label>
+            </div>
             <article className="card">
               <ul className="list">
-                {myCustomers.map((item) => (
-                    <li key={item.id}>
-                      <div>
-                        <strong>{item.name}</strong> — {item.city}
-                        <p className="muted">
-                          {item.phone} | Tags: {item.tags.join(', ') || '—'}
-                        </p>
-                      </div>
-                      <div className="inlineActions">
-                        <a
-                          className="secondary"
-                          href={googleMapsSearchUrl(item.lat, item.lng)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          Google Maps
-                        </a>
-                        <button type="button" className="secondary" onClick={() => setActiveView('map')}>
-                          In-app map
-                        </button>
-                      </div>
-                    </li>
-                  ))}
+                {filteredMyCustomers.map((item) => (
+                  <li key={item.id}>
+                    <div>
+                      <strong>{item.name}</strong> — {item.city}
+                      <p className="muted">
+                        {item.phone} | Tags: {item.tags.join(', ') || '—'}
+                      </p>
+                      <p className="muted">
+                        Salesperson: {profileNameById.get(item.assignedSalesmanId) ?? 'Unassigned'}
+                      </p>
+                    </div>
+                    <div className="inlineActions">
+                      <a
+                        className="secondary"
+                        href={googleMapsSearchUrl(item.lat, item.lng)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Google Maps
+                      </a>
+                      <button type="button" className="secondary" onClick={() => setActiveView('map')}>
+                        In-app map
+                      </button>
+                    </div>
+                  </li>
+                ))}
               </ul>
             </article>
           </section>
@@ -3017,8 +3186,21 @@ function App() {
       case 'visits':
         return (
           <section className="panel">
-            <h2>Visit history</h2>
             <article className="card">
+              <div className="rowBetween" style={{ alignItems: 'center' }}>
+                <h3>Visit history</h3>
+                {role === 'owner' ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void exportVisitHistoryCsv()}
+                    style={{ display: 'flex', alignItems: 'center' }}
+                  >
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: '6px' }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    Export Data
+                  </button>
+                ) : null}
+              </div>
               <div className="inlineFilters">
                 <label>
                   Date
@@ -3074,9 +3256,9 @@ function App() {
                     {visitHistoryRows.map((visit) => (
                       <tr key={visit.id}>
                         <td>
-                          {visit.visitStartedAt ? new Date(visit.visitStartedAt).toLocaleString() : '—'}
+                          {visit.visitStartedAt ? formatDateTime(visit.visitStartedAt) : '—'}
                         </td>
-                        <td>{new Date(visit.capturedAt).toLocaleString()}</td>
+                        <td>{formatDateTime(visit.capturedAt)}</td>
                         <td>{visit.salesmanName}</td>
                         <td>{visit.customerName}</td>
                         <td>{customerById.get(visit.customerId)?.city ?? '—'}</td>
@@ -3111,7 +3293,20 @@ function App() {
               </div>
             </article>
             <article className="card">
-              <h3>Client-wise Visit History</h3>
+              <div className="rowBetween" style={{ alignItems: 'center' }}>
+                <h3>Client-wise Visit History</h3>
+                {role === 'owner' ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void exportClientWiseVisitHistoryCsv()}
+                    style={{ display: 'flex', alignItems: 'center' }}
+                  >
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: '6px' }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    Export Data
+                  </button>
+                ) : null}
+              </div>
               <div className="scrollArea">
                 <table>
                   <thead>
@@ -3139,8 +3334,8 @@ function App() {
                           <td>{row.customerName}</td>
                           <td>{row.city}</td>
                           <td>{row.visits}</td>
-                          <td>{new Date(row.firstVisitAt).toLocaleString()}</td>
-                          <td>{new Date(row.lastVisitAt).toLocaleString()}</td>
+                          <td>{formatDateTime(row.firstVisitAt)}</td>
+                          <td>{formatDateTime(row.lastVisitAt)}</td>
                           <td>{row.lastVisitType}</td>
                           <td>{row.lastSalesmanName}</td>
                           <td>
