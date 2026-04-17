@@ -778,6 +778,362 @@ button:focus-visible {
   word-break: break-all;
 }
 
+.followupTableWrap {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.followupTable {
+  width: max(100%, 920px);
+  border-collapse: collapse;
+  table-layout: fixed;
+  min-width: 920px;
+}
+
+.followupTable th,
+.followupTable td {
+  padding: 0.65rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.followupTable th {
+  background: var(--accent-subtle);
+}
+
+.followupTable tbody tr:hover {
+  background: rgba(15, 61, 57, 0.03);
+}
+
+.followupTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.followupTable td {
+  overflow-wrap: anywhere;
+}
+
+.followupTableWrap--archived {
+  margin-top: 0.5rem;
+}
+
+.followupCustomerCell {
+  min-width: 0;
+}
+
+.followupCustomerName {
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.followupCustomerMeta {
+  margin-top: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.followupSalesmanCell,
+.followupCityCell {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.followupCompactCell {
+  white-space: nowrap;
+}
+
+.followupDateCell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.followupPill,
+.followupStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.65rem;
+  padding: 0.17rem 0.48rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.followupPill {
+  background: rgba(15, 61, 57, 0.08);
+  color: var(--text-secondary);
+}
+
+.followupPill--high {
+  background: rgba(234, 88, 12, 0.14);
+  color: #b45309;
+}
+
+.followupPill--medium {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
+.followupPill--low {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+}
+
+.followupStatus {
+  background: rgba(15, 61, 57, 0.06);
+  color: var(--text-secondary);
+}
+
+.followupStatus--closed {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+}
+
+.followupStatus--pending {
+  background: rgba(234, 88, 12, 0.12);
+  color: #c2410c;
+}
+
+.followupStatus--in_progress {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
+.followupRemarks {
+  display: -webkit-box;
+  overflow: hidden;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.followupActions,
+.followupEditActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: stretch;
+}
+
+.followupActions button,
+.followupEditActions button {
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 0.32rem 0.55rem;
+  font-size: 0.72rem;
+  line-height: 1.15;
+}
+
+.followupEditRow td {
+  padding: 0.8rem 0.55rem 0.9rem;
+  background: linear-gradient(
+    180deg,
+    rgba(15, 61, 57, 0.02),
+    rgba(15, 61, 57, 0.04)
+  );
+}
+
+.followupEditCard {
+  border: 1px solid rgba(15, 61, 57, 0.12);
+  border-radius: calc(var(--radius-md) - 2px);
+  background: rgba(255, 255, 255, 0.8);
+  padding: 0.75rem;
+}
+
+.followupEditHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.followupEditHeader .muted {
+  margin-top: 0.25rem;
+}
+
+.followupEditGrid {
+  display: grid;
+  gap: 0.55rem 0.65rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.followupEditGrid label:last-of-type {
+  grid-column: 1 / -1;
+}
+
+.followupEditGrid textarea {
+  min-height: 5.75rem;
+  resize: vertical;
+}
+
+.followupEditActions {
+  margin-top: 0.65rem;
+  justify-content: flex-end;
+}
+
+.customersTableWrap {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.customersTable {
+  width: max(100%, 860px);
+  border-collapse: collapse;
+  table-layout: fixed;
+  min-width: 860px;
+}
+
+.customersTable th,
+.customersTable td {
+  padding: 0.65rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.customersTable th {
+  background: var(--accent-subtle);
+}
+
+.customersTable tbody tr:hover {
+  background: rgba(15, 61, 57, 0.03);
+}
+
+.customersTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.customersTable td {
+  overflow-wrap: anywhere;
+}
+
+.customersNameCell {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.customersCompactCell,
+.customersSalesmanCell {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.customersTagsCell {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.customerMetaPill,
+.customerTagChip,
+.customerEmptyChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.55rem;
+  padding: 0.16rem 0.48rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.customerMetaPill--subtle {
+  background: var(--accent-subtle);
+}
+
+.customerMetaPill--mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.67rem;
+}
+
+.customerTagChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.22rem;
+}
+
+.customerTagChip {
+  background: rgba(15, 61, 57, 0.06);
+}
+
+.customerEmptyChip {
+  background: transparent;
+  border-style: dashed;
+}
+
+.customerActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.32rem;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.customerActionBtn {
+  width: 100%;
+  min-width: 0;
+  padding: 0.42rem 0.5rem;
+  font-size: 0.71rem;
+  line-height: 1.15;
+  text-align: center;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+a.customerActionBtn:hover,
+button.customerActionBtn:hover {
+  text-decoration: none;
+  color: var(--text);
+  background: var(--accent-subtle);
+  border-color: var(--border-hover);
+}
+
+a.customerActionBtn:focus-visible,
+button.customerActionBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .settingsDateCell {
   font-size: 0.76rem;
   white-space: nowrap;
@@ -1235,6 +1591,40 @@ a:hover {
   font-size: 0.8rem;
 }
 
+.dynamic-fields-section {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.7rem;
+  background: var(--accent-subtle);
+}
+
+.dynamic-fields-grid,
+.dynamic-fields-admin-form {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dynamic-fields-admin-form {
+  margin-bottom: 0.7rem;
+}
+
+.visit-submit-actions {
+  width: 100%;
+}
+
+.visit-submit-btn {
+  min-width: 220px;
+}
+
+.dynamicFieldLine {
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
 .dealer-map-wrap {
   display: flex;
   flex-direction: column;
@@ -1499,6 +1889,32 @@ a:hover {
     max-width: none;
   }
 
+  .dynamic-fields-grid,
+  .dynamic-fields-admin-form {
+    grid-template-columns: 1fr;
+  }
+
+  .dynamic-fields-section label input,
+  .dynamic-fields-section label select,
+  .dynamic-fields-section label textarea,
+  .dynamic-fields-admin-form label input,
+  .dynamic-fields-admin-form label select {
+    width: 100%;
+  }
+
+  .visit-submit-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    padding-top: 0.5rem;
+    background: linear-gradient(to top, var(--surface), rgba(255, 255, 255, 0.92));
+  }
+
+  .visit-submit-btn {
+    width: 100%;
+    min-height: 46px;
+  }
+
   .visit-camera-primary {
     min-width: 0;
     width: 100%;
@@ -1517,6 +1933,91 @@ a:hover {
     width: 100%;
   }
 
+  .followupTable {
+    min-width: 760px;
+  }
+
+  .followupActions,
+  .followupEditActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .followupActions button,
+  .followupEditActions button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .followupEditActions {
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+
+  .followupEditActions button {
+    width: auto;
+    min-width: 5.25rem;
+  }
+
+  .followupEditRow td {
+    padding: 0.6rem 0.35rem 0.7rem;
+  }
+
+  .followupEditCard {
+    padding: 0.6rem;
+  }
+
+  .followupEditHeader {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+  }
+
+  .followupEditGrid {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .followupEditGrid label:last-of-type {
+    grid-column: auto;
+  }
+
+  .followupEditGrid label {
+    width: min(100%, 24rem);
+  }
+
+  .followupEditGrid input,
+  .followupEditGrid select,
+  .followupEditGrid textarea {
+    width: 100%;
+  }
+
+  .followupActions button,
+  .followupEditActions button,
+  .customerActionBtn {
+    white-space: normal;
+  }
+
+  .customersTable {
+    min-width: 720px;
+  }
+
+  .customerActions {
+    grid-template-columns: 1fr;
+  }
+
+  .customerActionBtn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .myCustomersSearchInput {
+    min-width: 0;
+  }
+
   .rowBetween {
     flex-direction: column;
     align-items: stretch;
@@ -1532,6 +2033,11 @@ a:hover {
     min-width: 0;
     max-width: none;
     width: 100%;
+  }
+
+  .followupTableWrap,
+  .customersTableWrap {
+    margin-inline: 0;
   }
 
   .grid.two,

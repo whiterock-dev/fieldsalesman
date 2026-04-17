@@ -3,11 +3,56 @@
 --
 -- Unauthorized copying, modification, or distribution is strictly prohibited.
 
--- Track arrival time separately from end/photo time (captured_at).
 alter table public.visits
-  add column if not exists visit_started_at timestamptz;
+  add column if not exists dynamic_fields jsonb not null default '{}'::jsonb;
 
-comment on column public.visits.visit_started_at is 'When the rep tapped Start visit at the location; captured_at is end/departure.';
+alter table public.customers
+  add column if not exists dynamic_fields jsonb not null default '{}'::jsonb;
+
+create table if not exists public.form_fields (
+  id uuid primary key default gen_random_uuid(),
+  label text not null,
+  key text not null unique,
+  type text not null,
+  required boolean not null default false,
+  options jsonb not null default '[]'::jsonb,
+  active boolean not null default true,
+  is_deleted boolean not null default false,
+  "order" int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_form_fields_order
+  on public.form_fields ("order", created_at);
+
+alter table public.form_fields enable row level security;
+
+drop policy if exists "form_fields_select_authenticated" on public.form_fields;
+create policy "form_fields_select_authenticated"
+  on public.form_fields for select
+  to authenticated
+  using (true);
+
+drop policy if exists "form_fields_insert_authenticated" on public.form_fields;
+create policy "form_fields_insert_authenticated"
+  on public.form_fields for insert
+  to authenticated
+  with check (true);
+
+drop policy if exists "form_fields_update_authenticated" on public.form_fields;
+create policy "form_fields_update_authenticated"
+  on public.form_fields for update
+  to authenticated
+  using (true)
+  with check (true);
+
+drop policy if exists "form_fields_delete_authenticated" on public.form_fields;
+create policy "form_fields_delete_authenticated"
+  on public.form_fields for delete
+  to authenticated
+  using (true);
+
+alter publication supabase_realtime add table public.form_fields;
 
 create or replace function public.create_visit_enforced(
   p_visit_id text,
@@ -23,6 +68,7 @@ create or replace function public.create_visit_enforced(
   p_next_action text,
   p_follow_up_date date,
   p_visit_started_at timestamptz default null,
+  p_dynamic_fields jsonb default '{}'::jsonb,
   p_max_gps_accuracy_meters double precision default 30
 )
 returns visits
@@ -35,6 +81,7 @@ declare
   v_distance double precision;
   v_visit visits;
   v_max_acc double precision;
+  v_radius_m double precision := 100;
 begin
   if p_visit_id is null or btrim(p_visit_id) = '' then
     raise exception 'Visit id is required';
@@ -60,8 +107,8 @@ begin
         cos(radians(v_customer.lat)) * cos(radians(p_lat)) * cos(radians(p_lng) - radians(v_customer.lng))
         + sin(radians(v_customer.lat)) * sin(radians(p_lat))
       );
-    if v_distance > 30 then
-      raise exception 'Visit rejected: outside 30m customer radius (%.2f m)', v_distance;
+    if v_distance > v_radius_m then
+      raise exception 'Visit rejected: outside %sm customer radius (%.2f m)', v_radius_m, v_distance;
     end if;
   else
     v_distance := null;
@@ -81,7 +128,8 @@ begin
     notes,
     next_action,
     follow_up_date,
-    visit_started_at
+    visit_started_at,
+    dynamic_fields
   )
   values (
     p_visit_id,
@@ -97,7 +145,8 @@ begin
     p_notes,
     p_next_action,
     p_follow_up_date,
-    p_visit_started_at
+    p_visit_started_at,
+    coalesce(p_dynamic_fields, '{}'::jsonb)
   )
   returning * into v_visit;
 

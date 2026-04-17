@@ -30,6 +30,7 @@ create table if not exists customers (
   city text,
   tags text[] not null default '{}',
   assigned_salesman_id text references profiles(id),
+  dynamic_fields jsonb not null default '{}'::jsonb,
   lat double precision not null,
   lng double precision not null,
   created_at timestamptz not null default now()
@@ -63,6 +64,7 @@ create table if not exists visits (
   next_action text,
   follow_up_date date,
   visit_started_at timestamptz,
+  dynamic_fields jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -90,7 +92,21 @@ create table if not exists meeting_responses (
   visit_id text
 );
 
+create table if not exists form_fields (
+  id uuid primary key default gen_random_uuid(),
+  label text not null,
+  key text not null unique,
+  type text not null,
+  required boolean not null default false,
+  options jsonb not null default '[]'::jsonb,
+  active boolean not null default true,
+  is_deleted boolean not null default false,
+  "order" int not null default 0,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_meeting_responses_created_at on meeting_responses (created_at desc);
+create index if not exists idx_form_fields_order on form_fields ("order", created_at);
 
 -- Server-side: existing-customer visits must be within 100m of pin; GPS max accuracy via p_max_gps_accuracy_meters.
 create or replace function public.create_visit_enforced(
@@ -107,6 +123,7 @@ create or replace function public.create_visit_enforced(
   p_next_action text,
   p_follow_up_date date,
   p_visit_started_at timestamptz default null,
+  p_dynamic_fields jsonb default '{}'::jsonb,
   p_max_gps_accuracy_meters double precision default 30
 )
 returns visits
@@ -166,7 +183,8 @@ begin
     notes,
     next_action,
     follow_up_date,
-    visit_started_at
+    visit_started_at,
+    dynamic_fields
   )
   values (
     p_visit_id,
@@ -182,7 +200,8 @@ begin
     p_notes,
     p_next_action,
     p_follow_up_date,
-    p_visit_started_at
+    p_visit_started_at,
+    coalesce(p_dynamic_fields, '{}'::jsonb)
   )
   returning * into v_visit;
 
