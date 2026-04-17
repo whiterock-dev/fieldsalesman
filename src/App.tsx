@@ -17,6 +17,7 @@ const DealerMap = lazy(async () => {
   const module = await import('./components/DealerMap')
   return { default: module.DealerMap }
 })
+const OFFLINE_VISIT_QUEUE_KEY = 'fs_offline_queued_visits'
 
 async function resolveVisitPhotoSrc(client: SupabaseClient, stored: string): Promise<string | null> {
   const t = stored.trim()
@@ -47,6 +48,7 @@ type Customer = {
   assignedSalesmanId: string
   lat: number
   lng: number
+  dynamicFields?: Record<string, string>
 }
 type FollowUp = {
   id: string
@@ -77,6 +79,7 @@ type VisitRecord = {
   maxGpsAccuracyMeters?: number
   /** When the rep tapped Start visit at arrival; `capturedAt` is end/leave (photo) time. */
   visitStartedAt?: string
+  dynamicFields?: Record<string, string>
 }
 
 type VisitSession = {
@@ -96,6 +99,17 @@ type MeetingResponse = {
   response: string
   createdAt: string
   visitId?: string
+}
+type FormField = {
+  id: string
+  label: string
+  key: string
+  type: 'text' | 'textarea' | 'number' | 'date' | 'select'
+  required: boolean
+  options: string[]
+  order: number
+  active: boolean
+  isDeleted: boolean
 }
 type LivePoint = { lat: number; lng: number; accuracy: number; time: string; salesmanId?: string }
 type KpiRow = {
@@ -222,6 +236,39 @@ function hoursBetween(startIso: string, endIso: string) {
   return `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`
 }
 
+function toDynamicFieldsObject(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const entries = Object.entries(value as Record<string, unknown>).flatMap(([key, raw]) => {
+    if (typeof raw === 'string') return [[key, raw]]
+    if (raw === null || raw === undefined) return []
+    return [[key, String(raw)]]
+  })
+  return Object.fromEntries(entries)
+}
+
+function normalizeFormFieldKey(raw: string) {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function generateUuidV4() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+function isDataUrl(value: string) {
+  return value.startsWith('data:image')
+}
+
 function distanceMeters(aLat: number, aLng: number, bLat: number, bLng: number) {
   const toRad = (v: number) => (v * Math.PI) / 180
   const earthRadius = 6371000
@@ -283,6 +330,7 @@ function App() {
   const [followUps, setFollowUps] = useState<FollowUp[]>(() => (supabaseEnabled ? [] : INITIAL_FOLLOWUPS))
   const [visits, setVisits] = useState<VisitRecord[]>([])
   const [meetingResponses, setMeetingResponses] = useState<MeetingResponse[]>([])
+  const [formFields, setFormFields] = useState<FormField[]>([])
   const [livePoints, setLivePoints] = useState<LivePoint[]>([])
 
   const scheduleWorkspaceReloadRef = useRef<(() => void) | null>(null)
@@ -295,6 +343,7 @@ function App() {
   const [notes, setNotes] = useState('')
   const [nextAction, setNextAction] = useState('')
   const [followUpDate, setFollowUpDate] = useState('')
+  const [dynamicData, setDynamicData] = useState<Record<string, string>>({})
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState('')
   /** True when image was taken from live camera with timestamp+GPS already drawn on canvas */
@@ -339,6 +388,12 @@ function App() {
   const [overdueSalesmanFilter, setOverdueSalesmanFilter] = useState('all')
   const [meetingDateFilter, setMeetingDateFilter] = useState('')
   const [meetingSalesmanFilter, setMeetingSalesmanFilter] = useState('all')
+  const [newFieldLabel, setNewFieldLabel] = useState('')
+  const [newFieldType, setNewFieldType] = useState<FormField['type']>('text')
+  const [newFieldRequired, setNewFieldRequired] = useState(false)
+  const [newFieldOptions, setNewFieldOptions] = useState('')
+  const [savingFormField, setSavingFormField] = useState(false)
+  const syncingQueuedVisitsRef = useRef(false)
   const [salesmanFollowUpDateFrom, setSalesmanFollowUpDateFrom] = useState('')
   const [salesmanFollowUpDateTo, setSalesmanFollowUpDateTo] = useState('')
   const [salesmanFollowUpPriorityFilter, setSalesmanFollowUpPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
@@ -658,6 +713,37 @@ function App() {
   }, [])
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(OFFLINE_VISIT_QUEUE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed)) return
+      const queued = parsed
+        .map((item) => item as Partial<VisitRecord>)
+        .filter((item): item is VisitRecord => item.status === 'queued' && typeof item.id === 'string')
+      if (!queued.length) return
+      setVisits((previous) => {
+        const byId = new Map<string, VisitRecord>()
+        for (const visit of [...previous, ...queued]) byId.set(visit.id, visit)
+        const merged = [...byId.values()]
+        merged.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
+        return merged
+      })
+    } catch (error) {
+      console.warn('offline visit queue parse:', error)
+    }
+  }, [])
+
+  useEffect(() => {
+    const queued = visits.filter((item) => item.status === 'queued')
+    if (!queued.length) {
+      localStorage.removeItem(OFFLINE_VISIT_QUEUE_KEY)
+      return
+    }
+    localStorage.setItem(OFFLINE_VISIT_QUEUE_KEY, JSON.stringify(queued))
+  }, [visits])
+
+  useEffect(() => {
     const sb = supabase
     if (!sb) return
     if (!inviteSourceReady) return
@@ -675,6 +761,7 @@ function App() {
         { data: followupRows, error: followupsErr },
         { data: visitRows, error: visitsErr },
         meetingResult,
+        formFieldResult,
         { data: liveRows, error: liveErr },
       ] = await Promise.all([
         sb.from('app_invites').select('email, role, added_at').order('added_at', { ascending: true }),
@@ -683,6 +770,7 @@ function App() {
         sb.from('followups').select('*').order('due_date', { ascending: true }),
         sb.from('visits').select('*').order('captured_at', { ascending: false }).limit(200),
         sb.from('meeting_responses').select('*').order('created_at', { ascending: false }).limit(100),
+        sb.from('form_fields').select('*').order('order', { ascending: true }).order('created_at', { ascending: true }),
         sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(200),
       ])
       if (closed) return
@@ -692,9 +780,11 @@ function App() {
       if (followupsErr) console.warn('followups:', followupsErr.message)
       if (visitsErr) console.warn('visits:', visitsErr.message)
       if (meetingResult.error) console.warn('meeting_responses:', meetingResult.error.message)
+      if (formFieldResult.error) console.warn('form_fields:', formFieldResult.error.message)
       if (liveErr) console.warn('live_locations:', liveErr.message)
 
       const meetingRows = meetingResult.error ? [] : (meetingResult.data ?? [])
+      const formFieldRows = formFieldResult.error ? [] : (formFieldResult.data ?? [])
       const safeProfileRows = profilesErr ? [] : (profileRows ?? [])
 
       let inviteRowsForState = inviteRows ?? []
@@ -760,6 +850,7 @@ function App() {
         assignedSalesmanId: (r.assigned_salesman_id as string) ?? '',
         lat: Number(r.lat),
         lng: Number(r.lng),
+        dynamicFields: toDynamicFieldsObject(r.dynamic_fields),
       }))
       setCustomers(customersMapped)
 
@@ -797,6 +888,7 @@ function App() {
           followUpDate: (r.follow_up_date as string) ?? undefined,
           status: 'synced' as const,
           visitStartedAt: typeof started === 'string' && started ? started : undefined,
+          dynamicFields: toDynamicFieldsObject(row.dynamic_fields),
         }
       })
 
@@ -821,6 +913,22 @@ function App() {
           response: r.response as string,
           createdAt: r.created_at as string,
           visitId: (r.visit_id as string) ?? undefined,
+        })),
+      )
+
+      setFormFields(
+        (formFieldRows ?? []).map((r) => ({
+          id: r.id as string,
+          label: (r.label as string) ?? '',
+          key: (r.key as string) ?? '',
+          type: ((r.type as FormField['type']) ?? 'text'),
+          required: Boolean(r.required),
+          options: Array.isArray(r.options)
+            ? (r.options as unknown[]).map((item) => String(item).trim()).filter(Boolean)
+            : [],
+          order: Number((r as Record<string, unknown>).order ?? 0),
+          active: r.active !== false,
+          isDeleted: Boolean(r.is_deleted),
         })),
       )
 
@@ -854,6 +962,7 @@ function App() {
       'followups',
       'visits',
       'meeting_responses',
+      'form_fields',
       'live_locations',
     ] as const
 
@@ -927,6 +1036,8 @@ function App() {
           customerName: customer?.name ?? 'Unknown customer',
           customerCity: customer?.city ?? '—',
           customerPhone: customer?.phone ?? '—',
+          customerDynamicFields: customer?.dynamicFields ?? {},
+          lastVisitDynamicFields: lastVisit?.dynamicFields ?? {},
           lastVisitType: lastVisit?.visitType ?? '—',
           lastVisitAt: lastVisit?.capturedAt ?? '',
           lastVisitNotes: lastVisit?.notes ?? '',
@@ -1574,6 +1685,7 @@ function App() {
   const cancelVisitSession = () => {
     setVisitSession(null)
     setGeo(null)
+    setDynamicData({})
     clearVisitPhoto()
     setMessage('Visit cancelled.')
   }
@@ -1647,6 +1759,13 @@ function App() {
       },
     })
     setGeo(null)
+    const initialDynamic: Record<string, string> = {}
+    for (const field of formFields) {
+      if (field.active && !field.isDeleted) {
+        initialDynamic[field.key] = ''
+      }
+    }
+    setDynamicData(initialDynamic)
     clearVisitPhoto()
     setMessage('Visit started. Open camera, capture, and then tap End visit & save.')
   }
@@ -1656,7 +1775,7 @@ function App() {
     void startVisitCamera()
   }
 
-  const uploadVisitPhoto = async (visitId: string, dataUrl: string) => {
+  const uploadVisitPhoto = useCallback(async (visitId: string, dataUrl: string) => {
     if (!supabase) return dataUrl
     const blob = await fetch(dataUrl).then((res) => res.blob())
     const filePath = `${activeSalesman.id}/${visitId}.jpg`
@@ -1666,7 +1785,67 @@ function App() {
     })
     if (error) throw new Error(error.message)
     return filePath
-  }
+  }, [supabase, activeSalesman.id])
+
+  const syncQueuedVisits = useCallback(async () => {
+    if (!supabase || !online || syncingQueuedVisitsRef.current) return
+    const queued = visits
+      .filter((item) => item.status === 'queued')
+      .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
+    if (!queued.length) return
+    syncingQueuedVisitsRef.current = true
+    try {
+      for (const queuedVisit of queued) {
+        let pendingVisit = queuedVisit
+        const customer = customerById.get(pendingVisit.customerId)
+        if (!customer) continue
+        if (isDataUrl(pendingVisit.photoDataUrl)) {
+          const uploadedPath = await uploadVisitPhoto(pendingVisit.id, pendingVisit.photoDataUrl)
+          pendingVisit = { ...pendingVisit, photoDataUrl: uploadedPath }
+          setVisits((previous) =>
+            previous.map((item) => (item.id === pendingVisit.id ? pendingVisit : item)),
+          )
+        }
+        const { error } = await supabase.rpc('create_visit_enforced', {
+          p_visit_id: pendingVisit.id,
+          p_customer_id: pendingVisit.customerId,
+          p_salesman_id: pendingVisit.salesmanId,
+          p_visit_type: pendingVisit.visitType,
+          p_captured_at: pendingVisit.capturedAt,
+          p_lat: pendingVisit.lat,
+          p_lng: pendingVisit.lng,
+          p_accuracy_meters: pendingVisit.accuracy,
+          p_photo_path: pendingVisit.photoDataUrl,
+          p_notes: pendingVisit.notes,
+          p_next_action: pendingVisit.nextAction || null,
+          p_follow_up_date: pendingVisit.followUpDate || null,
+          p_visit_started_at: pendingVisit.visitStartedAt ?? null,
+          p_dynamic_fields: pendingVisit.dynamicFields ?? {},
+          p_max_gps_accuracy_meters: pendingVisit.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
+        })
+        if (error) {
+          console.warn(`offline visit sync failed (${pendingVisit.id}):`, error.message)
+          continue
+        }
+        const { error: customerUpdateError } = await supabase
+          .from('customers')
+          .update({ dynamic_fields: { ...(customerById.get(pendingVisit.customerId)?.dynamicFields || {}), ...(pendingVisit.dynamicFields || {}) } })
+          .eq('id', pendingVisit.customerId)
+        if (customerUpdateError) console.warn('offline customer dynamic_fields sync:', customerUpdateError.message)
+        setVisits((previous) =>
+          previous.map((item) => (item.id === pendingVisit.id ? { ...item, status: 'synced' } : item)),
+        )
+      }
+      scheduleWorkspaceReloadRef.current?.()
+    } finally {
+      syncingQueuedVisitsRef.current = false
+    }
+  }, [supabase, online, visits, customerById, uploadVisitPhoto])
+
+  useEffect(() => {
+    if (!supabase || !authSession?.user || !online) return
+    void syncQueuedVisits()
+  }, [supabase, authSession?.user, online, syncQueuedVisits])
 
   const startLiveTracking = () => {
     setMessage('')
@@ -1778,15 +1957,18 @@ function App() {
       setLoginMessageIsError(false)
       localStorage.removeItem('fs_offline_demo')
       localStorage.removeItem('fs_invited_users')
+      localStorage.removeItem(OFFLINE_VISIT_QUEUE_KEY)
       setInvitedUsers([])
       setTeamProfiles([])
       setCustomers(supabaseEnabled ? [] : INITIAL_CUSTOMERS)
       setFollowUps(supabaseEnabled ? [] : INITIAL_FOLLOWUPS)
       setVisits([])
       setMeetingResponses([])
+      setFormFields([])
       setLivePoints([])
       setActiveView('field_followups')
       setMobileNavOpen(false)
+      setDynamicData({})
       setSigningOut(false)
     }
   }
@@ -1897,6 +2079,100 @@ function App() {
     setInvitedUsers((previous) => previous.filter((u) => normalizeEmail(u.email) !== n))
   }
 
+  const addDynamicField = async () => {
+    setMessage('')
+    if (savingFormField) return
+    if (!(role === 'owner' || role === 'sub_admin')) return
+    const label = newFieldLabel.trim()
+    const key = normalizeFormFieldKey(label)
+    if (!label) {
+      setMessage('Field label is required.')
+      return
+    }
+    if (!key) {
+      setMessage('Field label must include letters or numbers.')
+      return
+    }
+    if (formFields.some((item) => item.key === key && !item.isDeleted)) {
+      setMessage('Field key already exists. Use a different label.')
+      return
+    }
+    const options =
+      newFieldType === 'select'
+        ? newFieldOptions
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+        : []
+    if (newFieldType === 'select' && options.length < 2) {
+      setMessage('Select fields need at least 2 options (comma separated).')
+      return
+    }
+
+    const order = formFields.length + 1
+    const next: FormField = {
+      id: generateUuidV4(),
+      label,
+      key,
+      type: newFieldType,
+      required: newFieldRequired,
+      options,
+      order,
+      active: true,
+      isDeleted: false,
+    }
+    setSavingFormField(true)
+    try {
+      setFormFields((previous) => [...previous, next])
+      if (supabase && online) {
+        const { error } = await supabase.from('form_fields').insert({
+          id: next.id,
+          label: next.label,
+          key: next.key,
+          type: next.type,
+          required: next.required,
+          options: next.options,
+          active: next.active,
+          is_deleted: false,
+          order: next.order,
+        })
+        if (error) {
+          setFormFields((previous) => previous.filter((item) => item.id !== next.id))
+          setMessage(`Could not add field: ${error.message}`)
+          return
+        }
+      }
+      setNewFieldLabel('')
+      setNewFieldType('text')
+      setNewFieldRequired(false)
+      setNewFieldOptions('')
+      setMessage('Dynamic field added.')
+      scheduleWorkspaceReloadRef.current?.()
+    } finally {
+      setSavingFormField(false)
+    }
+  }
+
+  const softDeleteDynamicField = async (field: FormField) => {
+    if (!(role === 'owner' || role === 'sub_admin')) return
+    setFormFields((previous) =>
+      previous.map((item) =>
+        item.id === field.id ? { ...item, isDeleted: true, active: false } : item,
+      ),
+    )
+    if (supabase && online) {
+      const { error } = await supabase
+        .from('form_fields')
+        .update({ is_deleted: true, active: false })
+        .eq('id', field.id)
+      if (error) {
+        setMessage(`Could not delete field: ${error.message}`)
+      } else {
+        scheduleWorkspaceReloadRef.current?.()
+      }
+    }
+  }
+
   const failVisitSave = (text: string) => {
     setMessage(text)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -1929,6 +2205,11 @@ function App() {
         return failVisitSave('Use Open camera and Capture photo. Images must come from the live camera with timestamp and location on the picture.')
       }
       if (!notes.trim()) return failVisitSave('Meeting notes are required.')
+      for (const field of activeDynamicFields) {
+        if (field.required && !String(dynamicData[field.key] ?? '').trim()) {
+          return failVisitSave(`"${field.label}" is required.`)
+        }
+      }
 
       if (supabase && online) {
         const displayName =
@@ -1961,6 +2242,7 @@ function App() {
           address: ql.address,
           city: 'Unknown',
           tags: [],
+          dynamicFields: dynamicData,
           assignedSalesmanId: activeSalesman.id,
           lat: leaveGeo.lat,
           lng: leaveGeo.lng,
@@ -1978,6 +2260,7 @@ function App() {
             address: newCustomer.address,
             city: newCustomer.city,
             tags: newCustomer.tags,
+            dynamic_fields: dynamicData,
             assigned_salesman_id: newCustomer.assignedSalesmanId,
             lat: newCustomer.lat,
             lng: newCustomer.lng,
@@ -2028,7 +2311,14 @@ function App() {
         status: online ? 'synced' : 'queued',
         maxGpsAccuracyMeters: maxGpsAccuracy,
         visitStartedAt,
+        dynamicFields: dynamicData,
       }
+
+      setCustomers((previous) =>
+        previous.map((item) =>
+          item.id === customerId ? { ...item, dynamicFields: { ...(item.dynamicFields || {}), ...(payload.dynamicFields || {}) } } : item,
+        ),
+      )
 
       setVisits((previous) => {
         if (previous.some((v) => v.id === payload.id)) return previous
@@ -2066,6 +2356,13 @@ function App() {
       }
 
       if (supabase && online) {
+        const { error: customerDynamicFieldsError } = await supabase
+          .from('customers')
+          .update({ dynamic_fields: { ...(customerById.get(payload.customerId)?.dynamicFields || {}), ...(payload.dynamicFields || {}) } })
+          .eq('id', payload.customerId)
+        if (customerDynamicFieldsError) {
+          console.warn('customer dynamic_fields update:', customerDynamicFieldsError.message)
+        }
         const { data: createdVisit, error } = await supabase.rpc('create_visit_enforced', {
           p_visit_id: payload.id,
           p_customer_id: payload.customerId,
@@ -2080,6 +2377,7 @@ function App() {
           p_next_action: payload.nextAction || null,
           p_follow_up_date: payload.followUpDate || null,
           p_visit_started_at: payload.visitStartedAt ?? null,
+          p_dynamic_fields: payload.dynamicFields ?? {},
           p_max_gps_accuracy_meters: payload.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
         })
         if (error) {
@@ -2118,6 +2416,7 @@ function App() {
       setNotes('')
       setNextAction('')
       setFollowUpDate('')
+      setDynamicData({})
       setPhotoFile(null)
       setPhotoPreview('')
       setPhotoHasEmbeddedWatermark(false)
@@ -2135,6 +2434,15 @@ function App() {
       ? visitSession.quickLead.name
       : customers.find((c) => c.id === visitSession.selectedCustomerId)?.name ?? 'Customer'
     : ''
+  const activeDynamicFields = useMemo(
+    () =>
+      formFields
+        .filter((field) => field.active && !field.isDeleted)
+        .sort((a, b) => a.order - b.order),
+    [formFields],
+  )
+
+
 
   const visitFormCard = (
     <article className="card visitFormCard">
@@ -2256,6 +2564,55 @@ function App() {
             Follow-up date
             <input type="date" value={followUpDate} onChange={(event) => setFollowUpDate(event.target.value)} />
           </label>
+          {activeDynamicFields.length ? (
+            <div className="dynamic-fields-section">
+              <p className="muted">
+                <strong>Additional visit details</strong>
+              </p>
+              <div className="dynamic-fields-grid">
+                {activeDynamicFields.map((field) => {
+                  const value = dynamicData[field.key] ?? ''
+                  const requiredMark = field.required ? ' *' : ''
+                  return (
+                    <label key={field.id}>
+                      {field.label}
+                      {requiredMark}
+                      {field.type === 'textarea' ? (
+                        <textarea
+                          value={value}
+                          onChange={(event) =>
+                            setDynamicData((prev) => ({ ...prev, [field.key]: event.target.value }))
+                          }
+                        />
+                      ) : field.type === 'select' ? (
+                        <select
+                          value={value}
+                          onChange={(event) =>
+                            setDynamicData((prev) => ({ ...prev, [field.key]: event.target.value }))
+                          }
+                        >
+                          <option value="">Select</option>
+                          {field.options.map((option) => (
+                            <option key={`${field.id}-${option}`} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                          value={value}
+                          onChange={(event) =>
+                            setDynamicData((prev) => ({ ...prev, [field.key]: event.target.value }))
+                          }
+                        />
+                      )}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -2318,8 +2675,8 @@ function App() {
 
           {photoPreview ? <img src={photoPreview} alt="Saved visit photo" className="photoPreview" /> : null}
 
-          <div className="inlineActions">
-            <button type="button" onClick={() => void saveVisit()} disabled={savingVisit}>
+          <div className="inlineActions visit-submit-actions">
+            <button type="button" className="visit-submit-btn" onClick={() => void saveVisit()} disabled={savingVisit}>
               {savingVisit ? 'Saving visit…' : 'End visit & save'}
             </button>
           </div>
@@ -2525,13 +2882,14 @@ function App() {
                       <th>Priority</th>
                       <th>Status</th>
                       <th>Remarks</th>
+                      {activeDynamicFields.map((f) => <th key={f.id}>{f.label}</th>)}
                       <th>Last visit</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredOverdueRowsDetailed.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="muted">
+                        <td colSpan={9 + activeDynamicFields.length} className="muted">
                           No overdue follow-ups.
                         </td>
                       </tr>
@@ -2546,6 +2904,10 @@ function App() {
                           <td>{row.priority}</td>
                           <td>{row.status}</td>
                           <td>{row.remarks || '—'}</td>
+                          {activeDynamicFields.map((field) => {
+                            const val = row.lastVisitDynamicFields?.[field.key] || row.customerDynamicFields?.[field.key]
+                            return <td key={field.id}>{val || '—'}</td>
+                          })}
                           <td>
                             {row.lastVisitAt ? `${formatDate(row.lastVisitAt)} (${row.lastVisitType})` : '—'}
                           </td>
@@ -2588,6 +2950,101 @@ function App() {
                 </button>
               )}
             </div>
+            {(role === 'owner' || role === 'sub_admin') ? (
+              <article className="card">
+                <h3>Dynamic form fields</h3>
+                <p className="muted">
+                  Add or delete dynamic visit fields. Existing fields are intentionally non-editable for safety.
+                </p>
+                <div className="dynamic-fields-admin-form">
+                  <label>
+                    Field label
+                    <input
+                      value={newFieldLabel}
+                      onChange={(event) => setNewFieldLabel(event.target.value)}
+                      placeholder="e.g. Dealer category"
+                    />
+                  </label>
+                  <label>
+                    Type
+                    <select value={newFieldType} onChange={(event) => setNewFieldType(event.target.value as FormField['type'])}>
+                      <option value="text">Text</option>
+                      <option value="textarea">Textarea</option>
+                      <option value="number">Number</option>
+                      <option value="date">Date</option>
+                      <option value="select">Select</option>
+                    </select>
+                  </label>
+                  <label>
+                    Required
+                    <select
+                      value={newFieldRequired ? 'yes' : 'no'}
+                      onChange={(event) => setNewFieldRequired(event.target.value === 'yes')}
+                    >
+                      <option value="no">No</option>
+                      <option value="yes">Yes</option>
+                    </select>
+                  </label>
+                  {newFieldType === 'select' ? (
+                    <label>
+                      Options (comma separated)
+                      <input
+                        value={newFieldOptions}
+                        onChange={(event) => setNewFieldOptions(event.target.value)}
+                        placeholder="A, B, C"
+                      />
+                    </label>
+                  ) : null}
+                </div>
+                <div className="inlineActions">
+                  <button type="button" onClick={() => void addDynamicField()} disabled={savingFormField}>
+                    {savingFormField ? 'Adding…' : 'Add new field'}
+                  </button>
+                </div>
+                <div className="scrollArea">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Label</th>
+                        <th>Key</th>
+                        <th>Type</th>
+                        <th>Required</th>
+                        <th>Options</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeDynamicFields.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="muted">
+                            No active dynamic fields.
+                          </td>
+                        </tr>
+                      ) : (
+                        activeDynamicFields.map((field) => (
+                          <tr key={field.id}>
+                            <td>{field.label}</td>
+                            <td>{field.key}</td>
+                            <td>{field.type}</td>
+                            <td>{field.required ? 'Yes' : 'No'}</td>
+                            <td>{field.options.length ? field.options.join(', ') : '—'}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="secondary danger"
+                                onClick={() => void softDeleteDynamicField(field)}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            ) : null}
             <article className="card">
               <div className="inlineFilters">
                 <label>
@@ -3000,97 +3457,217 @@ function App() {
                 Due today: {followUpsDueTodayForSalesman.length} · Overdue: {overdueFollowUpsForSalesman.length} · Archived:{' '}
                 {archivedFollowUpsForSalesman.length}
               </p>
-              <ul className="list">
-                {filteredPendingFollowUpsForSalesman.map((item) => {
-                  const customer = customers.find((entry) => entry.id === item.customerId)
-                  const isEditing = editingFollowUp?.id === item.id
-                  return (
-                    <li key={item.id} style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          <strong>{customer?.name ?? 'Unknown customer'}</strong> — due {formatDate(item.dueDate)}
-                          <p className="muted">{item.remarks}</p>
-                        </div>
-                        <span className={`statusTag ${item.priority === 'high' ? 'warning' : ''}`}>{item.priority}</span>
-                      </div>
-                      {isEditing && editingFollowUp ? (
-                        <div className="formGrid" style={{ marginTop: '4px' }}>
-                          <label>
-                            Due date
-                            <input
-                              type="date"
-                              value={editingFollowUp.dueDate}
-                              onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
-                            />
-                          </label>
-                          <label>
-                            Priority
-                            <select
-                              value={editingFollowUp.priority}
-                              onChange={(e) => setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })}
-                            >
-                              <option value="low">Low</option>
-                              <option value="medium">Medium</option>
-                              <option value="high">High</option>
-                            </select>
-                          </label>
-                          <label>
-                            Status
-                            <select
-                              value={editingFollowUp.status}
-                              onChange={(e) => setEditingFollowUp({ ...editingFollowUp, status: e.target.value as FollowUpStatus })}
-                            >
-                              <option value="pending">Pending</option>
-                              <option value="in_progress">In progress</option>
-                              <option value="closed">Closed</option>
-                            </select>
-                          </label>
-                          <label>
-                            Remarks
-                            <textarea
-                              value={editingFollowUp.remarks}
-                              onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
-                            />
-                          </label>
-                          <div className="inlineActions">
-                            <button type="button" onClick={() => void saveFollowUpEdit(editingFollowUp)}>Save</button>
-                            <button type="button" className="secondary" onClick={() => setEditingFollowUp(null)}>Cancel</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="inlineActions">
-                          <button type="button" onClick={() => void markFollowUpComplete(item.id)}>Mark complete</button>
-                          <button type="button" className="secondary" onClick={() => setEditingFollowUp({ ...item })}>Edit</button>
-                        </div>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
+              <div className="followupTableWrap">
+                <table className="followupTable">
+                  <colgroup>
+                    <col style={{ width: '19%' }} />
+                    <col style={{ width: '11%' }} />
+                    <col style={{ width: '8%' }} />
+                    <col style={{ width: '10%' }} />
+                    <col style={{ width: '8%' }} />
+                    <col style={{ width: '9%' }} />
+                    <col style={{ width: '22%' }} />
+                    <col style={{ width: '12%' }} />
+                    <col style={{ width: '10%' }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th>Customer</th>
+                      <th>Salesman</th>
+                      <th>City</th>
+                      <th>Due date</th>
+                      <th>Priority</th>
+                      <th>Status</th>
+                      <th>Remarks</th>
+                      {activeDynamicFields.map((f) => <th key={f.id}>{f.label}</th>)}
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredPendingFollowUpsForSalesman.length === 0 ? (
+                      <tr>
+                        <td colSpan={8 + activeDynamicFields.length} className="muted">
+                          No pending follow-ups.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredPendingFollowUpsForSalesman.flatMap((item) => {
+                        const customer = customers.find((entry) => entry.id === item.customerId)
+                        const salesmanName = salesmen.find((entry) => entry.id === item.salesmanId)?.name ?? 'Salesman'
+                        const customerCity = customer?.city ?? 'Unknown city'
+                        const isEditing = editingFollowUp?.id === item.id
+                        const rows = [
+                          <tr key={item.id}>
+                            <td className="followupCustomerCell">
+                              <div className="followupCustomerName">{customer?.name ?? 'Unknown customer'}</div>
+                            </td>
+                            <td className="followupSalesmanCell followupCompactCell">{salesmanName}</td>
+                            <td className="followupCityCell followupCompactCell">{customerCity}</td>
+                            <td className="followupDateCell followupCompactCell">{formatDate(item.dueDate)}</td>
+                            <td className="followupCompactCell">
+                              <span className={`followupPill followupPill--${item.priority}`}>
+                                {item.priority}
+                              </span>
+                            </td>
+                            <td className="followupCompactCell">
+                              <span className={`followupStatus followupStatus--${item.status}`}>
+                                {item.status.replace(/_/g, ' ')}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="followupRemarks">{item.remarks || 'No remarks added'}</div>
+                            </td>
+                            {activeDynamicFields.map((field) => {
+                              const vFields = latestVisitByCustomerId.get(item.customerId)?.dynamicFields
+                              const cFields = customer?.dynamicFields
+                              const val = vFields?.[field.key] || cFields?.[field.key]
+                              return <td key={field.id} className="followupCompactCell">{val || '—'}</td>
+                            })}
+                            <td>
+                              <div className="followupActions">
+                                <button type="button" onClick={() => void markFollowUpComplete(item.id)}>
+                                  Complete
+                                </button>
+                                <button type="button" className="secondary" onClick={() => setEditingFollowUp({ ...item })}>
+                                  Edit
+                                </button>
+                              </div>
+                            </td>
+                          </tr>,
+                        ]
+                        if (isEditing && editingFollowUp) {
+                          rows.push(
+                            <tr key={`${item.id}-edit`} className="followupEditRow">
+                              <td colSpan={8 + activeDynamicFields.length}>
+                                <div className="followupEditCard">
+                                  <div className="followupEditHeader">
+                                    <div>
+                                      <strong>Edit follow-up</strong>
+                                      <p className="muted">Update the due date, status, priority, and remarks in one place.</p>
+                                    </div>
+                                  </div>
+                                  <div className="followupEditGrid">
+                                    <label>
+                                      Due date
+                                      <input
+                                        type="date"
+                                        value={editingFollowUp.dueDate}
+                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
+                                      />
+                                    </label>
+                                    <label>
+                                      Priority
+                                      <select
+                                        value={editingFollowUp.priority}
+                                        onChange={(e) =>
+                                          setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })
+                                        }
+                                      >
+                                        <option value="low">Low</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="high">High</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Status
+                                      <select
+                                        value={editingFollowUp.status}
+                                        onChange={(e) =>
+                                          setEditingFollowUp({ ...editingFollowUp, status: e.target.value as FollowUpStatus })
+                                        }
+                                      >
+                                        <option value="pending">Pending</option>
+                                        <option value="in_progress">In progress</option>
+                                        <option value="closed">Closed</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Remarks
+                                      <textarea
+                                        value={editingFollowUp.remarks}
+                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
+                                      />
+                                    </label>
+                                  </div>
+                                  <div className="followupEditActions">
+                                    <button type="button" onClick={() => void saveFollowUpEdit(editingFollowUp)}>
+                                      Save
+                                    </button>
+                                    <button type="button" className="secondary" onClick={() => setEditingFollowUp(null)}>
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>,
+                          )
+                        }
+                        return rows
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
               <h3>Archived follow-ups</h3>
-              <ul className="list">
-                {archivedFollowUpsForSalesman.length === 0 ? (
-                  <li>
-                    <div>
-                      <strong>No archived follow-ups</strong>
-                      <p className="muted">Completed follow-ups will appear here.</p>
-                    </div>
-                  </li>
-                ) : (
-                  archivedFollowUpsForSalesman.map((item) => {
-                    const customer = customers.find((entry) => entry.id === item.customerId)
-                    return (
-                      <li key={`arch-${item.id}`}>
-                        <div>
-                          <strong>{customer?.name ?? 'Unknown customer'}</strong> — done for {formatDate(item.dueDate)}
-                          <p className="muted">{item.remarks}</p>
-                        </div>
-                        <span className="statusTag ok">completed</span>
-                      </li>
-                    )
-                  })
-                )}
-              </ul>
+              <div className="followupTableWrap followupTableWrap--archived">
+                <table className="followupTable followupTable--archived">
+                  <colgroup>
+                    <col style={{ width: '20%' }} />
+                    <col style={{ width: '11%' }} />
+                    <col style={{ width: '8%' }} />
+                    <col style={{ width: '10%' }} />
+                    <col style={{ width: '8%' }} />
+                    <col style={{ width: '8%' }} />
+                    <col style={{ width: '35%' }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th>Customer</th>
+                      <th>Salesman</th>
+                      <th>City</th>
+                      <th>Due date</th>
+                      <th>Priority</th>
+                      <th>Status</th>
+                      <th>Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {archivedFollowUpsForSalesman.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="muted">
+                          No archived follow-ups. Completed follow-ups will appear here.
+                        </td>
+                      </tr>
+                    ) : (
+                      archivedFollowUpsForSalesman.map((item) => {
+                        const customer = customers.find((entry) => entry.id === item.customerId)
+                        const salesmanName = salesmen.find((entry) => entry.id === item.salesmanId)?.name ?? 'Salesman'
+                        return (
+                          <tr key={`arch-${item.id}`}>
+                            <td className="followupCustomerCell">
+                              <div className="followupCustomerName">{customer?.name ?? 'Unknown customer'}</div>
+                            </td>
+                            <td className="followupSalesmanCell followupCompactCell">{salesmanName}</td>
+                            <td className="followupCityCell followupCompactCell">{customer?.city ?? 'Unknown city'}</td>
+                            <td className="followupDateCell followupCompactCell">{formatDate(item.dueDate)}</td>
+                            <td className="followupCompactCell">
+                              <span className={`followupPill followupPill--${item.priority}`}>
+                                {item.priority}
+                              </span>
+                            </td>
+                            <td className="followupCompactCell">
+                              <span className="followupStatus followupStatus--closed">completed</span>
+                            </td>
+                            <td>
+                              <div className="followupRemarks">{item.remarks || 'No remarks added'}</div>
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </article>
           </section>
         )
@@ -3152,34 +3729,88 @@ function App() {
               </label>
             </div>
             <article className="card">
-              <ul className="list">
-                {filteredMyCustomers.map((item) => (
-                  <li key={item.id}>
-                    <div>
-                      <strong>{item.name}</strong> — {item.city}
-                      <p className="muted">
-                        {item.phone} | Tags: {item.tags.join(', ') || '—'}
-                      </p>
-                      <p className="muted">
-                        Salesperson: {profileNameById.get(item.assignedSalesmanId) ?? 'Unassigned'}
-                      </p>
-                    </div>
-                    <div className="inlineActions">
-                      <a
-                        className="secondary"
-                        href={googleMapsSearchUrl(item.lat, item.lng)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        Google Maps
-                      </a>
-                      <button type="button" className="secondary" onClick={() => setActiveView('map')}>
-                        In-app map
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <div className="customersTableWrap">
+                <table className="customersTable">
+                  <colgroup>
+                    <col style={{ width: '26%' }} />
+                    <col style={{ width: '10%' }} />
+                    <col style={{ width: '12%' }} />
+                    <col style={{ width: '20%' }} />
+                    <col style={{ width: '14%' }} />
+                    <col style={{ width: '16%' }} />
+                    <col style={{ width: '18%' }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>City</th>
+                      <th>Phone</th>
+                      <th>Tags</th>
+                      <th>Salesperson</th>
+                      {activeDynamicFields.map((f) => <th key={f.id}>{f.label}</th>)}
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredMyCustomers.length === 0 ? (
+                      <tr>
+                        <td colSpan={6 + activeDynamicFields.length} className="muted">
+                          No customers match this search.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredMyCustomers.map((item) => (
+                        <tr key={item.id}>
+                          <td className="customersNameCell"><strong>{item.name}</strong></td>
+                          <td className="customersCompactCell">{item.city}</td>
+                          <td className="customersCompactCell">{item.phone}</td>
+                          <td className="customersTagsCell">
+                            {item.tags.length ? (
+                              <div className="customerTagChips">
+                                {item.tags.map((tag, index) => (
+                                  <span key={`${item.id}-${tag}-${index}`} className="customerTagChip">
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="customerEmptyChip">—</span>
+                            )}
+                          </td>
+                          <td className="customersSalesmanCell">
+                            <span className="customerMetaPill customerMetaPill--subtle">
+                              {profileNameById.get(item.assignedSalesmanId) ?? 'Unassigned'}
+                            </span>
+                          </td>
+                          {activeDynamicFields.map((field) => {
+                            const val = item.dynamicFields?.[field.key]
+                            return (
+                              <td key={field.id} className="customersTagsCell">
+                                {val ? val : <span className="customerEmptyChip">—</span>}
+                              </td>
+                            )
+                          })}
+                          <td>
+                            <div className="customerActions">
+                              <a
+                                className="customerActionBtn"
+                                href={googleMapsSearchUrl(item.lat, item.lng)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                Google Maps
+                              </a>
+                              <button type="button" className="customerActionBtn" onClick={() => setActiveView('map')}>
+                                In-app map
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </article>
           </section>
         )

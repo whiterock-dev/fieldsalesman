@@ -17,6 +17,7 @@ create or replace function public.create_visit_enforced(
   p_notes text,
   p_next_action text,
   p_follow_up_date date,
+  p_dynamic_fields jsonb default '{}'::jsonb,
   p_max_gps_accuracy_meters double precision default 30
 )
 returns visits
@@ -74,7 +75,8 @@ begin
     photo_path,
     notes,
     next_action,
-    follow_up_date
+    follow_up_date,
+    dynamic_fields
   )
   values (
     p_visit_id,
@@ -89,7 +91,8 @@ begin
     p_photo_path,
     p_notes,
     p_next_action,
-    p_follow_up_date
+    p_follow_up_date,
+    coalesce(p_dynamic_fields, '{}'::jsonb)
   )
   returning * into v_visit;
 

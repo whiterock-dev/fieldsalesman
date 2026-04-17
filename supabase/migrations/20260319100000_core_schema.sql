@@ -22,6 +22,7 @@ create table if not exists public.customers (
   city text,
   tags text[] not null default '{}',
   assigned_salesman_id text references public.profiles (id),
+  dynamic_fields jsonb not null default '{}'::jsonb,
   lat double precision not null,
   lng double precision not null,
   created_at timestamptz not null default now()
@@ -52,6 +53,20 @@ create table if not exists public.visits (
   notes text not null,
   next_action text,
   follow_up_date date,
+  dynamic_fields jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.form_fields (
+  id uuid primary key default gen_random_uuid(),
+  label text not null,
+  key text not null unique,
+  type text not null,
+  required boolean not null default false,
+  options jsonb not null default '[]'::jsonb,
+  active boolean not null default true,
+  is_deleted boolean not null default false,
+  "order" int not null default 0,
   created_at timestamptz not null default now()
 );
 
@@ -68,3 +83,4 @@ create table if not exists public.live_locations (
 create index if not exists idx_followups_salesman_due_date on public.followups (salesman_id, due_date);
 create index if not exists idx_visits_salesman_captured_at on public.visits (salesman_id, captured_at desc);
 create index if not exists idx_live_locations_salesman_captured_at on public.live_locations (salesman_id, captured_at desc);
+create index if not exists idx_form_fields_order on public.form_fields ("order", created_at);
