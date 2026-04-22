@@ -376,6 +376,9 @@ backend = "postgres"
 [functions.invite-user-with-password]
 verify_jwt = false
 
+[functions.forgot-password-whatsapp-otp]
+verify_jwt = false
+
 [experimental]
 # Configures Postgres storage engine to use OrioleDB (S3)
 orioledb_version = ""
