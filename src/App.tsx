@@ -56,6 +56,7 @@ type FollowUp = {
   dueDate: string
   priority: 'low' | 'medium' | 'high'
   status: FollowUpStatus
+  archived: boolean
   remarks: string
   salesmanId: string
 }
@@ -90,6 +91,7 @@ type VisitSession = {
     name: string
     phone: string
     address: string
+    city: string
   }
 }
 type MeetingResponse = {
@@ -99,6 +101,10 @@ type MeetingResponse = {
   response: string
   createdAt: string
   visitId?: string
+}
+type EditingMeetingResponse = {
+  id: string
+  response: string
 }
 type FormField = {
   id: string
@@ -222,8 +228,8 @@ const INITIAL_CUSTOMERS: Customer[] = [
 ]
 
 const INITIAL_FOLLOWUPS: FollowUp[] = [
-  { id: 'f1', customerId: 'c1', dueDate: '2026-03-16', priority: 'high', status: 'pending', remarks: 'Collection pending', salesmanId: 's1' },
-  { id: 'f2', customerId: 'c2', dueDate: '2026-03-20', priority: 'medium', status: 'pending', remarks: 'Quotation follow-up', salesmanId: 's2' },
+  { id: 'f1', customerId: 'c1', dueDate: '2026-03-16', priority: 'high', status: 'pending', archived: false, remarks: 'Collection pending', salesmanId: 's1' },
+  { id: 'f2', customerId: 'c2', dueDate: '2026-03-20', priority: 'medium', status: 'pending', archived: false, remarks: 'Quotation follow-up', salesmanId: 's2' },
 ]
 
 function dateString(isoDate: string) {
@@ -319,6 +325,9 @@ function App() {
   const [authHydrated, setAuthHydrated] = useState(() => !supabaseEnabled)
   const [loginMessage, setLoginMessage] = useState('')
   const [loginMessageIsError, setLoginMessageIsError] = useState(false)
+  const [forgotPasswordMessage, setForgotPasswordMessage] = useState('')
+  const [forgotPasswordMessageIsError, setForgotPasswordMessageIsError] = useState(false)
+  const [forgotPasswordBusy, setForgotPasswordBusy] = useState(false)
 
   const [teamProfiles, setTeamProfiles] = useState<TeamProfile[]>([])
   const [invitedUsers, setInvitedUsers] = useState<InvitedUser[]>([])
@@ -339,6 +348,7 @@ function App() {
   const [selectedCustomerId, setSelectedCustomerId] = useState('new')
   const [quickLeadPhone, setQuickLeadPhone] = useState('')
   const [quickLeadAddress, setQuickLeadAddress] = useState('')
+  const [quickLeadCity, setQuickLeadCity] = useState('')
   const [visitCustomerSearch, setVisitCustomerSearch] = useState('')
   const [notes, setNotes] = useState('')
   const [nextAction, setNextAction] = useState('')
@@ -379,11 +389,13 @@ function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [settingsNewPassword, setSettingsNewPassword] = useState('')
   const [settingsConfirmPassword, setSettingsConfirmPassword] = useState('')
-  const [settingsPasswordMessage, setSettingsPasswordMessage] = useState('')
+  const [_settingsPasswordMessage, setSettingsPasswordMessage] = useState('')
   const [visitHistoryDateFilter, setVisitHistoryDateFilter] = useState('')
   const [visitHistorySalesmanFilter, setVisitHistorySalesmanFilter] = useState('all')
   const [visitHistoryClientFilter, setVisitHistoryClientFilter] = useState('')
   const [visitHistoryCityFilter, setVisitHistoryCityFilter] = useState('')
+  const [selectedVisitClientId, setSelectedVisitClientId] = useState<string | null>(null)
+  const [selectedVisitHistoryRowId, setSelectedVisitHistoryRowId] = useState<string | null>(null)
   const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
   const [overdueSalesmanFilter, setOverdueSalesmanFilter] = useState('all')
   const [meetingDateFilter, setMeetingDateFilter] = useState('')
@@ -397,9 +409,12 @@ function App() {
   const [salesmanFollowUpDateFrom, setSalesmanFollowUpDateFrom] = useState('')
   const [salesmanFollowUpDateTo, setSalesmanFollowUpDateTo] = useState('')
   const [salesmanFollowUpPriorityFilter, setSalesmanFollowUpPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
+  const [salesmanFollowUpArchiveFilter, setSalesmanFollowUpArchiveFilter] = useState(false)
   const [myCustomersNameFilter, setMyCustomersNameFilter] = useState('')
   const [myCustomersNameFilterDebounced, setMyCustomersNameFilterDebounced] = useState('')
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
+  const [editingMeetingResponse, setEditingMeetingResponse] = useState<EditingMeetingResponse | null>(null)
+  const [archivingFollowUpId, setArchivingFollowUpId] = useState<string | null>(null)
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -547,6 +562,7 @@ function App() {
     }
     void supabase.auth.getSession().then(({ data: { session } }) => {
       setAuthSession(session)
+      console.log(session)
       finish()
     })
     const {
@@ -863,6 +879,9 @@ function App() {
           dueDate: r.due_date as string,
           priority: r.priority as FollowUp['priority'],
           status: r.status as FollowUpStatus,
+          archived: typeof (r as Record<string, unknown>).archived === 'boolean'
+            ? Boolean((r as Record<string, unknown>).archived)
+            : (r.status as FollowUpStatus) === 'closed',
           remarks: (r.remarks as string) ?? '',
           salesmanId: r.salesman_id as string,
         })),
@@ -1008,11 +1027,23 @@ function App() {
     }
   }, [])
 
-  const pendingFollowUpsForSalesman = useMemo(
-    () => followUps.filter((item) => item.salesmanId === activeSalesman.id && item.status !== 'closed').sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
+  const followUpsForSalesman = useMemo(
+    () => followUps.filter((item) => item.salesmanId === activeSalesman.id).sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
     [activeSalesman.id, followUps],
   )
+  const pendingFollowUpsForSalesman = useMemo(
+    () => followUpsForSalesman.filter((item) => !item.archived && item.status !== 'closed'),
+    [followUpsForSalesman],
+  )
   const customerById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers])
+  const customerByName = useMemo(() => {
+    const map = new Map<string, Customer>()
+    for (const customer of customers) {
+      const key = customer.name.trim().toLowerCase()
+      if (key && !map.has(key)) map.set(key, customer)
+    }
+    return map
+  }, [customers])
   const visitById = useMemo(() => new Map(visits.map((v) => [v.id, v])), [visits])
   const latestVisitByCustomerId = useMemo(() => {
     const map = new Map<string, VisitRecord>()
@@ -1077,6 +1108,24 @@ function App() {
       salesmanFollowUpPriorityFilter,
     ],
   )
+  const filteredFollowUpsForSalesman = useMemo(
+    () => {
+      return followUpsForSalesman.filter((item) => {
+        const onOrAfterFrom = salesmanFollowUpDateFrom ? item.dueDate >= salesmanFollowUpDateFrom : true
+        const onOrBeforeTo = salesmanFollowUpDateTo ? item.dueDate <= salesmanFollowUpDateTo : true
+        const priorityOk = salesmanFollowUpPriorityFilter === 'all' ? true : item.priority === salesmanFollowUpPriorityFilter
+        const archiveOk = salesmanFollowUpArchiveFilter ? item.archived : !item.archived
+        return onOrAfterFrom && onOrBeforeTo && priorityOk && archiveOk
+      })
+    },
+    [
+      followUpsForSalesman,
+      salesmanFollowUpDateFrom,
+      salesmanFollowUpDateTo,
+      salesmanFollowUpPriorityFilter,
+      salesmanFollowUpArchiveFilter,
+    ],
+  )
   const openFollowUpsCount = useMemo(() => {
     const byId = new Map<string, FollowUp>()
     for (const f of followUps) byId.set(f.id, f)
@@ -1088,14 +1137,10 @@ function App() {
   }, [followUps])
   const archivedFollowUpsForSalesman = useMemo(
     () =>
-      followUps
-        .filter(
-          (item) =>
-            item.salesmanId === activeSalesman.id &&
-            item.status === 'closed'
-        )
+      followUpsForSalesman
+        .filter((item) => item.archived)
         .sort((a, b) => b.dueDate.localeCompare(a.dueDate)),
-    [followUps, activeSalesman.id, salesmanFollowUpDateFrom, salesmanFollowUpDateTo, salesmanFollowUpPriorityFilter],
+    [followUpsForSalesman],
   )
   const syncedVisits = useMemo(() => {
     const byId = new Map<string, VisitRecord>()
@@ -1171,17 +1216,44 @@ function App() {
     const q = value.trim().toLowerCase()
     if (!q) {
       setSelectedCustomerId('new')
+      setQuickLeadPhone('')
+      setQuickLeadAddress('')
+      setQuickLeadCity('')
+      setNotes('')
+      setNextAction('')
       return
     }
     const matched = dedupedCustomers.find((item) => {
       const label = `${item.name} (${item.city})`.toLowerCase()
       return label === q || item.name.toLowerCase() === q
     })
-    setSelectedCustomerId(matched ? matched.id : 'new')
+
+    if (matched) {
+      setSelectedCustomerId(matched.id)
+      // Pre-fill customer phone and address
+      setQuickLeadPhone(matched.phone)
+      setQuickLeadAddress(matched.address)
+      setQuickLeadCity(matched.city)
+
+      // Pre-fill notes and next action from last visit
+      const lastVisit = latestVisitByCustomerId.get(matched.id)
+      setNotes(lastVisit?.notes ?? '')
+      setNextAction(lastVisit?.nextAction ?? '')
+    } else {
+      setSelectedCustomerId('new')
+      setQuickLeadPhone('')
+      setQuickLeadAddress('')
+      setQuickLeadCity('')
+      setNotes('')
+      setNextAction('')
+    }
   }
 
   const mapCustomers = useMemo(() => {
-    if (role === 'salesman' || role === 'super_salesman') {
+    if (role === 'salesman') {
+      return dedupedCustomers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
+    }
+    if (role === 'super_salesman') {
       const mine = dedupedCustomers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
       return mine.length ? mine : dedupedCustomers
     }
@@ -1234,6 +1306,14 @@ function App() {
     return mapRecentVisits.filter((v) => v.salesmanId === mapSalesmanFilter)
   }, [role, mapRecentVisits, mapSalesmanFilter])
 
+  const mapVisibleSalesmen = useMemo(() => {
+    if (role !== 'salesman') return salesmen
+    const mine = salesmen.find((item) => item.id === activeSalesman.id)
+    if (mine) return [mine]
+    if (activeSalesman.id) return [{ id: activeSalesman.id, name: activeSalesman.name }]
+    return []
+  }, [role, salesmen, activeSalesman.id, activeSalesman.name])
+
   const visitHistoryRows = useMemo(() => {
     const rows = role === 'salesman' ? visits.filter((v) => v.salesmanId === activeSalesman.id) : visits
     const seen = new Set<string>()
@@ -1258,52 +1338,13 @@ function App() {
     })
     return filtered.slice(0, 100)
   }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilter, visitHistoryCityFilter])
-  const clientWiseVisitRows = useMemo(() => {
-    const grouped = new Map<
-      string,
-      {
-        customerId: string
-        customerName: string
-        city: string
-        visits: number
-        firstVisitAt: string
-        lastVisitAt: string
-        lastVisitType: VisitType
-        lastSalesmanName: string
-        lat: number
-        lng: number
-      }
-    >()
-    for (const visit of visitHistoryRows) {
-      const city = customerById.get(visit.customerId)?.city ?? '—'
-      const current = grouped.get(visit.customerId)
-      if (!current) {
-        grouped.set(visit.customerId, {
-          customerId: visit.customerId,
-          customerName: visit.customerName,
-          city,
-          visits: 1,
-          firstVisitAt: visit.capturedAt,
-          lastVisitAt: visit.capturedAt,
-          lastVisitType: visit.visitType,
-          lastSalesmanName: visit.salesmanName,
-          lat: visit.lat,
-          lng: visit.lng,
-        })
-        continue
-      }
-      current.visits += 1
-      if (visit.capturedAt < current.firstVisitAt) current.firstVisitAt = visit.capturedAt
-      if (visit.capturedAt > current.lastVisitAt) {
-        current.lastVisitAt = visit.capturedAt
-        current.lastVisitType = visit.visitType
-        current.lastSalesmanName = visit.salesmanName
-        current.lat = visit.lat
-        current.lng = visit.lng
-      }
-    }
-    return [...grouped.values()].sort((a, b) => b.lastVisitAt.localeCompare(a.lastVisitAt))
-  }, [visitHistoryRows, customerById])
+  const selectedVisitClientVisits = useMemo(() => {
+    if (!selectedVisitClientId) return []
+    return visitHistoryRows
+      .filter((visit) => visit.customerId === selectedVisitClientId)
+      .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
+  }, [visitHistoryRows, selectedVisitClientId])
+  const selectedVisitClient = selectedVisitClientId ? customerById.get(selectedVisitClientId) : undefined
   const meetingSalesmanOptions = useMemo(() => {
     const scopedRows =
       role === 'salesman'
@@ -1332,7 +1373,7 @@ function App() {
           : meetingResponses
       return roleScopedRows.filter((m) => {
         const dateOk = meetingDateFilter ? m.createdAt.slice(0, 10) === meetingDateFilter : true
-        const salesmanOk = meetingSalesmanFilter === 'all' ? true : m.salesmanName === meetingSalesmanFilter
+        const salesmanOk = role === 'salesman' ? true : meetingSalesmanFilter === 'all' ? true : m.salesmanName === meetingSalesmanFilter
         return dateOk && salesmanOk
       })
     },
@@ -1347,33 +1388,48 @@ function App() {
     ],
   )
   const exportVisitHistoryCsv = () => {
-    const headers = ['Arrived', 'Ended', 'Salesman', 'Customer', 'City', 'Type', 'GPS', 'Status']
-    const rows = visitHistoryRows.map((visit) => [
-      visit.visitStartedAt ? formatDateTime(visit.visitStartedAt) : '—',
-      formatDateTime(visit.capturedAt),
-      visit.salesmanName,
-      visit.customerName,
-      customerById.get(visit.customerId)?.city ?? '—',
-      visit.visitType,
-      `${visit.lat.toFixed(4)}, ${visit.lng.toFixed(4)} (±${Math.round(visit.accuracy)}m)`,
-      visit.status,
-    ])
+    const exportDynamicFields = formFields
+      .filter((field) => field.active && !field.isDeleted)
+      .sort((a, b) => a.order - b.order)
+    const headers = [
+      'Arrived',
+      'Ended',
+      'Salesman',
+      'Customer',
+      'City',
+      'Type',
+      'GPS',
+      'Status',
+      ...exportDynamicFields.map((field) => field.label),
+    ]
+    const rows = visitHistoryRows.map((visit) => {
+      const customerDynamicFields = customerById.get(visit.customerId)?.dynamicFields ?? {}
+      const dynamicValues = exportDynamicFields.map(
+        (field) => visit.dynamicFields?.[field.key] || customerDynamicFields[field.key] || '—',
+      )
+      return [
+        visit.visitStartedAt ? formatDateTime(visit.visitStartedAt) : '—',
+        formatDateTime(visit.capturedAt),
+        visit.salesmanName,
+        visit.customerName,
+        customerById.get(visit.customerId)?.city ?? '—',
+        visit.visitType,
+        `${visit.lat.toFixed(4)}, ${visit.lng.toFixed(4)} (±${Math.round(visit.accuracy)}m)`,
+        visit.status,
+        ...dynamicValues,
+      ]
+    })
     exportToCsv(`visit_history_${new Date().toISOString().slice(0, 10)}`, headers, rows)
   }
 
-  const exportClientWiseVisitHistoryCsv = () => {
-    const headers = ['Client', 'City', 'Total visits', 'First visit', 'Last visit', 'Last visit type', 'Last salesman']
-    const rows = clientWiseVisitRows.map((row) => [
-      row.customerName,
-      row.city,
-      row.visits,
-      formatDateTime(row.firstVisitAt),
-      formatDateTime(row.lastVisitAt),
-      row.lastVisitType,
-      row.lastSalesmanName,
-    ])
-    exportToCsv(`client_wise_visit_history_${new Date().toISOString().slice(0, 10)}`, headers, rows)
-  }
+  useEffect(() => {
+    if (!selectedVisitClientId) return
+    const stillVisible = visitHistoryRows.some((visit) => visit.customerId === selectedVisitClientId)
+    if (!stillVisible) {
+      setSelectedVisitClientId(null)
+      setSelectedVisitHistoryRowId(null)
+    }
+  }, [visitHistoryRows, selectedVisitClientId])
   const messageLooksLikeError = useMemo(() => {
     if (!message) return false
     return /(failed|error|rejected|could not|cannot|required|must|denied|outside|not found|invalid|timed out|warning)/i.test(message)
@@ -1650,7 +1706,19 @@ function App() {
     const pad = Math.max(14, Math.floor(vw * 0.02))
     const lineHeight = Math.max(24, Math.floor(vh * 0.038))
     const fontSize = Math.max(17, Math.floor(vw * 0.034))
-    const lines = [`Photo time: ${formatDateTime(new Date())}`]
+    const customerName =
+      visitSession?.selectedCustomerId === 'new'
+        ? visitSession.quickLead.name
+        : customers.find((c) => c.id === visitSession?.selectedCustomerId)?.name ?? 'Customer'
+    const customerCity =
+      visitSession?.selectedCustomerId === 'new'
+        ? visitSession.quickLead.city
+        : customers.find((c) => c.id === visitSession?.selectedCustomerId)?.city ?? '—'
+    const lines = [
+      `Client: ${customerName}`,
+      `City: ${customerCity}`,
+      `Photo time: ${formatDateTime(new Date())}`,
+    ]
     const boxH = pad * 2 + lines.length * lineHeight
     ctx.fillStyle = 'rgba(0,0,0,0.75)'
     ctx.fillRect(pad, vh - boxH - pad, vw - pad * 2, boxH)
@@ -1686,20 +1754,42 @@ function App() {
     setVisitSession(null)
     setGeo(null)
     setDynamicData({})
+    setNotes('')
+    setNextAction('')
+    setFollowUpDate('')
     clearVisitPhoto()
     setMessage('Visit cancelled.')
   }
 
   const markFollowUpComplete = async (id: string) => {
-    setFollowUps((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'closed' as FollowUpStatus } : f)))
+    setFollowUps((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'closed' as FollowUpStatus, archived: true } : f)))
     if (supabase && online) {
-      const { error } = await supabase.from('followups').update({ status: 'closed' }).eq('id', id)
+      const { error } = await supabase.from('followups').update({ status: 'closed', archived: true }).eq('id', id)
       if (error) setMessage(`Could not mark complete: ${error.message}`)
       else scheduleWorkspaceReloadRef.current?.()
     }
   }
 
-  const saveFollowUpEdit = async (updated: FollowUp) => {
+  const toggleFollowUpArchived = async (id: string, archived: boolean) => {
+    const original = followUps.find((f) => f.id === id)
+    if (!original) return
+    setArchivingFollowUpId(id)
+    setFollowUps((prev) => prev.map((f) => (f.id === id ? { ...f, archived } : f)))
+    setEditingFollowUp((prev) => (prev && prev.id === id ? { ...prev, archived } : prev))
+    if (supabase && online) {
+      const { error } = await supabase.from('followups').update({ archived }).eq('id', id)
+      if (error) {
+        setFollowUps((prev) => prev.map((f) => (f.id === id ? { ...f, archived: original.archived } : f)))
+        setEditingFollowUp((prev) => (prev && prev.id === id ? { ...prev, archived: original.archived } : prev))
+        setMessage(`Could not update archived status: ${error.message}`)
+      }
+    }
+    setArchivingFollowUpId(null)
+  }
+
+  const saveFollowUpEdit = async (updatedParam: FollowUp) => {
+    const updated = updatedParam.status === 'closed' ? { ...updatedParam, archived: true } : updatedParam
+
     setFollowUps((prev) => prev.map((f) => (f.id === updated.id ? updated : f)))
     setEditingFollowUp(null)
     if (supabase && online) {
@@ -1708,8 +1798,23 @@ function App() {
         priority: updated.priority,
         status: updated.status,
         remarks: updated.remarks,
+        archived: updated.archived,
       }).eq('id', updated.id)
       if (error) setMessage(`Could not save follow-up: ${error.message}`)
+      else scheduleWorkspaceReloadRef.current?.()
+    }
+  }
+  const saveMeetingResponseEdit = async (updated: EditingMeetingResponse) => {
+    const response = updated.response.trim()
+    if (!response) {
+      setMessage('Meeting response cannot be empty.')
+      return
+    }
+    setMeetingResponses((prev) => prev.map((item) => (item.id === updated.id ? { ...item, response } : item)))
+    setEditingMeetingResponse(null)
+    if (supabase && online) {
+      const { error } = await supabase.from('meeting_responses').update({ response }).eq('id', updated.id)
+      if (error) setMessage(`Could not save meeting response: ${error.message}`)
       else scheduleWorkspaceReloadRef.current?.()
     }
   }
@@ -1756,13 +1861,28 @@ function App() {
         name: visitCustomerSearch.trim(),
         phone: leadPhoneForSession,
         address: quickLeadAddress.trim() || 'Address pending',
+        city: quickLeadCity.trim() || 'Unknown',
       },
     })
     setGeo(null)
+
+    // Pre-fill dynamic fields and other data from existing customer
     const initialDynamic: Record<string, string> = {}
-    for (const field of formFields) {
-      if (field.active && !field.isDeleted) {
-        initialDynamic[field.key] = ''
+    if (selectedCustomerId !== 'new') {
+      const selectedCustomer = customers.find((item) => item.id === selectedCustomerId)
+      if (selectedCustomer) {
+        // Pre-fill dynamic fields
+        for (const field of formFields) {
+          if (field.active && !field.isDeleted) {
+            initialDynamic[field.key] = selectedCustomer.dynamicFields?.[field.key] ?? ''
+          }
+        }
+      }
+    } else {
+      for (const field of formFields) {
+        if (field.active && !field.isDeleted) {
+          initialDynamic[field.key] = ''
+        }
       }
     }
     setDynamicData(initialDynamic)
@@ -1910,6 +2030,100 @@ function App() {
       setLoginMessage(`Sign-in failed: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setSigningIn(false)
+    }
+  }
+
+  const invokeForgotPassword = async (
+    body: Record<string, unknown>,
+  ): Promise<{ ok: boolean; error?: string; message?: string }> => {
+    if (!supabase) return { ok: false, error: 'Supabase is not configured.' }
+    const { data, error } = await supabase.functions.invoke('forgot-password-whatsapp-otp', { body })
+    if (error) {
+      const status = error instanceof FunctionsHttpError ? error.context?.status : undefined
+      if (status === 401) {
+        return {
+          ok: false,
+          error:
+            'Forgot password failed: function JWT verification blocked the request (401). Set `[functions.forgot-password-whatsapp-otp] verify_jwt = false` in `supabase/config.toml` and redeploy the function.',
+        }
+      }
+      return {
+        ok: false,
+        error:
+          error.message.includes('Failed to fetch') ||
+            error.message.includes('404') ||
+            error.message.includes('Failed to send a request to the Edge Function')
+            ? 'Forgot password failed: deploy the Edge Function `forgot-password-whatsapp-otp`.'
+            : `Forgot password failed: ${error.message}`,
+      }
+    }
+    return (data as { ok: boolean; error?: string; message?: string }) ?? { ok: false, error: 'Unknown server response.' }
+  }
+
+  const sendForgotPasswordOtp = async (mobile: string): Promise<boolean> => {
+    setForgotPasswordBusy(true)
+    setForgotPasswordMessage('')
+    setForgotPasswordMessageIsError(false)
+    const normalizedMobile = parseTenDigitMobile(mobile)
+    if (!normalizedMobile) {
+      setForgotPasswordBusy(false)
+      setForgotPasswordMessageIsError(true)
+      setForgotPasswordMessage('Enter a valid 10-digit mobile number.')
+      return false
+    }
+    try {
+      const payload = await invokeForgotPassword({ intent: 'sendOtp', mobile: normalizedMobile })
+      if (!payload.ok) {
+        setForgotPasswordMessageIsError(true)
+        setForgotPasswordMessage(payload.error ?? 'Could not send OTP.')
+        return false
+      }
+      setForgotPasswordMessage(payload.message ?? 'OTP sent to your WhatsApp.')
+      return true
+    } finally {
+      setForgotPasswordBusy(false)
+    }
+  }
+
+  const verifyForgotPasswordOtp = async (mobile: string, otp: string): Promise<boolean> => {
+    setForgotPasswordBusy(true)
+    setForgotPasswordMessage('')
+    setForgotPasswordMessageIsError(false)
+    try {
+      const payload = await invokeForgotPassword({ intent: 'verifyOtp', mobile, otp })
+      if (!payload.ok) {
+        setForgotPasswordMessageIsError(true)
+        setForgotPasswordMessage(payload.error ?? 'Invalid OTP.')
+        return false
+      }
+      setForgotPasswordMessage(payload.message ?? 'OTP verified.')
+      return true
+    } finally {
+      setForgotPasswordBusy(false)
+    }
+  }
+
+  const resetForgotPassword = async (mobile: string, otp: string, newPassword: string): Promise<boolean> => {
+    setForgotPasswordBusy(true)
+    setForgotPasswordMessage('')
+    setForgotPasswordMessageIsError(false)
+    if (!isValidPassword(newPassword)) {
+      setForgotPasswordBusy(false)
+      setForgotPasswordMessageIsError(true)
+      setForgotPasswordMessage(PASSWORD_POLICY_HINT)
+      return false
+    }
+    try {
+      const payload = await invokeForgotPassword({ intent: 'resetPassword', mobile, otp, newPassword })
+      if (!payload.ok) {
+        setForgotPasswordMessageIsError(true)
+        setForgotPasswordMessage(payload.error ?? 'Could not reset password.')
+        return false
+      }
+      setForgotPasswordMessage(payload.message ?? 'Password reset successful.')
+      return true
+    } finally {
+      setForgotPasswordBusy(false)
     }
   }
 
@@ -2240,7 +2454,7 @@ function App() {
           phone: ql.phone,
           whatsapp: ql.phone,
           address: ql.address,
-          city: 'Unknown',
+          city: ql.city.trim() || 'Unknown',
           tags: [],
           dynamicFields: dynamicData,
           assignedSalesmanId: activeSalesman.id,
@@ -2337,6 +2551,7 @@ function App() {
           dueDate: followUpDate,
           priority: 'medium',
           status: 'pending',
+          archived: false,
           remarks: nextAction.trim() || 'Follow-up from visit',
           salesmanId: activeSalesman.id,
         }
@@ -2349,6 +2564,7 @@ function App() {
             due_date: nextFollowUp.dueDate,
             priority: nextFollowUp.priority,
             status: nextFollowUp.status,
+            archived: nextFollowUp.archived,
             remarks: nextFollowUp.remarks,
           })
           if (error) setMessage(`Follow-up save warning: ${error.message}`)
@@ -2412,6 +2628,7 @@ function App() {
       setSelectedCustomerId('new')
       setQuickLeadPhone('')
       setQuickLeadAddress('')
+      setQuickLeadCity('')
       setVisitCustomerSearch('')
       setNotes('')
       setNextAction('')
@@ -2441,23 +2658,44 @@ function App() {
         .sort((a, b) => a.order - b.order),
     [formFields],
   )
+  const meetingRowsDetailed = useMemo(
+    () =>
+      filteredMeetingResponses.map((item) => {
+        const linkedVisit = item.visitId ? visitById.get(item.visitId) : undefined
+        const customer = linkedVisit ? customerById.get(linkedVisit.customerId) : customerByName.get(item.customerName.trim().toLowerCase())
+        return {
+          item,
+          linkedVisit,
+          customerPhone: customer?.phone || customer?.whatsapp || '—',
+          dynamicValues: activeDynamicFields.map((field) => {
+            const value = linkedVisit?.dynamicFields?.[field.key] ?? customer?.dynamicFields?.[field.key]
+            return value || '—'
+          }),
+        }
+      }),
+    [filteredMeetingResponses, visitById, customerById, customerByName, activeDynamicFields],
+  )
 
 
 
   const visitFormCard = (
     <article className="card visitFormCard">
-      <h3>Record visit</h3>
+      <div className="visitFormHeader">
+        <h3>Record visit</h3>
+      </div>
       {!activeSalesman.id ? (
         <p className="muted visit-camera-warn">Could not resolve your user id for this visit. Refresh the page or sign in again.</p>
       ) : null}
 
       {visitSession ? (
         <div className="visit-session-banner" role="status">
-          <p>
-            <strong>Visit in progress</strong> — {visitSessionCustomerLabel} · {visitSession.visitType} · arrived{' '}
-            {formatDateTime(visitSession.startGeo.capturedAt)}
-          </p>
-          <div className="inlineActions">
+          <div className="visitSessionMeta">
+            <p>
+              <strong>Visit in progress</strong> — {visitSessionCustomerLabel} · {visitSession.visitType}
+            </p>
+            <p className="visitSessionStat">Arrived: {formatDateTime(visitSession.startGeo.capturedAt)}</p>
+          </div>
+          <div className="inlineActions visitSessionActions">
             <button type="button" className="secondary" onClick={cancelVisitSession}>
               Cancel visit
             </button>
@@ -2467,13 +2705,13 @@ function App() {
 
       {!visitSession ? (
         <>
-          <p className="muted">
+          <p className="muted visitStepIntro">
             <strong>Step 1 — Arrival.</strong> Mark where you arrived. <strong>Existing customer:</strong> GPS uncertainty
             must be ≤ {GPS_THRESHOLD_METERS}m and you must be within {RADIUS_THRESHOLD_METERS}m of their pin.{' '}
             <strong>New lead:</strong> GPS uncertainty can be up to {GPS_THRESHOLD_NEW_LEAD_METERS}m. Then choose customer
             and tap <strong>Start visit</strong>.
           </p>
-          <div className="inlineActions">
+          <div className="inlineActions visitStartActions">
             <button type="button" onClick={markVisitLocation} disabled={locationLocking}>
               {locationLocking ? 'Fetching location…' : 'Fetch location'}
             </button>
@@ -2486,7 +2724,7 @@ function App() {
         </>
       ) : (
         <>
-          <p className="muted">
+          <p className="muted visitStepIntro">
             <strong>Step 2 — Capture &amp; end.</strong> Open camera, capture photo, and tap <strong>End visit &amp; save</strong>.
             Leave location is captured automatically during capture/save.
           </p>
@@ -2494,7 +2732,7 @@ function App() {
       )}
 
       {locationLocking ? (
-        <p className="muted">
+        <p className="muted visitLockHint">
           Requesting location (usually under 20s). If this never finishes, check site permissions on your secure app URL.
         </p>
       ) : null}
@@ -2506,7 +2744,7 @@ function App() {
       ) : null}
 
       {!visitSession ? (
-        <div className="formGrid">
+        <div className="formGrid visitStagePanel">
           <label>
             Customer
             <input
@@ -2536,6 +2774,10 @@ function App() {
                 />
               </label>
               <label>
+                City
+                <input value={quickLeadCity} onChange={(event) => setQuickLeadCity(event.target.value)} />
+              </label>
+              <label>
                 Address
                 <input value={quickLeadAddress} onChange={(event) => setQuickLeadAddress(event.target.value)} />
               </label>
@@ -2544,12 +2786,20 @@ function App() {
 
         </div>
       ) : (
-        <div className="formGrid">
-          <p className="muted">
-            <strong>Customer:</strong> {visitSessionCustomerLabel}
-            <br />
-            <strong>Visit type:</strong> {visitSession.visitType}
-          </p>
+        <div className="formGrid visitStagePanel">
+          <div className="visitStageMain">
+            <p className="muted">
+              <strong>Customer:</strong> {visitSessionCustomerLabel}
+              <br />
+              <strong>Visit type:</strong> {visitSession.visitType}
+              <br />
+              <strong>Phone:</strong> {visitSession.quickLead.phone}
+              <br />
+              <strong>Address:</strong> {visitSession.quickLead.address}
+              <br />
+              <strong>City:</strong> {visitSession.quickLead.city}
+            </p>
+          </div>
           <label>
             Notes
             <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
@@ -2566,7 +2816,7 @@ function App() {
           </label>
           {activeDynamicFields.length ? (
             <div className="dynamic-fields-section">
-              <p className="muted">
+              <p className="muted visitDynamicHeading">
                 <strong>Additional visit details</strong>
               </p>
               <div className="dynamic-fields-grid">
@@ -2629,13 +2879,15 @@ function App() {
       ) : (
         <>
           <div className="visit-camera-block">
-            <h4 className="visit-camera-title">
-              <strong>Photo</strong> (camera only)
-            </h4>
-            <p className="muted">
-              Open the camera and capture. The image includes timestamp and your <strong>leave</strong> location GPS.
-              Gallery is not used. After a shot you can <strong>Retake</strong> or <strong>End visit &amp; save</strong> below.
-            </p>
+            <div className="visitCameraHeader">
+              <h4 className="visit-camera-title">
+                <strong>Photo</strong> (camera only)
+              </h4>
+              <p className="muted">
+                Open the camera and capture. The image includes timestamp and your <strong>leave</strong> location GPS.
+                Gallery is not used. After a shot you can <strong>Retake</strong> or <strong>End visit &amp; save</strong> below.
+              </p>
+            </div>
             <video
               ref={visitVideoRef}
               className="visit-camera-video"
@@ -2673,7 +2925,11 @@ function App() {
             ) : null}
           </div>
 
-          {photoPreview ? <img src={photoPreview} alt="Saved visit photo" className="photoPreview" /> : null}
+          {photoPreview ? (
+            <div className="visitCameraPreviewWrap">
+              <img src={photoPreview} alt="Saved visit photo" className="photoPreview" />
+            </div>
+          ) : null}
 
           <div className="inlineActions visit-submit-actions">
             <button type="button" className="visit-submit-btn" onClick={() => void saveVisit()} disabled={savingVisit}>
@@ -2813,9 +3069,9 @@ function App() {
                 </label>
               </div>
             ) : null}
-            {salesmen.length ? (
+            {mapVisibleSalesmen.length ? (
               <div className="mapColorKey">
-                {salesmen.map((s) => (
+                {mapVisibleSalesmen.map((s) => (
                   <span key={s.id} className="mapColorKeyItem">
                     <i
                       className="mapColorSwatch"
@@ -2836,11 +3092,11 @@ function App() {
                   lat: c.lat,
                   lng: c.lng,
                   assignedSalesmanId: c.assignedSalesmanId,
-                  salesmanName: salesmen.find((x) => x.id === c.assignedSalesmanId)?.name,
+                  salesmanName: mapVisibleSalesmen.find((x) => x.id === c.assignedSalesmanId)?.name,
                 }))}
                 livePoints={[]}
                 recentVisits={filteredMapRecentVisits}
-                salesmen={salesmen}
+                salesmen={mapVisibleSalesmen}
               />
             </Suspense>
           </section>
@@ -2870,49 +3126,160 @@ function App() {
                   </select>
                 </label>
               </div>
-              <div className="scrollArea">
-                <table>
+              <div className="scrollArea overdueTableWrap">
+                <table className="overdueTable">
                   <thead>
                     <tr>
-                      <th>Salesman</th>
-                      <th>Client</th>
-                      <th>City</th>
-                      <th>Phone</th>
-                      <th>Due date</th>
-                      <th>Priority</th>
-                      <th>Status</th>
-                      <th>Remarks</th>
-                      {activeDynamicFields.map((f) => <th key={f.id}>{f.label}</th>)}
-                      <th>Last visit</th>
+                      <th className="overdueCompactCell">Salesman</th>
+                      <th className="overdueCompactCell">Client</th>
+                      <th className="overdueCompactCell">City</th>
+                      <th className="overdueCompactCell">Phone</th>
+                      <th className="overdueCompactCell">Due date</th>
+                      <th className="overdueCompactCell">Priority</th>
+                      <th className="overdueCompactCell">Status</th>
+                      <th className="overdueLongCell">Remarks</th>
+                      {activeDynamicFields.map((f) => (
+                        <th key={f.id} className="dynamicFieldCol" title={f.label}>
+                          {f.label}
+                        </th>
+                      ))}
+                      <th className="overdueCompactCell">Last visit</th>
+                      <th className="overdueCompactCell">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredOverdueRowsDetailed.length === 0 ? (
                       <tr>
-                        <td colSpan={9 + activeDynamicFields.length} className="muted">
+                        <td colSpan={10 + activeDynamicFields.length} className="muted">
                           No overdue follow-ups.
                         </td>
                       </tr>
                     ) : (
-                      filteredOverdueRowsDetailed.map((row) => (
-                        <tr key={row.id}>
-                          <td>{row.salesmanName}</td>
-                          <td>{row.customerName}</td>
-                          <td>{row.customerCity}</td>
-                          <td>{row.customerPhone}</td>
-                          <td>{formatDate(row.dueDate)}</td>
-                          <td>{row.priority}</td>
-                          <td>{row.status}</td>
-                          <td>{row.remarks || '—'}</td>
-                          {activeDynamicFields.map((field) => {
-                            const val = row.lastVisitDynamicFields?.[field.key] || row.customerDynamicFields?.[field.key]
-                            return <td key={field.id}>{val || '—'}</td>
-                          })}
-                          <td>
-                            {row.lastVisitAt ? `${formatDate(row.lastVisitAt)} (${row.lastVisitType})` : '—'}
-                          </td>
-                        </tr>
-                      ))
+                      filteredOverdueRowsDetailed.flatMap((row) => {
+                        const followUp = followUps.find((item) => item.id === row.id)
+                        const isEditing = editingFollowUp?.id === row.id
+                        const rows = [
+                          <tr key={row.id}>
+                            <td className="overdueCompactCell">{row.salesmanName}</td>
+                            <td className="overdueCompactCell">{row.customerName}</td>
+                            <td className="overdueCompactCell">{row.customerCity}</td>
+                            <td className="overdueCompactCell">{row.customerPhone}</td>
+                            <td className="overdueCompactCell">{formatDate(row.dueDate)}</td>
+                            <td className="overdueCompactCell">{row.priority}</td>
+                            <td className="overdueCompactCell">{row.status}</td>
+                            <td className="overdueLongCell">{row.remarks || '—'}</td>
+                            {activeDynamicFields.map((field) => {
+                              const val = row.lastVisitDynamicFields?.[field.key] || row.customerDynamicFields?.[field.key]
+                              return (
+                                <td key={field.id} className="dynamicFieldCol" title={val || '—'}>
+                                  {val || '—'}
+                                </td>
+                              )
+                            })}
+                            <td className="overdueCompactCell">
+                              {row.lastVisitAt ? `${formatDate(row.lastVisitAt)} (${row.lastVisitType})` : '—'}
+                            </td>
+                            <td className="overdueCompactCell">
+                              {followUp ? (
+                                <div className="followupActions">
+                                  {followUp.status !== 'closed' ? (
+                                    <button type="button" onClick={() => void markFollowUpComplete(followUp.id)}>
+                                      Complete
+                                    </button>
+                                  ) : null}
+                                  <button type="button" className="secondary" onClick={(event) => {
+                                    setEditingFollowUp({ ...followUp })
+                                    const tableWrap = event.currentTarget.closest('.overdueTableWrap')
+                                    requestAnimationFrame(() => {
+                                      requestAnimationFrame(() => {
+                                        const scopedEditRow =
+                                          tableWrap instanceof HTMLElement
+                                            ? tableWrap.querySelector('.followupEditRow')
+                                            : document.querySelector('.followupEditRow')
+                                        if (scopedEditRow instanceof HTMLElement) {
+                                          scopedEditRow.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
+                                        }
+                                      })
+                                    })
+                                  }}>
+                                    Edit
+                                  </button>
+                                </div>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          </tr>,
+                        ]
+                        if (isEditing && editingFollowUp) {
+                          rows.push(
+                            <tr key={`${row.id}-edit`} className="followupEditRow">
+                              <td colSpan={10 + activeDynamicFields.length}>
+                                <div className="followupEditCard">
+                                  <div className="followupEditHeader">
+                                    <div>
+                                      <strong>Edit follow-up</strong>
+                                      <p className="muted">Update the due date, status, priority, and remarks in one place.</p>
+                                    </div>
+                                  </div>
+                                  <div className="followupEditGrid">
+                                    <label>
+                                      Due date
+                                      <input
+                                        type="date"
+                                        value={editingFollowUp.dueDate}
+                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
+                                      />
+                                    </label>
+                                    <label>
+                                      Priority
+                                      <select
+                                        value={editingFollowUp.priority}
+                                        onChange={(e) =>
+                                          setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })
+                                        }
+                                      >
+                                        <option value="low">Low</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="high">High</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Status
+                                      <select
+                                        value={editingFollowUp.status}
+                                        onChange={(e) =>
+                                          setEditingFollowUp({ ...editingFollowUp, status: e.target.value as FollowUpStatus })
+                                        }
+                                      >
+                                        <option value="pending">Pending</option>
+                                        <option value="in_progress">In progress</option>
+                                        <option value="closed">Closed</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Remarks
+                                      <textarea
+                                        value={editingFollowUp.remarks}
+                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
+                                      />
+                                    </label>
+                                  </div>
+                                  <div className="followupEditActions">
+                                    <button type="button" onClick={() => void saveFollowUpEdit(editingFollowUp)}>
+                                      Save
+                                    </button>
+                                    <button type="button" className="secondary" onClick={() => setEditingFollowUp(null)}>
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>,
+                          )
+                        }
+                        return rows
+                      })
                     )}
                   </tbody>
                 </table>
@@ -2925,30 +3292,6 @@ function App() {
           <section className="panel">
             <div className="rowBetween" style={{ alignItems: 'center' }}>
               <h2>Meeting responses</h2>
-              {role === 'owner' && (
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => {
-                    const headers = ['Time', 'Salesman', 'Customer', 'Response', 'Next action'];
-                    const rows = filteredMeetingResponses.map((item) => {
-                      const linkedVisit = item.visitId ? visitById.get(item.visitId) : undefined;
-                      return [
-                        formatDateTime(item.createdAt),
-                        item.salesmanName,
-                        item.customerName,
-                        item.response,
-                        linkedVisit?.nextAction || '—'
-                      ];
-                    });
-                    exportToCsv(`meeting_responses_${new Date().toISOString().slice(0, 10)}`, headers, rows);
-                  }}
-                  style={{ display: 'flex', alignItems: 'center' }}
-                >
-                  <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: '6px' }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                  Export Data
-                </button>
-              )}
             </div>
             {(role === 'owner' || role === 'sub_admin') ? (
               <article className="card">
@@ -3001,7 +3344,7 @@ function App() {
                     {savingFormField ? 'Adding…' : 'Add new field'}
                   </button>
                 </div>
-                <div className="scrollArea">
+                <div className="scrollAreaSettings">
                   <table>
                     <thead>
                       <tr>
@@ -3051,41 +3394,109 @@ function App() {
                   Date
                   <input type="date" value={meetingDateFilter} onChange={(event) => setMeetingDateFilter(event.target.value)} />
                 </label>
-                <label>
-                  Salesman
-                  <select value={meetingSalesmanFilter} onChange={(event) => setMeetingSalesmanFilter(event.target.value)}>
-                    <option value="all">All</option>
-                    {meetingSalesmanOptions.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {role !== 'salesman' ? (
+                  <label>
+                    Salesman
+                    <select value={meetingSalesmanFilter} onChange={(event) => setMeetingSalesmanFilter(event.target.value)}>
+                      <option value="all">All</option>
+                      {meetingSalesmanOptions.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {role === 'owner' && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      const headers = ['Time', 'Salesman', 'Customer', 'Phone', 'Response', 'Next action', ...activeDynamicFields.map((f) => f.label)];
+                      const rows = meetingRowsDetailed.map(({ item, linkedVisit, customerPhone, dynamicValues }) => {
+                        return [
+                          formatDateTime(item.createdAt),
+                          item.salesmanName,
+                          item.customerName,
+                          customerPhone,
+                          item.response,
+                          linkedVisit?.nextAction || '—',
+                          ...dynamicValues,
+                        ];
+                      });
+                      exportToCsv(`meeting_responses_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', marginLeft: 'auto' }}
+                  >
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: '6px' }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    Export Data
+                  </button>
+                )}
               </div>
-              <div className="scrollArea">
-                <table>
+              <div className="scrollArea meetingResponsesTableWrap">
+                <table className="meetingResponsesTable">
                   <thead>
                     <tr>
-                      <th>Time</th>
-                      <th>Salesman</th>
-                      <th>Customer</th>
-                      <th>Response</th>
-                      <th>Next action</th>
-                      <th>Photo</th>
+                      <th className="meetingCompactCell">Time</th>
+                      {role !== 'salesman' ? <th className="meetingCompactCell">Salesman</th> : null}
+                      <th className="meetingCompactCell">Customer</th>
+                      <th className="meetingCompactCell">Phone</th>
+                      <th className="meetingCompactCell">Due date</th>
+                      <th className="meetingCompactCell">Priority</th>
+                      <th className="meetingCompactCell">Status</th>
+                      <th className="meetingLongCell">Notes / Response</th>
+                      <th className="meetingLongCell">Next action</th>
+                      {activeDynamicFields.map((field) => (
+                        <th key={field.id} className="dynamicFieldCol" title={field.label}>
+                          {field.label}
+                        </th>
+                      ))}
+                      <th className="meetingCompactCell">Photo</th>
+                      <th className="meetingCompactCell">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredMeetingResponses.slice(0, 80).map((item) => {
-                      const linkedVisit = item.visitId ? visitById.get(item.visitId) : undefined
-                      return (
+                    {meetingRowsDetailed.slice(0, 80).flatMap(({ item, linkedVisit, customerPhone, dynamicValues }) => {
+                      const isEditing = editingMeetingResponse?.id === item.id
+                      const linkedCustomerId = linkedVisit?.customerId
+                      const linkedFollowUp = linkedCustomerId
+                        ? followUps.find((f) => f.customerId === linkedCustomerId)
+                        : undefined
+                      const rows = [
                         <tr key={item.id}>
-                          <td>{formatDateTime(item.createdAt)}</td>
-                          <td>{item.salesmanName}</td>
-                          <td>{item.customerName}</td>
-                          <td>{item.response}</td>
-                          <td>{linkedVisit?.nextAction || '—'}</td>
-                          <td>
+                          <td className="meetingCompactCell">{formatDateTime(item.createdAt)}</td>
+                          {role !== 'salesman' ? <td className="meetingCompactCell">{item.salesmanName}</td> : null}
+                          <td className="meetingCompactCell">{item.customerName}</td>
+                          <td className="meetingCompactCell">{customerPhone}</td>
+                          <td className="meetingCompactCell">
+                            {linkedFollowUp ? formatDate(linkedFollowUp.dueDate) : '—'}
+                          </td>
+                          <td className="meetingCompactCell">
+                            {linkedFollowUp ? (
+                              <span className={`followupPill followupPill--${linkedFollowUp.priority}`}>
+                                {linkedFollowUp.priority}
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td className="meetingCompactCell">
+                            {linkedFollowUp ? (
+                              <span className={`followupStatus followupStatus--${linkedFollowUp.status}`}>
+                                {linkedFollowUp.status.replace(/_/g, ' ')}
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td className="meetingLongCell">{item.response}</td>
+                          <td className="meetingLongCell">{linkedVisit?.nextAction || '—'}</td>
+                          {dynamicValues.map((value, idx) => (
+                            <td
+                              key={`${item.id}-dynamic-${activeDynamicFields[idx]?.id ?? idx}`}
+                              className="dynamicFieldCol"
+                              title={value}
+                            >
+                              {value}
+                            </td>
+                          ))}
+                          <td className="meetingCompactCell">
                             {linkedVisit?.photoDataUrl ? (
                               <button
                                 type="button"
@@ -3099,8 +3510,123 @@ function App() {
                               '—'
                             )}
                           </td>
-                        </tr>
-                      )
+                          <td className="meetingCompactCell">
+                            <div className="followupActions">
+                              <button
+                                type="button"
+                                className="secondary"
+                                onClick={(event) => {
+                                  setEditingMeetingResponse({ id: item.id, response: item.response })
+                                  if (linkedFollowUp) setEditingFollowUp({ ...linkedFollowUp })
+                                  const tableWrap = event.currentTarget.closest('.meetingResponsesTableWrap')
+                                  requestAnimationFrame(() => {
+                                    requestAnimationFrame(() => {
+                                      const scopedEditRow =
+                                        tableWrap instanceof HTMLElement
+                                          ? tableWrap.querySelector('.followupEditRow')
+                                          : document.querySelector('.followupEditRow')
+                                      if (scopedEditRow instanceof HTMLElement) {
+                                        scopedEditRow.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
+                                      }
+                                    })
+                                  })
+                                }}
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          </td>
+                        </tr>,
+                      ]
+                      if (isEditing && editingMeetingResponse) {
+                        rows.push(
+                          <tr key={`${item.id}-edit`} className="followupEditRow">
+                            <td colSpan={(role !== 'salesman' ? 11 : 10) + activeDynamicFields.length}>
+                              <div className="followupEditCard">
+                                <div className="followupEditHeader">
+                                  <div>
+                                    <strong>Edit meeting response</strong>
+                                    <p className="muted">Update the response and linked follow-up details in one place.</p>
+                                  </div>
+                                </div>
+                                <div className="followupEditGrid meetingEditGrid">
+                                  {editingFollowUp && editingFollowUp.customerId === linkedCustomerId ? (
+                                    <>
+                                      <label>
+                                        Due date
+                                        <input
+                                          type="date"
+                                          value={editingFollowUp.dueDate}
+                                          onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
+                                        />
+                                      </label>
+                                      <label>
+                                        Priority
+                                        <select
+                                          value={editingFollowUp.priority}
+                                          onChange={(e) =>
+                                            setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })
+                                          }
+                                        >
+                                          <option value="low">Low</option>
+                                          <option value="medium">Medium</option>
+                                          <option value="high">High</option>
+                                        </select>
+                                      </label>
+                                      <label>
+                                        Status
+                                        <select
+                                          value={editingFollowUp.status}
+                                          onChange={(e) =>
+                                            setEditingFollowUp({ ...editingFollowUp, status: e.target.value as FollowUpStatus })
+                                          }
+                                        >
+                                          <option value="pending">Pending</option>
+                                          <option value="in_progress">In progress</option>
+                                          <option value="closed">Closed</option>
+                                        </select>
+                                      </label>
+                                    </>
+                                  ) : null}
+                                  <label className="meetingResponseLabel">
+                                    Response
+                                    <textarea
+                                      value={editingMeetingResponse.response}
+                                      onChange={(event) =>
+                                        setEditingMeetingResponse({ ...editingMeetingResponse, response: event.target.value })
+                                      }
+                                    />
+                                  </label>
+                                </div>
+                                <div className="followupEditActions">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void saveMeetingResponseEdit(editingMeetingResponse)
+                                      if (editingFollowUp && editingFollowUp.customerId === linkedCustomerId) {
+                                        void saveFollowUpEdit(editingFollowUp)
+                                      }
+                                    }}
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="secondary"
+                                    onClick={() => {
+                                      setEditingMeetingResponse(null)
+                                      setEditingFollowUp(null)
+                                    }}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>,
+                        )
+                      }
+                      return rows
                     })}
                   </tbody>
                 </table>
@@ -3113,15 +3639,20 @@ function App() {
           <section className="panel settingsPanel">
             <div className="settingsHeader">
               <h2>Settings</h2>
-              <p className="muted settingsLead">Account security and team access for Whiterock Field Salesman.</p>
+              {/* <p className="muted settingsLead">Account security and team access for Whiterock Field Salesman.</p> */}
             </div>
 
             <article className="card settingsCard">
               <h3>Account</h3>
-              <p className="muted">
+              {/* <p className="muted">
                 Your role comes from the invite list. Sign in with <strong>email and password</strong> using the same
                 email you were invited with.
-              </p>
+              </p> */}
+              {authSession?.user?.user_metadata?.full_name ? (
+                <p>
+                  <strong>Name:</strong> {authSession.user.user_metadata.full_name}
+                </p>
+              ) : null}
               {authSession?.user?.email ? (
                 <p>
                   <strong>Email:</strong> {authSession.user.email}
@@ -3142,8 +3673,8 @@ function App() {
             {supabaseEnabled && authSession ? (
               <article className="card settingsCard">
                 <h3>Change password</h3>
-                <p className="muted">Use a new password that meets the same rules as at sign-up. You can change it anytime.</p>
-                {settingsPasswordMessage ? <p className="muted">{settingsPasswordMessage}</p> : null}
+                {/* <p className="muted">Use a new password that meets the same rules as at sign-up. You can change it anytime.</p>
+                {settingsPasswordMessage ? <p className="muted">{settingsPasswordMessage}</p> : null} */}
                 <div className="formGrid">
                   <label>
                     New password
@@ -3183,17 +3714,16 @@ function App() {
                   </p>
                 ) : null}
                 <h3>Add user (invite)</h3>
-                <p className="muted">
+                {/* <p className="muted">
                   {supabaseEnabled ? (
                     <>
-                      Set their <strong>initial password</strong> here (they can change it later under Settings). Requires the
-                      deployed Edge Function <code>invite-user-with-password</code>.{' '}
+                      Set their <strong>initial password</strong> here (they can change it later under Settings). 
                     </>
                   ) : null}
                   <strong>Owner</strong> can invite owner, salesman, sub-admin, and super-salesman.{' '}
                   <strong>Sub-admin</strong> can invite salesman and super-salesman. <strong>Super-salesman</strong> can
                   invite salesman.
-                </p>
+                </p> */}
                 <div className="formGrid">
                   <label>
                     Full name
@@ -3273,10 +3803,10 @@ function App() {
             {canSeeTeamDirectory ? (
               <article className="card settingsCard">
                 <h3>Invited emails ({invitedUsers.length})</h3>
-                <p className="muted">
+                {/* <p className="muted">
                   Only these invited emails can access the app. Admins assign the initial password when adding a user.
-                </p>
-                <div className="scrollArea settingsTableWrap">
+                </p> */}
+                <div className="scrollAreaSettings settingsTableWrap">
                   <table className="settingsTable">
                     <thead>
                       <tr>
@@ -3324,8 +3854,8 @@ function App() {
             {canSeeTeamDirectory ? (
               <article className="card settingsCard">
                 <h3>Profiles (synced)</h3>
-                <p className="muted">Live roles from Supabase <code>profiles</code> (used for visits and permissions).</p>
-                <div className="scrollArea settingsTableWrap">
+                {/* <p className="muted">Live roles from Supabase <code>profiles</code> (used for visits and permissions).</p> */}
+                <div className="scrollAreaSettings settingsTableWrap">
                   <table className="settingsTable">
                     <thead>
                       <tr>
@@ -3452,6 +3982,19 @@ function App() {
                     <option value="low">Low</option>
                   </select>
                 </label>
+                <label>
+                  Archived
+                  <button
+                    type="button"
+                    className={`switchToggle${salesmanFollowUpArchiveFilter ? ' isOn' : ''}`}
+                    role="switch"
+                    aria-checked={salesmanFollowUpArchiveFilter}
+                    aria-label="Show archived follow-ups"
+                    onClick={() => setSalesmanFollowUpArchiveFilter((prev) => !prev)}
+                  >
+                    <span className="switchTrack" aria-hidden><span className="switchThumb" /></span>
+                  </button>
+                </label>
               </div>
               <p className="muted">
                 Due today: {followUpsDueTodayForSalesman.length} · Overdue: {overdueFollowUpsForSalesman.length} · Archived:{' '}
@@ -3459,39 +4002,28 @@ function App() {
               </p>
               <div className="followupTableWrap">
                 <table className="followupTable">
-                  <colgroup>
-                    <col style={{ width: '19%' }} />
-                    <col style={{ width: '11%' }} />
-                    <col style={{ width: '8%' }} />
-                    <col style={{ width: '10%' }} />
-                    <col style={{ width: '8%' }} />
-                    <col style={{ width: '9%' }} />
-                    <col style={{ width: '22%' }} />
-                    <col style={{ width: '12%' }} />
-                    <col style={{ width: '10%' }} />
-                  </colgroup>
                   <thead>
                     <tr>
                       <th>Customer</th>
-                      <th>Salesman</th>
+                      {role !== 'salesman' ? <th>Salesman</th> : null}
                       <th>City</th>
                       <th>Due date</th>
                       <th>Priority</th>
                       <th>Status</th>
-                      <th>Remarks</th>
-                      {activeDynamicFields.map((f) => <th key={f.id}>{f.label}</th>)}
+                      <th className="followupRemarksCell">Remarks</th>
+                      {activeDynamicFields.map((f) => <th key={f.id} className='dynamicFieldCol'>{f.label}</th>)}
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredPendingFollowUpsForSalesman.length === 0 ? (
+                    {filteredFollowUpsForSalesman.length === 0 ? (
                       <tr>
-                        <td colSpan={8 + activeDynamicFields.length} className="muted">
-                          No pending follow-ups.
+                        <td colSpan={(role !== 'salesman' ? 8 : 7) + activeDynamicFields.length} className="muted">
+                          No follow-ups match the selected filters.
                         </td>
                       </tr>
                     ) : (
-                      filteredPendingFollowUpsForSalesman.flatMap((item) => {
+                      filteredFollowUpsForSalesman.flatMap((item) => {
                         const customer = customers.find((entry) => entry.id === item.customerId)
                         const salesmanName = salesmen.find((entry) => entry.id === item.salesmanId)?.name ?? 'Salesman'
                         const customerCity = customer?.city ?? 'Unknown city'
@@ -3499,9 +4031,27 @@ function App() {
                         const rows = [
                           <tr key={item.id}>
                             <td className="followupCustomerCell">
-                              <div className="followupCustomerName">{customer?.name ?? 'Unknown customer'}</div>
+                              <div className="followupCustomerHead">
+                                <div className="followupCustomerName">{customer?.name ?? 'Unknown customer'}</div>
+                                <div className="followupArchiveToggle">
+                                  <button
+                                    type="button"
+                                    className={`switchToggle switchToggle--compact${item.archived ? ' isOn' : ''}`}
+                                    role="switch"
+                                    aria-checked={item.archived}
+                                    aria-label="Archive follow-up"
+                                    disabled={archivingFollowUpId === item.id}
+                                    onClick={() => void toggleFollowUpArchived(item.id, !item.archived)}
+                                  >
+                                    <span className="switchTrack" aria-hidden><span className="switchThumb" /></span>
+                                  </button>
+                                  <span>Archive</span>
+                                </div>
+                              </div>
                             </td>
-                            <td className="followupSalesmanCell followupCompactCell">{salesmanName}</td>
+                            {role !== 'salesman' ? (
+                              <td className="followupSalesmanCell followupCompactCell">{salesmanName}</td>
+                            ) : null}
                             <td className="followupCityCell followupCompactCell">{customerCity}</td>
                             <td className="followupDateCell followupCompactCell">{formatDate(item.dueDate)}</td>
                             <td className="followupCompactCell">
@@ -3514,21 +4064,37 @@ function App() {
                                 {item.status.replace(/_/g, ' ')}
                               </span>
                             </td>
-                            <td>
+                            <td className="followupRemarksCell">
                               <div className="followupRemarks">{item.remarks || 'No remarks added'}</div>
                             </td>
                             {activeDynamicFields.map((field) => {
                               const vFields = latestVisitByCustomerId.get(item.customerId)?.dynamicFields
                               const cFields = customer?.dynamicFields
                               const val = vFields?.[field.key] || cFields?.[field.key]
-                              return <td key={field.id} className="followupCompactCell">{val || '—'}</td>
+                              return <td key={field.id} className="followupCompactCell dynamicFieldCol">{val || '—'}</td>
                             })}
                             <td>
                               <div className="followupActions">
-                                <button type="button" onClick={() => void markFollowUpComplete(item.id)}>
-                                  Complete
-                                </button>
-                                <button type="button" className="secondary" onClick={() => setEditingFollowUp({ ...item })}>
+                                {item.status !== 'closed' ? (
+                                  <button type="button" onClick={() => void markFollowUpComplete(item.id)}>
+                                    Complete
+                                  </button>
+                                ) : null}
+                                <button type="button" className="secondary" onClick={(event) => {
+                                  setEditingFollowUp({ ...item })
+                                  const tableWrap = event.currentTarget.closest('.followupTableWrap')
+                                  requestAnimationFrame(() => {
+                                    requestAnimationFrame(() => {
+                                      const scopedEditRow =
+                                        tableWrap instanceof HTMLElement
+                                          ? tableWrap.querySelector('.followupEditRow')
+                                          : document.querySelector('.followupEditRow')
+                                      if (scopedEditRow instanceof HTMLElement) {
+                                        scopedEditRow.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
+                                      }
+                                    })
+                                  })
+                                }}>
                                   Edit
                                 </button>
                               </div>
@@ -3538,7 +4104,7 @@ function App() {
                         if (isEditing && editingFollowUp) {
                           rows.push(
                             <tr key={`${item.id}-edit`} className="followupEditRow">
-                              <td colSpan={8 + activeDynamicFields.length}>
+                              <td colSpan={(role !== 'salesman' ? 8 : 7) + activeDynamicFields.length}>
                                 <div className="followupEditCard">
                                   <div className="followupEditHeader">
                                     <div>
@@ -3608,66 +4174,6 @@ function App() {
                   </tbody>
                 </table>
               </div>
-              <h3>Archived follow-ups</h3>
-              <div className="followupTableWrap followupTableWrap--archived">
-                <table className="followupTable followupTable--archived">
-                  <colgroup>
-                    <col style={{ width: '20%' }} />
-                    <col style={{ width: '11%' }} />
-                    <col style={{ width: '8%' }} />
-                    <col style={{ width: '10%' }} />
-                    <col style={{ width: '8%' }} />
-                    <col style={{ width: '8%' }} />
-                    <col style={{ width: '35%' }} />
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      <th>Customer</th>
-                      <th>Salesman</th>
-                      <th>City</th>
-                      <th>Due date</th>
-                      <th>Priority</th>
-                      <th>Status</th>
-                      <th>Remarks</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {archivedFollowUpsForSalesman.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="muted">
-                          No archived follow-ups. Completed follow-ups will appear here.
-                        </td>
-                      </tr>
-                    ) : (
-                      archivedFollowUpsForSalesman.map((item) => {
-                        const customer = customers.find((entry) => entry.id === item.customerId)
-                        const salesmanName = salesmen.find((entry) => entry.id === item.salesmanId)?.name ?? 'Salesman'
-                        return (
-                          <tr key={`arch-${item.id}`}>
-                            <td className="followupCustomerCell">
-                              <div className="followupCustomerName">{customer?.name ?? 'Unknown customer'}</div>
-                            </td>
-                            <td className="followupSalesmanCell followupCompactCell">{salesmanName}</td>
-                            <td className="followupCityCell followupCompactCell">{customer?.city ?? 'Unknown city'}</td>
-                            <td className="followupDateCell followupCompactCell">{formatDate(item.dueDate)}</td>
-                            <td className="followupCompactCell">
-                              <span className={`followupPill followupPill--${item.priority}`}>
-                                {item.priority}
-                              </span>
-                            </td>
-                            <td className="followupCompactCell">
-                              <span className="followupStatus followupStatus--closed">completed</span>
-                            </td>
-                            <td>
-                              <div className="followupRemarks">{item.remarks || 'No remarks added'}</div>
-                            </td>
-                          </tr>
-                        )
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
             </article>
           </section>
         )
@@ -3731,30 +4237,21 @@ function App() {
             <article className="card">
               <div className="customersTableWrap">
                 <table className="customersTable">
-                  <colgroup>
-                    <col style={{ width: '26%' }} />
-                    <col style={{ width: '10%' }} />
-                    <col style={{ width: '12%' }} />
-                    <col style={{ width: '20%' }} />
-                    <col style={{ width: '14%' }} />
-                    <col style={{ width: '16%' }} />
-                    <col style={{ width: '18%' }} />
-                  </colgroup>
                   <thead>
                     <tr>
                       <th>Name</th>
                       <th>City</th>
                       <th>Phone</th>
-                      <th>Tags</th>
-                      <th>Salesperson</th>
-                      {activeDynamicFields.map((f) => <th key={f.id}>{f.label}</th>)}
+                      {/* <th>Tags</th> */}
+                      {role !== 'salesman' ? <th>Salesperson</th> : null}
+                      {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredMyCustomers.length === 0 ? (
                       <tr>
-                        <td colSpan={6 + activeDynamicFields.length} className="muted">
+                        <td colSpan={(role !== 'salesman' ? 5 : 4) + activeDynamicFields.length} className="muted">
                           No customers match this search.
                         </td>
                       </tr>
@@ -3764,7 +4261,7 @@ function App() {
                           <td className="customersNameCell"><strong>{item.name}</strong></td>
                           <td className="customersCompactCell">{item.city}</td>
                           <td className="customersCompactCell">{item.phone}</td>
-                          <td className="customersTagsCell">
+                          {/* <td className="customersTagsCell">
                             {item.tags.length ? (
                               <div className="customerTagChips">
                                 {item.tags.map((tag, index) => (
@@ -3776,16 +4273,18 @@ function App() {
                             ) : (
                               <span className="customerEmptyChip">—</span>
                             )}
-                          </td>
-                          <td className="customersSalesmanCell">
-                            <span className="customerMetaPill customerMetaPill--subtle">
-                              {profileNameById.get(item.assignedSalesmanId) ?? 'Unassigned'}
-                            </span>
-                          </td>
+                          </td> */}
+                          {role !== 'salesman' ? (
+                            <td className="customersSalesmanCell">
+                              <span className="customerMetaPill customerMetaPill--subtle">
+                                {profileNameById.get(item.assignedSalesmanId) ?? 'Unassigned'}
+                              </span>
+                            </td>
+                          ) : null}
                           {activeDynamicFields.map((field) => {
                             const val = item.dynamicFields?.[field.key]
                             return (
-                              <td key={field.id} className="customersTagsCell">
+                              <td key={field.id} className="customersTagsCell dynamicFieldCol">
                                 {val ? val : <span className="customerEmptyChip">—</span>}
                               </td>
                             )
@@ -3837,20 +4336,22 @@ function App() {
                   Date
                   <input type="date" value={visitHistoryDateFilter} onChange={(event) => setVisitHistoryDateFilter(event.target.value)} />
                 </label>
-                <label>
-                  Salesman
-                  <select
-                    value={visitHistorySalesmanFilter}
-                    onChange={(event) => setVisitHistorySalesmanFilter(event.target.value)}
-                  >
-                    <option value="all">All</option>
-                    {salesmen.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {role !== 'salesman' ? (
+                  <label>
+                    Salesman
+                    <select
+                      value={visitHistorySalesmanFilter}
+                      onChange={(event) => setVisitHistorySalesmanFilter(event.target.value)}
+                    >
+                      <option value="all">All</option>
+                      {salesmen.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 <label>
                   Client name
                   <input
@@ -3859,127 +4360,179 @@ function App() {
                     placeholder="Search client"
                   />
                 </label>
-                <label>
-                  City
-                  <input
-                    value={visitHistoryCityFilter}
-                    onChange={(event) => setVisitHistoryCityFilter(event.target.value)}
-                    placeholder="Search city"
-                  />
-                </label>
+                {role !== 'salesman' ? (
+                  <label>
+                    City
+                    <input
+                      value={visitHistoryCityFilter}
+                      onChange={(event) => setVisitHistoryCityFilter(event.target.value)}
+                      placeholder="Search city"
+                    />
+                  </label>
+                ) : null}
               </div>
-              <div className="scrollArea">
-                <table>
+              <div className="scrollArea visitsTableWrap">
+                <table className="visitsTable">
                   <thead>
                     <tr>
                       <th>Arrived</th>
                       <th>Ended</th>
-                      <th>Salesman</th>
+                      {role !== 'salesman' ? <th>Salesman</th> : null}
                       <th>Customer</th>
                       <th>City</th>
                       <th>Type</th>
                       <th>GPS</th>
                       <th>Status</th>
+                      {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
                       <th>Photo</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {visitHistoryRows.map((visit) => (
-                      <tr key={visit.id}>
-                        <td>
-                          {visit.visitStartedAt ? formatDateTime(visit.visitStartedAt) : '—'}
-                        </td>
-                        <td>{formatDateTime(visit.capturedAt)}</td>
-                        <td>{visit.salesmanName}</td>
-                        <td>{visit.customerName}</td>
-                        <td>{customerById.get(visit.customerId)?.city ?? '—'}</td>
-                        <td>{visit.visitType}</td>
-                        <td>
-                          {visit.lat.toFixed(4)}, {visit.lng.toFixed(4)} (±{Math.round(visit.accuracy)}m){' '}
-                          <a
-                            href={googleMapsSearchUrl(visit.lat, visit.lng)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="muted"
-                            style={{ fontSize: '0.78rem', marginLeft: '0.35rem' }}
-                          >
-                            Maps
-                          </a>
-                        </td>
-                        <td>{visit.status}</td>
-                        <td>
-                          <button
-                            type="button"
-                            className="secondary"
-                            disabled={!visit.photoDataUrl?.trim() || visitPhotoOpeningId === visit.id}
-                            onClick={() => void openVisitPhoto(visit)}
-                          >
-                            {visitPhotoOpeningId === visit.id ? 'Opening…' : 'View'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-            <article className="card">
-              <div className="rowBetween" style={{ alignItems: 'center' }}>
-                <h3>Client-wise Visit History</h3>
-                {role === 'owner' ? (
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => void exportClientWiseVisitHistoryCsv()}
-                    style={{ display: 'flex', alignItems: 'center' }}
-                  >
-                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: '6px' }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                    Export Data
-                  </button>
-                ) : null}
-              </div>
-              <div className="scrollArea">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Client</th>
-                      <th>City</th>
-                      <th>Total visits</th>
-                      <th>First visit</th>
-                      <th>Last visit</th>
-                      <th>Last visit type</th>
-                      <th>Last salesman</th>
-                      <th>Map</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {clientWiseVisitRows.length === 0 ? (
+                    {visitHistoryRows.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="muted">
+                        <td colSpan={(role !== 'salesman' ? 9 : 8) + activeDynamicFields.length} className="muted">
                           No visits found for the selected filters.
                         </td>
                       </tr>
                     ) : (
-                      clientWiseVisitRows.map((row) => (
-                        <tr key={row.customerId}>
-                          <td>{row.customerName}</td>
-                          <td>{row.city}</td>
-                          <td>{row.visits}</td>
-                          <td>{formatDateTime(row.firstVisitAt)}</td>
-                          <td>{formatDateTime(row.lastVisitAt)}</td>
-                          <td>{row.lastVisitType}</td>
-                          <td>{row.lastSalesmanName}</td>
-                          <td>
-                            <a
-                              href={googleMapsSearchUrl(row.lat, row.lng)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              Maps
-                            </a>
-                          </td>
-                        </tr>
-                      ))
+                      visitHistoryRows.flatMap((visit) => {
+                        const customer = customerById.get(visit.customerId)
+                        const isExpanded = selectedVisitHistoryRowId === visit.id && selectedVisitClientId === visit.customerId
+                        const parentRow = (
+                          <tr key={visit.id}>
+                            <td>
+                              {visit.visitStartedAt ? formatDateTime(visit.visitStartedAt) : '—'}
+                            </td>
+                            <td>{formatDateTime(visit.capturedAt)}</td>
+                            {role !== 'salesman' ? <td>{visit.salesmanName}</td> : null}
+                            <td>
+                              <div className="visitCustomerCell">
+                                <span>{visit.customerName}</span>
+                                <button
+                                  type="button"
+                                  className={`secondary visitHistoryToggle${isExpanded ? ' isOpen' : ''}`}
+                                  title={isExpanded ? 'Hide client history' : 'View client history'}
+                                  aria-label={isExpanded ? 'Hide client history' : 'View client history'}
+                                  onClick={() => {
+                                    if (isExpanded) {
+                                      setSelectedVisitClientId(null)
+                                      setSelectedVisitHistoryRowId(null)
+                                      return
+                                    }
+                                    setSelectedVisitClientId(visit.customerId)
+                                    setSelectedVisitHistoryRowId(visit.id)
+                                  }}
+                                >
+                                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-3.3-6.9M21 4v5h-5" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </td>
+                            <td>{customer?.city ?? '—'}</td>
+                            <td>{visit.visitType}</td>
+                            <td>
+                              {visit.lat.toFixed(4)}, {visit.lng.toFixed(4)} (±{Math.round(visit.accuracy)}m){' '}
+                              <a
+                                href={googleMapsSearchUrl(visit.lat, visit.lng)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="muted"
+                                style={{ fontSize: '0.78rem', marginLeft: '0.35rem' }}
+                              >
+                                Maps
+                              </a>
+                            </td>
+                            <td>{visit.status}</td>
+                            {activeDynamicFields.map((field) => {
+                              const val = visit.dynamicFields?.[field.key] || customer?.dynamicFields?.[field.key]
+                              return <td key={field.id} className="dynamicFieldCol">{val || '—'}</td>
+                            })}
+                            <td>
+                              <button
+                                type="button"
+                                className="secondary"
+                                disabled={!visit.photoDataUrl?.trim() || visitPhotoOpeningId === visit.id}
+                                onClick={() => void openVisitPhoto(visit)}
+                              >
+                                {visitPhotoOpeningId === visit.id ? 'Opening…' : 'View'}
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                        if (!isExpanded) return [parentRow]
+                        const expandedRow = (
+                          <tr key={`${visit.id}-history`} className="visitHistoryExpandedRow">
+                            <td colSpan={(role !== 'salesman' ? 9 : 8) + activeDynamicFields.length}>
+                              <div className="visitHistoryMeta">
+                                <strong>{visit.customerName}</strong>
+                                <span>Total visits: {selectedVisitClientVisits.length}</span>
+                              </div>
+                              <div className="visitHistoryNestedWrap">
+                                <table className="visitHistoryNestedTable visitsTable">
+                                  <thead>
+                                    <tr>
+                                      <th>Arrived</th>
+                                      <th>Ended</th>
+                                      {role !== 'salesman' ? <th>Salesman</th> : null}
+                                      <th>Type</th>
+                                      <th>GPS</th>
+                                      <th>Status</th>
+                                      <th>Notes</th>
+                                      <th>Next Action</th>
+                                      <th>Follow-up</th>
+                                      {activeDynamicFields.map((f) => <th key={`nested-head-${f.id}`} className="dynamicFieldCol">{f.label}</th>)}
+                                      <th>Photo</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {selectedVisitClientVisits.map((clientVisit) => (
+                                      <tr key={`history-${clientVisit.id}`}>
+                                        <td>{clientVisit.visitStartedAt ? formatDateTime(clientVisit.visitStartedAt) : '—'}</td>
+                                        <td>{formatDateTime(clientVisit.capturedAt)}</td>
+                                        {role !== 'salesman' ? <td>{clientVisit.salesmanName}</td> : null}
+                                        <td>{clientVisit.visitType}</td>
+                                        <td>
+                                          {clientVisit.lat.toFixed(4)}, {clientVisit.lng.toFixed(4)} (±{Math.round(clientVisit.accuracy)}m){' '}
+                                          <a
+                                            href={googleMapsSearchUrl(clientVisit.lat, clientVisit.lng)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="muted"
+                                            style={{ fontSize: '0.78rem', marginLeft: '0.35rem' }}
+                                          >
+                                            Maps
+                                          </a>
+                                        </td>
+                                        <td>{clientVisit.status}</td>
+                                        <td className="visitHistoryNotesCell">{clientVisit.notes || '—'}</td>
+                                        <td>{clientVisit.nextAction || '—'}</td>
+                                        <td>{clientVisit.followUpDate ? formatDate(clientVisit.followUpDate) : '—'}</td>
+                                        {activeDynamicFields.map((field) => {
+                                          const customerValue = selectedVisitClient?.dynamicFields?.[field.key]
+                                          const value = clientVisit.dynamicFields?.[field.key] || customerValue
+                                          return <td key={`${clientVisit.id}-${field.id}`} className="dynamicFieldCol">{value || '—'}</td>
+                                        })}
+                                        <td>
+                                          <button
+                                            type="button"
+                                            className="secondary"
+                                            disabled={!clientVisit.photoDataUrl?.trim() || visitPhotoOpeningId === clientVisit.id}
+                                            onClick={() => void openVisitPhoto(clientVisit)}
+                                          >
+                                            {visitPhotoOpeningId === clientVisit.id ? 'Opening…' : 'View'}
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                        return [parentRow, expandedRow]
+                      })
                     )}
                   </tbody>
                 </table>
@@ -4008,6 +4561,12 @@ function App() {
         messageIsError={loginMessageIsError}
         isSigningIn={signingIn}
         onEmailSignIn={(email, password) => void signInWithEmailPassword(email, password)}
+        forgotPasswordMessage={forgotPasswordMessage}
+        forgotPasswordMessageIsError={forgotPasswordMessageIsError}
+        isForgotPasswordBusy={forgotPasswordBusy}
+        onForgotPasswordSendOtp={sendForgotPasswordOtp}
+        onForgotPasswordVerifyOtp={verifyForgotPasswordOtp}
+        onForgotPasswordReset={resetForgotPassword}
       />
     )
   }
@@ -4076,9 +4635,9 @@ function App() {
           </div>
 
           <div className="topControls">
-            {authSession?.user?.email ? (
+            {authSession?.user?.user_metadata?.full_name ? (
               <span className="topUserEmail" title="Signed-in account">
-                {authSession.user.email}
+                {authSession.user.user_metadata.full_name}
               </span>
             ) : null}
             <span className={online ? 'statusTag ok' : 'statusTag warning'}>{online ? 'Online' : 'Offline'}</span>

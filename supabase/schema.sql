@@ -105,8 +105,22 @@ create table if not exists form_fields (
   created_at timestamptz not null default now()
 );
 
+create table if not exists password_reset_otps (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null references profiles(id) on delete cascade,
+  mobile text not null,
+  otp text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_meeting_responses_created_at on meeting_responses (created_at desc);
 create index if not exists idx_form_fields_order on form_fields ("order", created_at);
+create index if not exists idx_password_reset_otps_user on password_reset_otps (user_id, created_at desc);
+create index if not exists idx_password_reset_otps_mobile on password_reset_otps (mobile, created_at desc);
+
+-- Server-side: existing-customer visits must be within 100m of pin; GPS max accuracy via p_max_gps_accuracy_meters.
+alter table password_reset_otps enable row level security;
 
 -- Server-side: existing-customer visits must be within 100m of pin; GPS max accuracy via p_max_gps_accuracy_meters.
 create or replace function public.create_visit_enforced(

@@ -241,6 +241,38 @@ body {
   text-align: center;
 }
 
+.loginForgotFlow {
+  text-align: left;
+}
+
+.loginForgotSuccess {
+  font-size: 0.88rem;
+  color: #166534;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 0.7rem 0.75rem;
+  margin: 0 0 0.5rem;
+}
+
+.forgotPasswordLink {
+  font-size: 0.85rem;
+  color: #2563eb;
+  text-decoration: underline;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.forgotPasswordLink:hover {
+  color: #1d4ed8;
+  background: none;
+}
+
 .loginInlineLink {
   display: inline;
   padding: 0;
@@ -409,7 +441,7 @@ p {
 
 .appShell {
   display: flex;
-  min-height: 100vh;
+  min-height: 90vh;
   background: var(--bg);
   isolation: isolate;
 }
@@ -425,7 +457,7 @@ p {
 }
 
 .sidebarBrand {
-  padding: 1.1rem 1rem 1rem;
+  padding: 1rem;
   border-bottom: 1px solid var(--border);
 }
 
@@ -531,9 +563,8 @@ p {
 .topBar {
   background: var(--surface);
   border: none;
-  border-bottom: 1px solid var(--border);
   border-radius: 0;
-  padding: 0.85rem 1.35rem;
+  padding: 0.7rem 1.35rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -742,7 +773,6 @@ button:focus-visible {
   border: 1px solid var(--border);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
-  overflow: hidden;
 }
 
 .settingsTable {
@@ -784,16 +814,18 @@ button:focus-visible {
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
+  max-height: min(68vh, 560px);
   max-width: 100%;
   overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 
 .followupTable {
-  width: max(100%, 920px);
+  width: max-content;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
   min-width: 920px;
 }
 
@@ -834,6 +866,81 @@ button:focus-visible {
   line-height: 1.35;
   color: var(--text);
   word-break: break-word;
+}
+
+.followupCustomerHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.followupArchiveToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.followupArchiveToggle input {
+  margin: 0;
+}
+
+.switchToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  min-height: 1.8rem;
+  padding: 0.12rem 0.24rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  width: auto;
+  justify-self: start;
+  align-self: start;
+}
+
+.switchToggle .switchTrack {
+  width: 2rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  background: #e5e7eb;
+  border: 1px solid var(--border);
+  padding: 1px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.switchToggle .switchThumb {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transform: translateX(0);
+  transition: transform 0.18s ease;
+}
+
+.switchToggle.isOn .switchTrack {
+  background: #d1d5db;
+}
+
+.switchToggle.isOn .switchThumb {
+  transform: translateX(0.82rem);
+}
+
+.switchToggle:hover {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.switchToggle--compact {
+  min-height: 1.65rem;
 }
 
 .followupCustomerMeta {
@@ -925,6 +1032,33 @@ button:focus-visible {
   word-break: break-word;
 }
 
+.followupRemarksCell {
+  width: 20rem;
+  min-width: 14rem;
+  max-width: 22rem;
+}
+
+.followupRemarksCell .followupRemarks {
+  display: block;
+  overflow: visible;
+  line-clamp: unset;
+  -webkit-box-orient: initial;
+  -webkit-line-clamp: unset;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.followupTable .dynamicFieldCol,
+.customersTable .dynamicFieldCol,
+.visitsTable .dynamicFieldCol {
+  min-width: 10rem;
+  max-width: 12rem;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
 .followupActions,
 .followupEditActions {
   display: flex;
@@ -943,7 +1077,7 @@ button:focus-visible {
 }
 
 .followupEditRow td {
-  padding: 0.8rem 0.55rem 0.9rem;
+  padding: 0.6rem 0.4rem 0.65rem;
   background: linear-gradient(
     180deg,
     rgba(15, 61, 57, 0.02),
@@ -955,39 +1089,83 @@ button:focus-visible {
   border: 1px solid rgba(15, 61, 57, 0.12);
   border-radius: calc(var(--radius-md) - 2px);
   background: rgba(255, 255, 255, 0.8);
-  padding: 0.75rem;
+  padding: 0.6rem;
 }
 
 .followupEditHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.65rem;
+  gap: 0.55rem;
+  margin-bottom: 0.5rem;
+}
+
+.followupEditHeader strong {
+  font-size: 0.85rem;
 }
 
 .followupEditHeader .muted {
-  margin-top: 0.25rem;
+  margin-top: 0.1rem;
+  font-size: 0.72rem;
 }
 
 .followupEditGrid {
   display: grid;
-  gap: 0.55rem 0.65rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.3rem 0.4rem;
+  grid-template-columns: repeat(3, max-content);
+  justify-content: flex-start;
+  align-items: end;
+}
+
+.followupEditGrid label {
+  font-size: 0.72rem;
+  font-weight: 500;
+  max-width: 8rem;
 }
 
 .followupEditGrid label:last-of-type {
   grid-column: 1 / -1;
+  max-width: none;
+}
+
+.followupEditGrid input,
+.followupEditGrid select {
+  font-size: 0.76rem;
+  padding: 0.28rem 0.35rem;
+  min-height: 1.8rem;
+  width: 7.5rem;
+  max-width: 7.5rem;
 }
 
 .followupEditGrid textarea {
-  min-height: 5.75rem;
+  min-height: 3.2rem;
   resize: vertical;
+  font-size: 0.76rem;
+  padding: 0.28rem 0.35rem;
+  width: min(100%, 18rem);
+  max-width: 18rem;
 }
 
 .followupEditActions {
-  margin-top: 0.65rem;
-  justify-content: flex-end;
+  margin-top: 0.5rem;
+  justify-content: flex-start;
+  gap: 0.3rem;
+}
+
+/* Meeting response edit card overrides */
+.meetingEditGrid {
+  row-gap: 0.5rem;
+}
+
+.meetingResponseLabel {
+  grid-column: 1 / -1 !important;
+  max-width: none !important;
+}
+
+.meetingEditGrid .meetingResponseLabel textarea {
+  width: min(100%, 38rem);
+  max-width: 38rem;
+  min-height: 4.5rem;
 }
 
 .customersTableWrap {
@@ -996,16 +1174,18 @@ button:focus-visible {
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
+  max-height: min(68vh, 560px);
   max-width: 100%;
   overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 
 .customersTable {
-  width: max(100%, 860px);
+  width: max-content;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
   min-width: 860px;
 }
 
@@ -1030,6 +1210,76 @@ button:focus-visible {
 
 .customersTable td {
   overflow-wrap: anywhere;
+}
+
+.visitsTable {
+  width: max-content;
+  border-collapse: collapse;
+  table-layout: auto;
+  min-width: 980px;
+}
+
+.visitsTable th,
+.visitsTable td {
+  vertical-align: top;
+}
+
+.visitsTable td {
+  overflow-wrap: anywhere;
+}
+
+.visitCustomerCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.visitHistoryToggle {
+  padding: 0.2rem 0.35rem;
+  line-height: 1;
+}
+
+.visitHistoryToggle.isOpen {
+  background: var(--accent-subtle);
+  border-color: var(--border-hover);
+}
+
+.visitHistoryExpandedRow > td {
+  background: color-mix(in srgb, var(--panel2) 84%, white);
+}
+
+.visitHistoryMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.55rem;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.visitHistoryMeta strong {
+  color: var(--text);
+}
+
+.visitHistoryNestedWrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.visitHistoryNestedTable {
+  width: max-content;
+  min-width: 100%;
+  min-width: 980px;
+}
+
+.visitHistoryNotesCell {
+  min-width: 16rem;
+  max-width: 22rem;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .customersNameCell {
@@ -1404,6 +1654,73 @@ button.secondary.danger:hover {
 
 .scrollArea {
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: min(68vh, 560px);
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scrollAreaSettings {
+  overflow-x: auto;
+}
+
+.overdueTableWrap,
+.meetingResponsesTableWrap {
+  overflow-x: auto;
+}
+
+.overdueTable,
+.meetingResponsesTable {
+  width: max-content;
+  border-collapse: collapse;
+  table-layout: auto;
+  min-width: 1100px;
+}
+
+.overdueTable th,
+.overdueTable td,
+.meetingResponsesTable th,
+.meetingResponsesTable td {
+  padding: 0.6rem 0.65rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.overdueCompactCell,
+.meetingCompactCell {
+  white-space: nowrap;
+}
+
+.overdueLongCell,
+.meetingLongCell {
+  white-space: normal;
+  min-width: 220px;
+  max-width: 28rem;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.overdueTable .dynamicFieldCol,
+.meetingResponsesTable .dynamicFieldCol {
+  min-width: 9rem;
+  max-width: 12rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overdueTable th,
+.meetingResponsesTable th {
+  max-width: 12rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overdueTable th.overdueLongCell,
+.meetingResponsesTable th.meetingLongCell {
+  max-width: 20rem;
 }
 
 table {
@@ -1428,6 +1745,19 @@ th {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   background: var(--accent-subtle);
+}
+
+.scrollArea thead th,
+.settingsTable thead th,
+.followupTable thead th,
+.customersTable thead th,
+.overdueTable thead th,
+.meetingResponsesTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--accent-subtle);
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 
 a {
@@ -1510,28 +1840,88 @@ a:hover {
 .visit-session-banner {
   grid-column: 1 / -1;
   margin-bottom: 0.75rem;
-  padding: 0.75rem 0.85rem;
+  padding: 0.9rem 1rem;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
-  background: var(--accent-subtle);
+  background: linear-gradient(180deg, #f8fafc 0%, #f2f6fb 100%);
 }
 
 .visit-session-banner p {
-  margin: 0 0 0.5rem;
+  margin: 0;
+}
+
+.visitSessionMeta {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.visitSessionStat {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.visitSessionActions {
+  margin-top: 0.6rem;
+}
+
+.visitFormCard {
+  gap: 0.85rem;
+}
+
+.visitFormHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.visitStepIntro {
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: #fafcff;
+}
+
+.visitLockHint {
+  margin: -0.2rem 0 0;
+}
+
+.visitStagePanel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.8rem;
+  background: #fcfdff;
+}
+
+.visitStageMain {
+  grid-column: 1 / -1;
+  margin-bottom: -0.1rem;
+}
+
+.visitStartActions {
+  margin-top: -0.2rem;
 }
 
 .visit-camera-block {
   grid-column: 1 / -1;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 0.85rem;
-  background: var(--accent-subtle);
+  padding: 0.95rem;
+  background: linear-gradient(180deg, #f8fafc 0%, #f2f7ff 100%);
 }
 
 .visit-camera-title {
   font-size: 0.92rem;
-  margin: 0 0 0.35rem;
+  margin: 0 0 0.25rem;
   color: #1e3a5f;
+}
+
+.visitCameraHeader {
+  margin-bottom: 0.5rem;
+}
+
+.visitCameraHeader .muted {
+  margin: 0;
 }
 
 .visit-camera-warn {
@@ -1595,8 +1985,12 @@ a:hover {
   grid-column: 1 / -1;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 0.7rem;
-  background: var(--accent-subtle);
+  padding: 0.8rem;
+  background: #f8fafc;
+}
+
+.visitDynamicHeading {
+  margin: 0 0 0.5rem;
 }
 
 .dynamic-fields-grid,
@@ -1616,6 +2010,14 @@ a:hover {
 
 .visit-submit-btn {
   min-width: 220px;
+}
+
+.visitCameraPreviewWrap {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.65rem;
+  background: #fff;
 }
 
 .dynamicFieldLine {
@@ -1907,7 +2309,11 @@ a:hover {
     bottom: 0;
     z-index: 2;
     padding-top: 0.5rem;
-    background: linear-gradient(to top, var(--surface), rgba(255, 255, 255, 0.92));
+    background: linear-gradient(
+      to top,
+      var(--surface),
+      rgba(255, 255, 255, 0.92)
+    );
   }
 
   .visit-submit-btn {
@@ -1933,8 +2339,34 @@ a:hover {
     width: 100%;
   }
 
+  /* Prevent filter labels from stretching full-width on mobile */
+  .inlineFilters {
+    align-items: flex-start;
+  }
+
+  .inlineFilters label {
+    flex: 0 0 auto;
+    max-width: calc(50% - 0.25rem);
+    min-width: 0;
+    width: calc(50% - 0.25rem);
+  }
+
+  .inlineFilters label input,
+  .inlineFilters label select {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
   .followupTable {
     min-width: 760px;
+  }
+
+  .followupCustomerHead {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
   }
 
   .followupActions,
@@ -1963,35 +2395,63 @@ a:hover {
   }
 
   .followupEditRow td {
-    padding: 0.6rem 0.35rem 0.7rem;
+    padding: 0.4rem 0.25rem 0.45rem;
+    max-width: calc(100vw - 4rem);
   }
 
   .followupEditCard {
-    padding: 0.6rem;
+    padding: 0.5rem;
+    max-width: min(calc(100vw - 4rem), 28rem);
+    box-sizing: border-box;
   }
 
   .followupEditHeader {
     flex-direction: column;
     align-items: stretch;
-    gap: 0.35rem;
+    gap: 0.2rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .followupEditHeader strong {
+    font-size: 0.78rem;
+  }
+
+  .followupEditHeader .muted {
+    font-size: 0.66rem;
+    margin-top: 0;
   }
 
   .followupEditGrid {
     grid-template-columns: 1fr;
-    justify-items: start;
+    justify-items: stretch;
+    gap: 0.2rem 0.15rem;
+  }
+
+  .followupEditGrid label {
+    width: 100%;
+    font-size: 0.68rem;
+    font-weight: 500;
+    max-width: none;
   }
 
   .followupEditGrid label:last-of-type {
     grid-column: auto;
   }
 
-  .followupEditGrid label {
-    width: min(100%, 24rem);
+  .followupEditGrid input,
+  .followupEditGrid select {
+    font-size: 0.7rem;
+    padding: 0.24rem 0.25rem;
+    min-height: 1.6rem;
+    max-width: none;
+    width: 100%;
   }
 
-  .followupEditGrid input,
-  .followupEditGrid select,
   .followupEditGrid textarea {
+    min-height: 2.2rem;
+    font-size: 0.7rem;
+    padding: 0.24rem 0.25rem;
+    max-width: none;
     width: 100%;
   }
 
@@ -2003,6 +2463,19 @@ a:hover {
 
   .customersTable {
     min-width: 720px;
+  }
+
+  .visitsTable {
+    min-width: 860px;
+  }
+
+  .visitHistoryMeta {
+    font-size: 0.7rem;
+  }
+
+  .visitHistoryNotesCell {
+    min-width: 12rem;
+    max-width: 16rem;
   }
 
   .customerActions {
@@ -2052,7 +2525,10 @@ a:hover {
 
 @media (min-width: 901px) {
   .sidebar {
-    position: relative;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    align-self: flex-start;
     z-index: 1;
   }
 }
