@@ -195,11 +195,11 @@ function syncNavToLocation(view: NavId) {
 }
 
 /** Max reported GPS uncertainty allowed for existing-customer visit flows. */
-const GPS_THRESHOLD_METERS = 100
+const GPS_THRESHOLD_METERS = 200
 /** New leads have no prior map pin — keep a slightly tighter GPS expectation. */
-const GPS_THRESHOLD_NEW_LEAD_METERS = 80
+const GPS_THRESHOLD_NEW_LEAD_METERS = 150
 /** Max distance from customer map pin for existing-customer visits. */
-const RADIUS_THRESHOLD_METERS = 100
+const RADIUS_THRESHOLD_METERS = 150
 const INITIAL_CUSTOMERS: Customer[] = [
   {
     id: 'c1',
@@ -410,8 +410,10 @@ function App() {
   const [salesmanFollowUpDateTo, setSalesmanFollowUpDateTo] = useState('')
   const [salesmanFollowUpPriorityFilter, setSalesmanFollowUpPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
   const [salesmanFollowUpArchiveFilter, setSalesmanFollowUpArchiveFilter] = useState(false)
+  const [salesmanFollowUpSalesmanFilter, setSalesmanFollowUpSalesmanFilter] = useState('all')
   const [myCustomersNameFilter, setMyCustomersNameFilter] = useState('')
   const [myCustomersNameFilterDebounced, setMyCustomersNameFilterDebounced] = useState('')
+  const [myCustomersCityFilter, setMyCustomersCityFilter] = useState('all')
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
   const [editingMeetingResponse, setEditingMeetingResponse] = useState<EditingMeetingResponse | null>(null)
   const [archivingFollowUpId, setArchivingFollowUpId] = useState<string | null>(null)
@@ -1031,6 +1033,15 @@ function App() {
     () => followUps.filter((item) => item.salesmanId === activeSalesman.id).sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
     [activeSalesman.id, followUps],
   )
+  const followUpsForFollowupsPage = useMemo(() => {
+    if (role === 'super_salesman') {
+      const base = salesmanFollowUpSalesmanFilter === 'all'
+        ? followUps
+        : followUps.filter((item) => item.salesmanId === salesmanFollowUpSalesmanFilter)
+      return base.slice().sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+    }
+    return followUpsForSalesman
+  }, [role, salesmanFollowUpSalesmanFilter, followUps, followUpsForSalesman])
   const pendingFollowUpsForSalesman = useMemo(
     () => followUpsForSalesman.filter((item) => !item.archived && item.status !== 'closed'),
     [followUpsForSalesman],
@@ -1110,7 +1121,7 @@ function App() {
   )
   const filteredFollowUpsForSalesman = useMemo(
     () => {
-      return followUpsForSalesman.filter((item) => {
+      return followUpsForFollowupsPage.filter((item) => {
         const onOrAfterFrom = salesmanFollowUpDateFrom ? item.dueDate >= salesmanFollowUpDateFrom : true
         const onOrBeforeTo = salesmanFollowUpDateTo ? item.dueDate <= salesmanFollowUpDateTo : true
         const priorityOk = salesmanFollowUpPriorityFilter === 'all' ? true : item.priority === salesmanFollowUpPriorityFilter
@@ -1119,7 +1130,7 @@ function App() {
       })
     },
     [
-      followUpsForSalesman,
+      followUpsForFollowupsPage,
       salesmanFollowUpDateFrom,
       salesmanFollowUpDateTo,
       salesmanFollowUpPriorityFilter,
@@ -1137,10 +1148,22 @@ function App() {
   }, [followUps])
   const archivedFollowUpsForSalesman = useMemo(
     () =>
-      followUpsForSalesman
+      followUpsForFollowupsPage
         .filter((item) => item.archived)
         .sort((a, b) => b.dueDate.localeCompare(a.dueDate)),
-    [followUpsForSalesman],
+    [followUpsForFollowupsPage],
+  )
+  const pendingFollowUpsForPage = useMemo(
+    () => followUpsForFollowupsPage.filter((item) => !item.archived && item.status !== 'closed'),
+    [followUpsForFollowupsPage],
+  )
+  const followUpsDueTodayForPage = useMemo(
+    () => pendingFollowUpsForPage.filter((item) => item.dueDate === todayIso),
+    [pendingFollowUpsForPage, todayIso],
+  )
+  const overdueFollowUpsForPage = useMemo(
+    () => pendingFollowUpsForPage.filter((item) => item.dueDate < todayIso),
+    [pendingFollowUpsForPage, todayIso],
   )
   const syncedVisits = useMemo(() => {
     const byId = new Map<string, VisitRecord>()
@@ -1191,11 +1214,18 @@ function App() {
     return byId
   }, [teamProfiles])
 
+  const myCustomerCities = useMemo(() => {
+    const cities = [...new Set(myCustomers.map((c) => c.city).filter(Boolean))]
+    return cities.sort((a, b) => a.localeCompare(b))
+  }, [myCustomers])
   const filteredMyCustomers = useMemo(() => {
     const q = myCustomersNameFilterDebounced.trim().toLowerCase()
-    if (!q) return myCustomers
-    return myCustomers.filter((item) => item.name.toLowerCase().includes(q))
-  }, [myCustomers, myCustomersNameFilterDebounced])
+    return myCustomers.filter((item) => {
+      const nameOk = q ? item.name.toLowerCase().includes(q) : true
+      const cityOk = myCustomersCityFilter === 'all' ? true : item.city === myCustomersCityFilter
+      return nameOk && cityOk
+    })
+  }, [myCustomers, myCustomersNameFilterDebounced, myCustomersCityFilter])
 
   const filteredCustomerSuggestions = useMemo(() => {
     const q = visitCustomerSearch.trim().toLowerCase()
@@ -2746,12 +2776,12 @@ function App() {
       {!visitSession ? (
         <div className="formGrid visitStagePanel">
           <label>
-            Customer
+            Shop name
             <input
               list="existing-customer-suggestions"
               value={visitCustomerSearch}
               onChange={(event) => handleCustomerSearchChange(event.target.value)}
-              placeholder="Type customer name (suggestions for existing customers)"
+              placeholder="Type shop name (suggestions for existing)"
             />
             <datalist id="existing-customer-suggestions">
               {filteredCustomerSuggestions.map((item) => (
@@ -2789,7 +2819,7 @@ function App() {
         <div className="formGrid visitStagePanel">
           <div className="visitStageMain">
             <p className="muted">
-              <strong>Customer:</strong> {visitSessionCustomerLabel}
+              <strong>Shop name:</strong> {visitSessionCustomerLabel}
               <br />
               <strong>Visit type:</strong> {visitSession.visitType}
               <br />
@@ -3982,6 +4012,20 @@ function App() {
                     <option value="low">Low</option>
                   </select>
                 </label>
+                {role === 'super_salesman' && (
+                  <label>
+                    Salesman
+                    <select
+                      value={salesmanFollowUpSalesmanFilter}
+                      onChange={(event) => setSalesmanFollowUpSalesmanFilter(event.target.value)}
+                    >
+                      <option value="all">All salesmen</option>
+                      {salesmen.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <label>
                   Archived
                   <button
@@ -3997,7 +4041,7 @@ function App() {
                 </label>
               </div>
               <p className="muted">
-                Due today: {followUpsDueTodayForSalesman.length} · Overdue: {overdueFollowUpsForSalesman.length} · Archived:{' '}
+                Due today: {followUpsDueTodayForPage.length} · Overdue: {overdueFollowUpsForPage.length} · Archived:{' '}
                 {archivedFollowUpsForSalesman.length}
               </p>
               <div className="followupTableWrap">
@@ -4235,6 +4279,18 @@ function App() {
               </label>
             </div>
             <article className="card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '0.8rem' }}>
+                <select
+                  style={{ fontSize: '0.8rem' }}
+                  value={myCustomersCityFilter}
+                  onChange={(event) => setMyCustomersCityFilter(event.target.value)}
+                >
+                  <option value="all">All cities</option>
+                  {myCustomerCities.map((city) => (
+                    <option key={city} value={city}>{city}</option>
+                  ))}
+                </select>
+              </div>
               <div className="customersTableWrap">
                 <table className="customersTable">
                   <thead>
