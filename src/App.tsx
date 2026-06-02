@@ -365,7 +365,9 @@ function App() {
   const [message, setMessage] = useState('')
   /** Shown only on Settings; avoids a global banner after the invitee signs in. */
   const [inviteSuccessMessage, setInviteSuccessMessage] = useState('')
-  const [kpiDateFilter, setKpiDateFilter] = useState('')
+  const [kpiDateRangeType, setKpiDateRangeType] = useState('all_time')
+  const [kpiCustomStartDate, setKpiCustomStartDate] = useState('')
+  const [kpiCustomEndDate, setKpiCustomEndDate] = useState('')
   const [kpiSalesmanFilter, setKpiSalesmanFilter] = useState('all')
   const [activeView, setActiveView] = useState<NavId>(parseNavFromLocation)
   const [inviteSourceReady, setInviteSourceReady] = useState(() => !supabaseEnabled)
@@ -398,6 +400,8 @@ function App() {
   const [selectedVisitHistoryRowId, setSelectedVisitHistoryRowId] = useState<string | null>(null)
   const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
   const [overdueSalesmanFilter, setOverdueSalesmanFilter] = useState('all')
+  const [overdueSummarySortCol, setOverdueSummarySortCol] = useState<'smName'|'assigned'|'dueToday'|'overdue'>('overdue')
+  const [overdueSummarySortDesc, setOverdueSummarySortDesc] = useState(true)
   const [meetingDateFilter, setMeetingDateFilter] = useState('')
   const [meetingSalesmanFilter, setMeetingSalesmanFilter] = useState('all')
   const [newFieldLabel, setNewFieldLabel] = useState('')
@@ -411,19 +415,32 @@ function App() {
   const [salesmanFollowUpPriorityFilter, setSalesmanFollowUpPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
   const [salesmanFollowUpArchiveFilter, setSalesmanFollowUpArchiveFilter] = useState(false)
   const [salesmanFollowUpSalesmanFilter, setSalesmanFollowUpSalesmanFilter] = useState('all')
+  const [salesmanFollowUpCustomerFilter, setSalesmanFollowUpCustomerFilter] = useState('')
+  const [salesmanFollowUpCustomerFilterDebounced, setSalesmanFollowUpCustomerFilterDebounced] = useState('')
   const [myCustomersNameFilter, setMyCustomersNameFilter] = useState('')
   const [myCustomersNameFilterDebounced, setMyCustomersNameFilterDebounced] = useState('')
   const [myCustomersCityFilter, setMyCustomersCityFilter] = useState('all')
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
   const [editingMeetingResponse, setEditingMeetingResponse] = useState<EditingMeetingResponse | null>(null)
   const [archivingFollowUpId, setArchivingFollowUpId] = useState<string | null>(null)
-
+  
+  const [showNewLeadModal, setShowNewLeadModal] = useState(false)
+  const [savingNewLead, setSavingNewLead] = useState(false)
+  const [newLeadForm, setNewLeadForm] = useState({
+    name: '',
+    phone: '',
+    city: '',
+    priority: 'medium' as FollowUp['priority'],
+    remarks: '',
+    dueDate: ''
+  })
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       setMyCustomersNameFilterDebounced(myCustomersNameFilter)
+      setSalesmanFollowUpCustomerFilterDebounced(salesmanFollowUpCustomerFilter)
     }, 800)
     return () => window.clearTimeout(timeoutId)
-  }, [myCustomersNameFilter])
+  }, [myCustomersNameFilter, salesmanFollowUpCustomerFilter])
 
   const salesmen = useMemo(
     () =>
@@ -432,6 +449,10 @@ function App() {
         .map((p) => ({ id: p.id, name: p.fullName })),
     [teamProfiles],
   )
+  
+  const uniqueCities = useMemo(() => {
+    return [...new Set(customers.map(c => c.city).filter(Boolean))].sort()
+  }, [customers])
 
   const accessAllowed = useMemo(() => {
     const email = authSession?.user?.email
@@ -1095,6 +1116,25 @@ function App() {
     [overdueRowsDetailed, overdueSalesmanFilter],
   )
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), [])
+  const overdueSummaryStats = useMemo(() => {
+    const stats = salesmen.map(sm => {
+      const smFollowUps = followUps.filter(f => f.salesmanId === sm.id && f.status !== 'closed' && !f.archived)
+      const assigned = smFollowUps.length
+      const dueToday = smFollowUps.filter(f => f.dueDate === todayIso).length
+      const overdue = smFollowUps.filter(f => f.dueDate < todayIso).length
+      return { smId: sm.id, smName: sm.name, assigned, dueToday, overdue }
+    })
+    stats.sort((a, b) => {
+      let diff = 0
+      if (overdueSummarySortCol === 'smName') {
+        diff = a.smName.localeCompare(b.smName)
+      } else {
+        diff = a[overdueSummarySortCol] - b[overdueSummarySortCol]
+      }
+      return overdueSummarySortDesc ? -diff : diff
+    })
+    return stats
+  }, [salesmen, followUps, todayIso, overdueSummarySortCol, overdueSummarySortDesc])
   const followUpsDueTodayForSalesman = useMemo(
     () => pendingFollowUpsForSalesman.filter((item) => item.dueDate === todayIso),
     [pendingFollowUpsForSalesman, todayIso],
@@ -1105,11 +1145,17 @@ function App() {
   )
   const filteredPendingFollowUpsForSalesman = useMemo(
     () => {
+      const lowerSearch = salesmanFollowUpCustomerFilterDebounced.trim().toLowerCase()
       return pendingFollowUpsForSalesman.filter((item) => {
         const onOrAfterFrom = salesmanFollowUpDateFrom ? item.dueDate >= salesmanFollowUpDateFrom : true
         const onOrBeforeTo = salesmanFollowUpDateTo ? item.dueDate <= salesmanFollowUpDateTo : true
         const priorityOk = salesmanFollowUpPriorityFilter === 'all' ? true : item.priority === salesmanFollowUpPriorityFilter
-        return onOrAfterFrom && onOrBeforeTo && priorityOk
+        let customerMatch = true
+        if (lowerSearch) {
+          const customer = customers.find((c) => c.id === item.customerId)
+          customerMatch = !!customer && customer.name.toLowerCase().includes(lowerSearch)
+        }
+        return onOrAfterFrom && onOrBeforeTo && priorityOk && customerMatch
       })
     },
     [
@@ -1117,16 +1163,24 @@ function App() {
       salesmanFollowUpDateFrom,
       salesmanFollowUpDateTo,
       salesmanFollowUpPriorityFilter,
+      salesmanFollowUpCustomerFilterDebounced,
+      customers,
     ],
   )
   const filteredFollowUpsForSalesman = useMemo(
     () => {
+      const lowerSearch = salesmanFollowUpCustomerFilterDebounced.trim().toLowerCase()
       return followUpsForFollowupsPage.filter((item) => {
         const onOrAfterFrom = salesmanFollowUpDateFrom ? item.dueDate >= salesmanFollowUpDateFrom : true
         const onOrBeforeTo = salesmanFollowUpDateTo ? item.dueDate <= salesmanFollowUpDateTo : true
         const priorityOk = salesmanFollowUpPriorityFilter === 'all' ? true : item.priority === salesmanFollowUpPriorityFilter
         const archiveOk = salesmanFollowUpArchiveFilter ? item.archived : !item.archived
-        return onOrAfterFrom && onOrBeforeTo && priorityOk && archiveOk
+        let customerMatch = true
+        if (lowerSearch) {
+          const customer = customers.find((c) => c.id === item.customerId)
+          customerMatch = !!customer && customer.name.toLowerCase().includes(lowerSearch)
+        }
+        return onOrAfterFrom && onOrBeforeTo && priorityOk && archiveOk && customerMatch
       })
     },
     [
@@ -1135,6 +1189,8 @@ function App() {
       salesmanFollowUpDateTo,
       salesmanFollowUpPriorityFilter,
       salesmanFollowUpArchiveFilter,
+      salesmanFollowUpCustomerFilterDebounced,
+      customers,
     ],
   )
   const openFollowUpsCount = useMemo(() => {
@@ -1177,10 +1233,32 @@ function App() {
     [syncedVisits, todayIso],
   )
   const kpiRows = useMemo(() => kpiFromVisits(visits, salesmen), [visits, salesmen])
-  const filteredKpiRows = useMemo(
-    () => kpiRows.filter((row) => (!kpiDateFilter || row.date === kpiDateFilter) && (kpiSalesmanFilter === 'all' || row.salesmanId === kpiSalesmanFilter)),
-    [kpiDateFilter, kpiRows, kpiSalesmanFilter],
-  )
+  const filteredKpiRows = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const d = new Date()
+    d.setDate(d.getDate() - 7)
+    const sevenDaysAgoStr = d.toISOString().slice(0, 10)
+    
+    const d30 = new Date()
+    d30.setDate(d30.getDate() - 30)
+    const thirtyDaysAgoStr = d30.toISOString().slice(0, 10)
+
+    return kpiRows.filter((row) => {
+      const salesmanOk = kpiSalesmanFilter === 'all' || row.salesmanId === kpiSalesmanFilter
+      if (!salesmanOk) return false
+      
+      if (kpiDateRangeType === 'all_time') return true
+      if (kpiDateRangeType === 'today') return row.date === todayStr
+      if (kpiDateRangeType === 'last_7_days') return row.date >= sevenDaysAgoStr && row.date <= todayStr
+      if (kpiDateRangeType === 'last_30_days') return row.date >= thirtyDaysAgoStr && row.date <= todayStr
+      if (kpiDateRangeType === 'custom') {
+        const startOk = kpiCustomStartDate ? row.date >= kpiCustomStartDate : true
+        const endOk = kpiCustomEndDate ? row.date <= kpiCustomEndDate : true
+        return startOk && endOk
+      }
+      return true
+    })
+  }, [kpiDateRangeType, kpiCustomStartDate, kpiCustomEndDate, kpiRows, kpiSalesmanFilter])
 
   const dedupedCustomers = useMemo(() => {
     const seen = new Map<string, Customer>()
@@ -1816,6 +1894,91 @@ function App() {
     }
     setArchivingFollowUpId(null)
   }
+
+  const handleSaveNewLead = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newLeadForm.name.trim()) return setMessage('Customer Name is required.')
+    if (!newLeadForm.phone.trim() || !/^\d{10}$/.test(newLeadForm.phone.trim())) {
+      return setMessage('Mobile Number must be exactly 10 digits.')
+    }
+    if (!newLeadForm.city.trim()) return setMessage('City is required.')
+    if (!newLeadForm.dueDate) return setMessage('Follow-up Date is required.')
+    if (!activeSalesman) return setMessage('No active salesman context found.')
+
+    setSavingNewLead(true)
+    setMessage('')
+
+    const newCustomerId = `c-${Date.now()}`
+    const newCustomer: Customer = {
+      id: newCustomerId,
+      name: newLeadForm.name.trim(),
+      phone: newLeadForm.phone.trim(),
+      whatsapp: newLeadForm.phone.trim(),
+      address: '',
+      city: newLeadForm.city.trim(),
+      tags: ['New Lead'],
+      dynamicFields: {},
+      assignedSalesmanId: activeSalesman.id,
+      lat: 0,
+      lng: 0,
+    }
+
+    const newFollowUpId = `f-${Date.now()}`
+    const newFollowUp: FollowUp = {
+      id: newFollowUpId,
+      customerId: newCustomerId,
+      dueDate: newLeadForm.dueDate,
+      priority: newLeadForm.priority,
+      status: 'pending',
+      archived: false,
+      remarks: newLeadForm.remarks.trim(),
+      salesmanId: activeSalesman.id,
+    }
+
+    setCustomers((prev) => [newCustomer, ...prev])
+    setFollowUps((prev) => [newFollowUp, ...prev])
+
+    if (supabase && online) {
+      const { error: customerError } = await supabase.from('customers').upsert({
+        id: newCustomer.id,
+        name: newCustomer.name,
+        phone: newCustomer.phone,
+        whatsapp: newCustomer.whatsapp,
+        address: newCustomer.address,
+        city: newCustomer.city,
+        tags: newCustomer.tags,
+        dynamic_fields: newCustomer.dynamicFields,
+        assigned_salesman_id: newCustomer.assignedSalesmanId,
+        lat: newCustomer.lat,
+        lng: newCustomer.lng,
+      })
+      if (customerError) {
+        setSavingNewLead(false)
+        return setMessage(`Lead customer save failed: ${customerError.message}`)
+      }
+
+      const { error: followUpError } = await supabase.from('followups').upsert({
+        id: newFollowUp.id,
+        customer_id: newFollowUp.customerId,
+        salesman_id: newFollowUp.salesmanId,
+        due_date: newFollowUp.dueDate,
+        priority: newFollowUp.priority,
+        status: newFollowUp.status,
+        archived: newFollowUp.archived,
+        remarks: newFollowUp.remarks,
+      })
+      if (followUpError) {
+        setSavingNewLead(false)
+        return setMessage(`Lead follow-up save failed: ${followUpError.message}`)
+      }
+    }
+
+    setSavingNewLead(false)
+    setShowNewLeadModal(false)
+    setNewLeadForm({ name: '', phone: '', city: '', priority: 'medium', remarks: '', dueDate: '' })
+    setMessage('Lead captured successfully!')
+  }
+
 
   const saveFollowUpEdit = async (updatedParam: FollowUp) => {
     const updated = updatedParam.status === 'closed' ? { ...updatedParam, archived: true } : updatedParam
@@ -3138,10 +3301,71 @@ function App() {
             <div className="grid single">{visitFormCard}</div>
           </section>
         )
-      case 'admin_overdue':
+      case 'admin_overdue': {
+        const toggleOverdueSummarySort = (col: 'smName' | 'assigned' | 'dueToday' | 'overdue') => {
+          if (overdueSummarySortCol === col) {
+            setOverdueSummarySortDesc(!overdueSummarySortDesc)
+          } else {
+            setOverdueSummarySortCol(col)
+            setOverdueSummarySortDesc(col !== 'smName')
+          }
+        }
+        const riskColor = (value: number, type: 'dueToday' | 'overdue' | 'assigned') => {
+          if (type === 'overdue') return value > 0 ? '#dc2626' : '#16a34a'
+          if (type === 'dueToday') return value > 0 ? '#d97706' : '#16a34a'
+          return '#0f172a'
+        }
         return (
           <section className="panel">
             <h2>Overdue follow-ups</h2>
+            <article className="card" style={{ marginBottom: '1.25rem' }}>
+              <div className="scrollArea">
+                <table className="settingsTable summarySortableTable">
+                  <thead>
+                    <tr>
+                      {([['smName', 'Salesman'], ['assigned', 'Assigned'], ['dueToday', 'Due Today'], ['overdue', 'Overdue']] as const).map(([col, label]) => (
+                        <th key={col} className="sortableHeader" onClick={() => toggleOverdueSummarySort(col)}>
+                          {label}
+                          {overdueSummarySortCol === col
+                            ? <span className="sortArrow active">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                  {overdueSummarySortDesc
+                                    ? <path d="M6 8.5L1.5 3.5h9L6 8.5z"/>
+                                    : <path d="M6 3.5l4.5 5h-9L6 3.5z"/>}
+                                </svg>
+                              </span>
+                            : <span className="sortArrow">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                  <path d="M6 2l3 3.5H3L6 2zM6 10L3 6.5h6L6 10z"/>
+                                </svg>
+                              </span>}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {overdueSummaryStats.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="muted">No salesmen found.</td>
+                      </tr>
+                    ) : (
+                      overdueSummaryStats.map((row) => (
+                        <tr 
+                          key={row.smId} 
+                          className={`clickableRow ${overdueSalesmanFilter === row.smId ? 'activeRow' : ''}`}
+                          onClick={() => setOverdueSalesmanFilter(prev => prev === row.smId ? 'all' : row.smId)}
+                        >
+                          <td style={{ fontWeight: 500 }}>{row.smName}</td>
+                          <td style={{ fontWeight: 600, color: riskColor(row.assigned, 'assigned') }}>{row.assigned}</td>
+                          <td style={{ fontWeight: 600, color: riskColor(row.dueToday, 'dueToday') }}>{row.dueToday}</td>
+                          <td style={{ fontWeight: 600, color: riskColor(row.overdue, 'overdue') }}>{row.overdue}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
             <article className="card">
               <div className="inlineFilters">
                 <label>
@@ -3317,6 +3541,7 @@ function App() {
             </article>
           </section>
         )
+      }
       case 'admin_meetings':
         return (
           <section className="panel">
@@ -3936,15 +4161,52 @@ function App() {
               <div className="rowBetween">
                 <h3>Filters</h3>
                 <div className="inlineFilters">
-                  <input type="date" value={kpiDateFilter} onChange={(event) => setKpiDateFilter(event.target.value)} />
-                  <select value={kpiSalesmanFilter} onChange={(event) => setKpiSalesmanFilter(event.target.value)}>
-                    <option value="all">All salesmen</option>
-                    {salesmen.map((item) => (
-                      <option value={item.id} key={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
+                  <label>
+                    Date range
+                    <select value={kpiDateRangeType} onChange={(event) => setKpiDateRangeType(event.target.value)}>
+                      <option value="all_time">All Time</option>
+                      <option value="today">Today</option>
+                      <option value="last_7_days">Last 7 Days</option>
+                      <option value="last_30_days">Last 30 Days</option>
+                      <option value="custom">Custom Range</option>
+                    </select>
+                  </label>
+                  {kpiDateRangeType === 'custom' && (
+                    <>
+                      <label>
+                        From
+                        <input 
+                          type="date" 
+                          value={kpiCustomStartDate} 
+                          max={todayIso}
+                          onChange={(event) => setKpiCustomStartDate(event.target.value)} 
+                          title="Start Date"
+                        />
+                      </label>
+                      <label>
+                        To
+                        <input 
+                          type="date" 
+                          value={kpiCustomEndDate} 
+                          min={kpiCustomStartDate}
+                          max={todayIso}
+                          onChange={(event) => setKpiCustomEndDate(event.target.value)} 
+                          title="End Date"
+                        />
+                      </label>
+                    </>
+                  )}
+                  <label>
+                    Salesman
+                    <select value={kpiSalesmanFilter} onChange={(event) => setKpiSalesmanFilter(event.target.value)}>
+                      <option value="all">All salesmen</option>
+                      {salesmen.map((item) => (
+                        <option value={item.id} key={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
               </div>
               <div className="scrollArea">
@@ -3960,16 +4222,24 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredKpiRows.map((item) => (
-                      <tr key={`${item.salesmanId}-${item.date}`}>
-                        <td>{formatDate(item.date)}</td>
-                        <td>{item.salesmanName}</td>
-                        <td>{item.visitCount}</td>
-                        <td>{item.firstVisitTime}</td>
-                        <td>{item.lastVisitTime}</td>
-                        <td>{item.totalWorkingHours}</td>
+                    {filteredKpiRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
+                          No KPI data available for selected filters.
+                        </td>
                       </tr>
-                    ))}
+                    ) : (
+                      filteredKpiRows.map((item) => (
+                        <tr key={`${item.salesmanId}-${item.date}`}>
+                          <td>{formatDate(item.date)}</td>
+                          <td>{item.salesmanName}</td>
+                          <td>{item.visitCount}</td>
+                          <td>{item.firstVisitTime}</td>
+                          <td>{item.lastVisitTime}</td>
+                          <td>{item.totalWorkingHours}</td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -3979,7 +4249,12 @@ function App() {
       case 'field_followups':
         return (
           <section className="panel">
-            <h2>Pending follow-ups</h2>
+            <div className="rowBetween" style={{ alignItems: 'center' }}>
+              <h2>Pending follow-ups</h2>
+              <button type="button" className="primary" onClick={() => setShowNewLeadModal(true)}>
+                + New Lead
+              </button>
+            </div>
             <article className="card">
               <div className="inlineFilters">
                 <label>
@@ -4011,6 +4286,15 @@ function App() {
                     <option value="medium">Medium</option>
                     <option value="low">Low</option>
                   </select>
+                </label>
+                <label>
+                  Customer Search
+                  <input
+                    type="text"
+                    placeholder="Search by name..."
+                    value={salesmanFollowUpCustomerFilter}
+                    onChange={(event) => setSalesmanFollowUpCustomerFilter(event.target.value)}
+                  />
                 </label>
                 {role === 'super_salesman' && (
                   <label>
@@ -4731,6 +5015,91 @@ function App() {
               alt="Visit photo captured in the field"
               className="visitPhotoModalImg"
             />
+          </div>
+        </div>
+      ) : null}
+
+      {showNewLeadModal ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => setShowNewLeadModal(false)}>
+          <div className="modalCard" onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader">
+              <h2>+ New Lead</h2>
+            </div>
+            <div className="modalBody">
+              <form id="newLeadForm" className="grid single" onSubmit={handleSaveNewLead}>
+                <label>
+                  Customer Name *
+                  <input
+                    type="text"
+                    required
+                    value={newLeadForm.name}
+                    onChange={(e) => setNewLeadForm(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                </label>
+                <label>
+                  Mobile Number *
+                  <input
+                    type="text"
+                    required
+                    pattern="[0-9]{10}"
+                    title="Must be exactly 10 digits"
+                    value={newLeadForm.phone}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 10)
+                      setNewLeadForm(prev => ({ ...prev, phone: val }))
+                    }}
+                  />
+                </label>
+                <label>
+                  City *
+                  <input
+                    type="text"
+                    required
+                    list="uniqueCitiesDatalist"
+                    value={newLeadForm.city}
+                    onChange={(e) => setNewLeadForm(prev => ({ ...prev, city: e.target.value }))}
+                  />
+                  <datalist id="uniqueCitiesDatalist">
+                    {uniqueCities.map(city => <option key={city} value={city} />)}
+                  </datalist>
+                </label>
+                <label>
+                  Priority
+                  <select
+                    value={newLeadForm.priority}
+                    onChange={(e) => setNewLeadForm(prev => ({ ...prev, priority: e.target.value as FollowUp['priority'] }))}
+                  >
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                </label>
+                <label>
+                  Remark
+                  <textarea
+                    rows={3}
+                    value={newLeadForm.remarks}
+                    onChange={(e) => setNewLeadForm(prev => ({ ...prev, remarks: e.target.value }))}
+                  />
+                </label>
+                <label>
+                  Follow-up Date *
+                  <input
+                    type="date"
+                    required
+                    min={new Date().toISOString().slice(0, 10)}
+                    value={newLeadForm.dueDate}
+                    onChange={(e) => setNewLeadForm(prev => ({ ...prev, dueDate: e.target.value }))}
+                  />
+                </label>
+              </form>
+            </div>
+            <div className="modalFooter">
+              <button type="button" className="secondary" onClick={() => setShowNewLeadModal(false)}>Cancel</button>
+              <button type="submit" form="newLeadForm" className="primary" disabled={savingNewLead}>
+                {savingNewLead ? 'Saving...' : 'Save Lead'}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

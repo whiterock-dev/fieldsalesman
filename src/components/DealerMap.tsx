@@ -162,7 +162,7 @@ export function DealerMap({
       <MapContainer
         center={center}
         zoom={zoom}
-        scrollWheelZoom={false}
+        scrollWheelZoom
         touchZoom
         zoomControl
         className="dealer-map"
