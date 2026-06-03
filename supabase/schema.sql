@@ -33,6 +33,7 @@ create table if not exists customers (
   dynamic_fields jsonb not null default '{}'::jsonb,
   lat double precision not null,
   lng double precision not null,
+  updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
 
@@ -227,3 +228,41 @@ $$;
 -- Add row level security policies to match your exact access model.
 -- This file keeps policies intentionally minimal for initial setup.
 
+
+-- Customer edit audit log
+create table if not exists customer_edit_log (
+  id uuid primary key default gen_random_uuid(),
+  customer_id text not null references customers(id) on delete cascade,
+  edited_by text not null references profiles(id),
+  edited_at timestamptz not null default now(),
+  changed_fields jsonb not null default '{}'::jsonb
+);
+
+create index if not exists idx_customer_edit_log_customer on customer_edit_log(customer_id, edited_at desc);
+
+-- Realtime
+alter publication supabase_realtime add table customer_edit_log;
+
+-- Enable RLS on audit log
+ALTER TABLE customer_edit_log ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Admins and super_salesman can view all edit logs" ON customer_edit_log
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM profiles 
+      WHERE profiles.id = auth.uid()::text 
+      AND profiles.role IN ('owner', 'sub_admin', 'super_salesman')
+    )
+  );
+
+CREATE POLICY "Salesman can view logs for their assigned customers" ON customer_edit_log
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM customers
+      WHERE customers.id = customer_edit_log.customer_id
+      AND customers.assigned_salesman_id = auth.uid()::text
+    )
+  );
+
+CREATE POLICY "Users can insert edit logs" ON customer_edit_log
+  FOR INSERT WITH CHECK (auth.uid()::text = edited_by);

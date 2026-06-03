@@ -17,6 +17,10 @@ const DealerMap = lazy(async () => {
   const module = await import('./components/DealerMap')
   return { default: module.DealerMap }
 })
+const CustomerDatabase = lazy(async () => {
+  const module = await import('./components/CustomerDatabase')
+  return { default: module.CustomerDatabase }
+})
 const OFFLINE_VISIT_QUEUE_KEY = 'fs_offline_queued_visits'
 
 async function resolveVisitPhotoSrc(client: SupabaseClient, stored: string): Promise<string | null> {
@@ -49,6 +53,7 @@ type Customer = {
   lat: number
   lng: number
   dynamicFields?: Record<string, string>
+  updatedAt?: string
 }
 type FollowUp = {
   id: string
@@ -134,6 +139,7 @@ type NavId =
   | 'admin_overdue'
   | 'admin_meetings'
   | 'admin_kpi'
+  | 'admin_customers'
   | 'settings'
   | 'field_followups'
   | 'field_tracking'
@@ -155,6 +161,7 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
   { id: 'admin_overdue', label: 'Overdue follow-ups', section: 'Admin', show: (r) => r !== 'salesman' },
   { id: 'admin_meetings', label: 'Meeting responses', section: 'Admin', show: () => true },
   { id: 'admin_kpi', label: 'KPI table', section: 'Admin', show: (r) => r !== 'salesman' },
+  { id: 'admin_customers', label: 'Customer database', section: 'Admin', show: () => true },
   { id: 'settings', label: 'Settings', section: 'Account', show: () => true },
   { id: 'visits', label: 'Visit history', section: 'Overview', show: () => true },
 ]
@@ -890,6 +897,7 @@ function App() {
         lat: Number(r.lat),
         lng: Number(r.lng),
         dynamicFields: toDynamicFieldsObject(r.dynamic_fields),
+        updatedAt: ((r as Record<string, unknown>).updated_at as string) ?? undefined,
       }))
       setCustomers(customersMapped)
 
@@ -4547,6 +4555,21 @@ function App() {
               </article>
             ) : null}
           </section>
+        )
+      case 'admin_customers':
+        return (
+          <Suspense fallback={<section className="panel"><p>Loading customer database…</p></section>}>
+            <CustomerDatabase
+              customers={dedupedCustomers}
+              salesmen={salesmen}
+              formFields={formFields}
+              profileNameById={profileNameById}
+              role={role}
+              activeSalesmanId={activeSalesmanId}
+              currentUserId={authSession?.user?.id ?? ''}
+              onDataChanged={() => scheduleWorkspaceReloadRef.current?.()}
+            />
+          </Suspense>
         )
       case 'field_customers':
         return (
