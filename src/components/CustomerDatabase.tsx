@@ -461,11 +461,11 @@ export function CustomerDatabase({
         if (toUpsert.length === 0) throw new Error('No valid rows found to import.')
 
         setCsvMessage(`Importing ${toUpsert.length} records...`)
-        const { error } = await supabase.from('customers').upsert(toUpsert)
+        const { error } = await supabase!.from('customers').upsert(toUpsert)
         if (error) throw error
 
         if (auditLogsToInsert.length > 0) {
-          const { error: auditErr } = await supabase.from('customer_edit_log').insert(auditLogsToInsert)
+          const { error: auditErr } = await supabase!.from('customer_edit_log').insert(auditLogsToInsert)
           if (auditErr) console.warn('CSV bulk audit write failed:', auditErr)
         }
 
