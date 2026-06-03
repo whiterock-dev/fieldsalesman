@@ -2641,3 +2641,392 @@ a:hover {
   background: var(--panel-bg);
   border-radius: 0 0 12px 12px;
 }
+
+/* =======================================================
+   Customer Database Section
+   ======================================================= */
+
+.cdHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.cdHeader h2 {
+  margin: 0;
+}
+
+.cdExportBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.cdFiltersCard {
+  margin-bottom: 0.75rem;
+}
+
+.cdFilterBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem 0.75rem;
+}
+
+.cdFilterItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.cdFilterLabel {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.cdFilterSearch {
+  flex: 1 1 220px;
+  max-width: 320px;
+}
+
+.cdSearchInput {
+  width: 100%;
+  padding: 0.42rem 0.6rem;
+  font-size: 0.82rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cdSearchInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2.5px rgba(37, 99, 235, 0.1);
+}
+
+.cdSearchInput::placeholder {
+  color: #94a3b8;
+}
+
+.cdFilterItem select {
+  font-size: 0.8rem;
+  padding: 0.38rem 0.5rem;
+  min-width: 110px;
+}
+
+.cdFilterCount {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.cdTableWrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--radius-lg);
+}
+
+.cdTable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.cdTable th,
+.cdTable td {
+  padding: 0.52rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.cdTable th {
+  background: #fff;
+  font-weight: 600;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  color: var(--text-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.cdTable tbody tr:hover {
+  background: var(--accent-subtle);
+}
+
+.cdTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cdStickyCol {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  border-right: 1px solid var(--border);
+}
+
+.cdTable thead .cdStickyCol {
+  z-index: 3;
+  background: #fff;
+}
+
+.cdTable tbody tr:hover .cdStickyCol {
+  background: var(--accent-subtle);
+}
+
+.cdNameCell {
+  min-width: 140px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.cdCompactCell {
+  font-size: 0.8rem;
+}
+
+.cdAddressCell {
+  min-width: 120px;
+  max-width: 200px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.cdDynCell {
+  min-width: 90px;
+  max-width: 180px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.cdDateCell {
+  min-width: 110px;
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+}
+
+.cdSalesmanPill {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.74rem;
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.cdEditBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.76rem;
+  font-weight: 500;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+}
+
+.cdEditBtn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.cdEmptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  color: var(--text-secondary);
+  gap: 0.75rem;
+}
+
+.cdEmptyState svg {
+  opacity: 0.35;
+}
+
+.cdEmptyState p {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.cdEditModal {
+  max-width: 600px;
+}
+
+.cdEditFormGrid {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.cdEditFormGrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cdEditFormGrid label input,
+.cdEditFormGrid label select,
+.cdEditFormGrid label textarea {
+  font-size: 0.82rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.cdEditFormGrid label input:focus,
+.cdEditFormGrid label select:focus,
+.cdEditFormGrid label textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 2.5px rgba(37, 99, 235, 0.1);
+}
+
+.cdEditMsg {
+  margin: 0 0 0.65rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius-md);
+  font-size: 0.82rem;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.cdEditMsgErr {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+@media (max-width: 900px) {
+  .cdHeader {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cdFilterBar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cdFilterSearch {
+    max-width: none;
+    flex: 1 1 100%;
+  }
+
+  .cdFilterItem select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .cdTable {
+    min-width: 900px;
+  }
+
+  .cdEditFormGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .cdEditModal {
+    max-width: calc(100vw - 2rem);
+  }
+}
+
+/* =======================================================
+   Audit Log & CSV Upload Modals
+   ======================================================= */
+
+.cdAuditLogList {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.cdAuditItem {
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+.cdAuditHeader {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.cdAuditChanges {
+  font-size: 0.8rem;
+  display: grid;
+  gap: 0.25rem;
+}
+.cdAuditChangeRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.cdAuditField {
+  font-weight: 600;
+  min-width: 100px;
+}
+.cdAuditOld {
+  color: #ef4444;
+  text-decoration: line-through;
+}
+.cdAuditNew {
+  color: #10b981;
+}
+.cdCsvUploadSection {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem 0;
+}
+.cdCsvFileDrop {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-md);
+  padding: 2rem;
+  text-align: center;
+  background: var(--accent-subtle);
+  cursor: pointer;
+}
+.cdCsvFileDrop:hover {
+  border-color: var(--accent);
+}
+.cdCsvSummary {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 1rem;
+  border-radius: var(--radius-md);
+}
+.cdCsvSummary p {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+.cdActionGroup {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
