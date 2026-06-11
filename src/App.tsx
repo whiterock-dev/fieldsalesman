@@ -131,6 +131,8 @@ type KpiRow = {
   firstVisitTime: string
   lastVisitTime: string
   visitCount: number
+  firstTimeVisits: number
+  existingDealerVisits: number
 }
 type NavId =
   | 'dashboard'
@@ -303,6 +305,15 @@ function kpiTimeLabel(iso: string) {
 }
 
 function kpiFromVisits(visits: VisitRecord[], salesmen: Salesman[]): KpiRow[] {
+  // Pre-compute earliest visit timestamp per customer across entire history
+  const earliestVisitByCustomer = new Map<string, string>()
+  for (const v of visits) {
+    const existing = earliestVisitByCustomer.get(v.customerId)
+    if (!existing || v.capturedAt < existing) {
+      earliestVisitByCustomer.set(v.customerId, v.capturedAt)
+    }
+  }
+
   const grouped = new Map<string, VisitRecord[]>()
   for (const visit of visits) {
     const key = `${visit.salesmanId}-${dateString(visit.capturedAt)}`
@@ -315,6 +326,21 @@ function kpiFromVisits(visits: VisitRecord[], salesmen: Salesman[]): KpiRow[] {
     const firstIso = sorted[0].capturedAt
     const lastIso = sorted[sorted.length - 1].capturedAt
     const salesmanName = salesmen.find((s) => s.id === salesmanId)?.name ?? rows[0].salesmanName
+
+    // Classify visits: first-time (pending on-boarding) vs existing dealer
+    let firstTimeVisits = 0
+    let existingDealerVisits = 0
+    for (const visit of sorted) {
+      const earliest = earliestVisitByCustomer.get(visit.customerId)
+      // If this visit's capturedAt matches the earliest known visit for the customer,
+      // it is a first-time visit (pending on-boarding / new dealer)
+      if (earliest && visit.capturedAt <= earliest) {
+        firstTimeVisits++
+      } else {
+        existingDealerVisits++
+      }
+    }
+
     return {
       salesmanId,
       salesmanName,
@@ -323,6 +349,8 @@ function kpiFromVisits(visits: VisitRecord[], salesmen: Salesman[]): KpiRow[] {
       firstVisitTime: kpiTimeLabel(firstIso),
       lastVisitTime: kpiTimeLabel(lastIso),
       visitCount: sorted.length,
+      firstTimeVisits,
+      existingDealerVisits,
     }
   }).sort((a, b) => b.date.localeCompare(a.date))
 }
@@ -814,8 +842,8 @@ function App() {
         sb.from('profiles').select('id, full_name, role, email, phone'),
         sb.from('customers').select('*').order('created_at', { ascending: false }),
         sb.from('followups').select('*').order('due_date', { ascending: true }),
-        sb.from('visits').select('*').order('captured_at', { ascending: false }).limit(200),
-        sb.from('meeting_responses').select('*').order('created_at', { ascending: false }).limit(100),
+        sb.from('visits').select('*').order('captured_at', { ascending: false }).limit(400),
+        sb.from('meeting_responses').select('*').order('created_at', { ascending: false }).limit(200),
         sb.from('form_fields').select('*').order('order', { ascending: true }).order('created_at', { ascending: true }),
         sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(200),
       ])
@@ -998,7 +1026,7 @@ function App() {
       debounceTimer = setTimeout(() => {
         debounceTimer = null
         void loadDomain()
-      }, 220)
+      }, 3000)
     }
 
     scheduleWorkspaceReloadRef.current = scheduleReload
@@ -1013,19 +1041,32 @@ function App() {
       'visits',
       'meeting_responses',
       'form_fields',
-      'live_locations',
     ] as const
 
     const channel = sb.channel('fs-domain-sync')
     for (const table of realtimeTables) {
       channel.on('postgres_changes', { event: '*', schema: 'public', table }, scheduleReload)
     }
+    
+    // Handle live location updates separately to avoid full domain reloads every 5 seconds
+    channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_locations' }, (payload) => {
+      const r = payload.new
+      if (r && r.lat && r.lng) {
+        setLivePoints((previous) => [{
+          lat: Number(r.lat),
+          lng: Number(r.lng),
+          accuracy: Number(r.accuracy_meters),
+          time: r.captured_at as string,
+          salesmanId: r.salesman_id as string,
+        }, ...previous].slice(0, 200))
+      }
+    })
 
     const reloadOnOnline = () => scheduleReload()
     window.addEventListener('online', reloadOnOnline)
     const periodicReloadId = window.setInterval(() => {
       if (document.visibilityState === 'visible') scheduleReload()
-    }, 15000)
+    }, 300000) // 5 minutes (was 15 seconds)
 
     void channel.subscribe((status) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
@@ -4224,6 +4265,8 @@ function App() {
                       <th>Date</th>
                       <th>Salesman</th>
                       <th>Total Visits</th>
+                      <th>Pending on-boarding (New Visit)</th>
+                      <th>Existing Dealer Visits</th>
                       <th>First meeting</th>
                       <th>Last meeting</th>
                       <th>Total working hrs</th>
@@ -4232,7 +4275,7 @@ function App() {
                   <tbody>
                     {filteredKpiRows.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
+                        <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
                           No KPI data available for selected filters.
                         </td>
                       </tr>
@@ -4242,6 +4285,8 @@ function App() {
                           <td>{formatDate(item.date)}</td>
                           <td>{item.salesmanName}</td>
                           <td>{item.visitCount}</td>
+                          <td>{item.firstTimeVisits}</td>
+                          <td>{item.existingDealerVisits}</td>
                           <td>{item.firstVisitTime}</td>
                           <td>{item.lastVisitTime}</td>
                           <td>{item.totalWorkingHours}</td>
