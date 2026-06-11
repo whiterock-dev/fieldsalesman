@@ -1026,7 +1026,7 @@ function App() {
       debounceTimer = setTimeout(() => {
         debounceTimer = null
         void loadDomain()
-      }, 220)
+      }, 3000)
     }
 
     scheduleWorkspaceReloadRef.current = scheduleReload
@@ -1041,19 +1041,32 @@ function App() {
       'visits',
       'meeting_responses',
       'form_fields',
-      'live_locations',
     ] as const
 
     const channel = sb.channel('fs-domain-sync')
     for (const table of realtimeTables) {
       channel.on('postgres_changes', { event: '*', schema: 'public', table }, scheduleReload)
     }
+    
+    // Handle live location updates separately to avoid full domain reloads every 5 seconds
+    channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_locations' }, (payload) => {
+      const r = payload.new
+      if (r && r.lat && r.lng) {
+        setLivePoints((previous) => [{
+          lat: Number(r.lat),
+          lng: Number(r.lng),
+          accuracy: Number(r.accuracy_meters),
+          time: r.captured_at as string,
+          salesmanId: r.salesman_id as string,
+        }, ...previous].slice(0, 200))
+      }
+    })
 
     const reloadOnOnline = () => scheduleReload()
     window.addEventListener('online', reloadOnOnline)
     const periodicReloadId = window.setInterval(() => {
       if (document.visibilityState === 'visible') scheduleReload()
-    }, 15000)
+    }, 300000) // 5 minutes (was 15 seconds)
 
     void channel.subscribe((status) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
