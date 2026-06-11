@@ -1685,7 +1685,7 @@ function App() {
     if (activeView !== 'add_visit') {
       locationRequestIdRef.current += 1
       clearVisitLocationWatch()
-      setVisitSession(null)
+      // setVisitSession(null)
       if (/^(Arrival|Leave) locked/i.test(message)) setMessage('')
     }
   }, [activeView, clearVisitLocationWatch, message])
