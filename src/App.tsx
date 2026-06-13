@@ -101,6 +101,7 @@ type VisitSession = {
 }
 type MeetingResponse = {
   id: string
+  customerId: string
   customerName: string
   salesmanName: string
   response: string
@@ -435,7 +436,7 @@ function App() {
   const [selectedVisitHistoryRowId, setSelectedVisitHistoryRowId] = useState<string | null>(null)
   const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
   const [overdueSalesmanFilter, setOverdueSalesmanFilter] = useState('all')
-  const [overdueSummarySortCol, setOverdueSummarySortCol] = useState<'smName'|'assigned'|'dueToday'|'overdue'>('overdue')
+  const [overdueSummarySortCol, setOverdueSummarySortCol] = useState<'smName' | 'assigned' | 'dueToday' | 'overdue'>('overdue')
   const [overdueSummarySortDesc, setOverdueSummarySortDesc] = useState(true)
   const [meetingDateFilter, setMeetingDateFilter] = useState('')
   const [meetingSalesmanFilter, setMeetingSalesmanFilter] = useState('all')
@@ -458,16 +459,19 @@ function App() {
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
   const [editingMeetingResponse, setEditingMeetingResponse] = useState<EditingMeetingResponse | null>(null)
   const [archivingFollowUpId, setArchivingFollowUpId] = useState<string | null>(null)
-  
+
   const [showNewLeadModal, setShowNewLeadModal] = useState(false)
   const [savingNewLead, setSavingNewLead] = useState(false)
+  const [newLeadCustomerSearch, setNewLeadCustomerSearch] = useState('')
   const [newLeadForm, setNewLeadForm] = useState({
+    customerId: 'new' as string,
     name: '',
     phone: '',
     city: '',
-    priority: 'medium' as FollowUp['priority'],
+    notes: '',
     remarks: '',
-    dueDate: ''
+    dueDate: '',
+    dynamicData: {} as Record<string, string>
   })
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -484,7 +488,7 @@ function App() {
         .map((p) => ({ id: p.id, name: p.fullName })),
     [teamProfiles],
   )
-  
+
   const uniqueCities = useMemo(() => {
     return [...new Set(customers.map(c => c.city).filter(Boolean))].sort()
   }, [customers])
@@ -986,6 +990,7 @@ function App() {
       setMeetingResponses(
         (meetingRows ?? []).map((r) => ({
           id: r.id as string,
+          customerId: r.customer_id as string,
           customerName: r.customer_name as string,
           salesmanName: r.salesman_name as string,
           response: r.response as string,
@@ -1047,7 +1052,7 @@ function App() {
     for (const table of realtimeTables) {
       channel.on('postgres_changes', { event: '*', schema: 'public', table }, scheduleReload)
     }
-    
+
     // Handle live location updates separately to avoid full domain reloads every 5 seconds
     channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_locations' }, (payload) => {
       const r = payload.new
@@ -1284,10 +1289,15 @@ function App() {
   const kpiRows = useMemo(() => kpiFromVisits(visits, salesmen), [visits, salesmen])
   const filteredKpiRows = useMemo(() => {
     const todayStr = new Date().toISOString().slice(0, 10)
+
+    const yest = new Date()
+    yest.setDate(yest.getDate() - 1)
+    const yesterdayStr = yest.toISOString().slice(0, 10)
+
     const d = new Date()
     d.setDate(d.getDate() - 7)
     const sevenDaysAgoStr = d.toISOString().slice(0, 10)
-    
+
     const d30 = new Date()
     d30.setDate(d30.getDate() - 30)
     const thirtyDaysAgoStr = d30.toISOString().slice(0, 10)
@@ -1295,9 +1305,10 @@ function App() {
     return kpiRows.filter((row) => {
       const salesmanOk = kpiSalesmanFilter === 'all' || row.salesmanId === kpiSalesmanFilter
       if (!salesmanOk) return false
-      
+
       if (kpiDateRangeType === 'all_time') return true
       if (kpiDateRangeType === 'today') return row.date === todayStr
+      if (kpiDateRangeType === 'yesterday') return row.date === yesterdayStr
       if (kpiDateRangeType === 'last_7_days') return row.date >= sevenDaysAgoStr && row.date <= todayStr
       if (kpiDateRangeType === 'last_30_days') return row.date >= thirtyDaysAgoStr && row.date <= todayStr
       if (kpiDateRangeType === 'custom') {
@@ -1367,6 +1378,20 @@ function App() {
       })
       .slice(0, 20)
   }, [dedupedCustomers, visitCustomerSearch])
+
+  const filteredNewLeadCustomerSuggestions = useMemo(() => {
+    const q = newLeadCustomerSearch.trim().toLowerCase()
+    return dedupedCustomers
+      .filter((item) => {
+        if (!q) return true
+        return (
+          item.name.toLowerCase().includes(q) ||
+          item.phone.toLowerCase().includes(q) ||
+          item.city.toLowerCase().includes(q)
+        )
+      })
+      .slice(0, 20)
+  }, [dedupedCustomers, newLeadCustomerSearch])
 
   const handleCustomerSearchChange = (value: string) => {
     setVisitCustomerSearch(value)
@@ -1944,66 +1969,166 @@ function App() {
     setArchivingFollowUpId(null)
   }
 
+  const handleNewLeadCustomerSearchChange = (value: string) => {
+    setNewLeadCustomerSearch(value)
+    const q = value.trim().toLowerCase()
+    if (!q) {
+      setNewLeadForm(prev => ({ ...prev, customerId: 'new', name: '', phone: '', city: '', notes: '', remarks: '', dynamicData: {} }))
+      return
+    }
+    const matched = dedupedCustomers.find((item) => {
+      const label = `${item.name} (${item.city})`.toLowerCase()
+      return label === q || item.name.toLowerCase() === q
+    })
+
+    if (matched) {
+      const lastVisit = latestVisitByCustomerId.get(matched.id)
+      const existingDynamic: Record<string, string> = {}
+      for (const field of formFields) {
+        if (field.active && !field.isDeleted) {
+          existingDynamic[field.key] = matched.dynamicFields?.[field.key] ?? ''
+        }
+      }
+      setNewLeadForm(prev => ({
+        ...prev,
+        customerId: matched.id,
+        name: matched.name,
+        phone: matched.phone,
+        city: matched.city,
+        notes: lastVisit?.notes ?? '',
+        remarks: lastVisit?.nextAction ?? '',
+        dynamicData: existingDynamic
+      }))
+    } else {
+      setNewLeadForm(prev => ({ ...prev, customerId: 'new', name: value, phone: '', city: '', notes: '', remarks: '', dynamicData: {} }))
+    }
+  }
+
   const handleSaveNewLead = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newLeadForm.name.trim()) return setMessage('Customer Name is required.')
-    if (!newLeadForm.phone.trim() || !/^\d{10}$/.test(newLeadForm.phone.trim())) {
-      return setMessage('Mobile Number must be exactly 10 digits.')
+    const isNew = newLeadForm.customerId === 'new'
+    let targetCustomerId = newLeadForm.customerId
+
+    if (isNew) {
+      if (!newLeadForm.name.trim()) return setMessage('Customer Name is required.')
+      if (!newLeadForm.phone.trim() || !/^\d{10}$/.test(newLeadForm.phone.trim())) {
+        return setMessage('Mobile Number must be exactly 10 digits.')
+      }
+      if (!newLeadForm.city.trim()) return setMessage('City is required.')
+    } else {
+      if (!targetCustomerId) return setMessage('Please select a customer.')
     }
-    if (!newLeadForm.city.trim()) return setMessage('City is required.')
     if (!newLeadForm.dueDate) return setMessage('Follow-up Date is required.')
     if (!activeSalesman) return setMessage('No active salesman context found.')
+
+    for (const field of activeDynamicFields) {
+      if (field.required && !String(newLeadForm.dynamicData[field.key] ?? '').trim()) {
+        return setMessage(`"${field.label}" is required.`)
+      }
+    }
 
     setSavingNewLead(true)
     setMessage('')
 
-    const newCustomerId = `c-${Date.now()}`
-    const newCustomer: Customer = {
-      id: newCustomerId,
-      name: newLeadForm.name.trim(),
-      phone: newLeadForm.phone.trim(),
-      whatsapp: newLeadForm.phone.trim(),
-      address: '',
-      city: newLeadForm.city.trim(),
-      tags: ['New Lead'],
-      dynamicFields: {},
-      assignedSalesmanId: activeSalesman.id,
-      lat: 0,
-      lng: 0,
+    let newCustomer: Customer | undefined
+
+    if (isNew) {
+      targetCustomerId = `c-${Date.now()}`
+      newCustomer = {
+        id: targetCustomerId,
+        name: newLeadForm.name.trim(),
+        phone: newLeadForm.phone.trim(),
+        whatsapp: newLeadForm.phone.trim(),
+        address: '',
+        city: newLeadForm.city.trim(),
+        tags: ['New Lead'],
+        dynamicFields: newLeadForm.dynamicData,
+        assignedSalesmanId: activeSalesman.id,
+        lat: 0,
+        lng: 0,
+      }
+      setCustomers((prev) => [newCustomer!, ...prev])
+    } else {
+      const existing = customers.find(c => c.id === targetCustomerId)
+      if (existing) {
+        setCustomers(prev => prev.map(c =>
+          c.id === targetCustomerId
+            ? { ...c, dynamicFields: { ...(c.dynamicFields || {}), ...newLeadForm.dynamicData } }
+            : c
+        ))
+      }
     }
 
     const newFollowUpId = `f-${Date.now()}`
+
+    let priorityVal: FollowUp['priority'] = 'medium'
+    const dynamicPriorityKey = activeDynamicFields.find(f => f.label.toLowerCase().includes('priority'))?.key
+    if (dynamicPriorityKey && newLeadForm.dynamicData[dynamicPriorityKey]) {
+      const p = newLeadForm.dynamicData[dynamicPriorityKey].toLowerCase()
+      if (['high', 'medium', 'low'].includes(p)) priorityVal = p as FollowUp['priority']
+    }
+
     const newFollowUp: FollowUp = {
       id: newFollowUpId,
-      customerId: newCustomerId,
+      customerId: targetCustomerId,
       dueDate: newLeadForm.dueDate,
-      priority: newLeadForm.priority,
+      priority: priorityVal,
       status: 'pending',
       archived: false,
-      remarks: newLeadForm.remarks.trim(),
+      remarks: newLeadForm.remarks.trim() || 'Follow-up from New Lead',
       salesmanId: activeSalesman.id,
     }
 
-    setCustomers((prev) => [newCustomer, ...prev])
     setFollowUps((prev) => [newFollowUp, ...prev])
 
+    if (newLeadForm.notes.trim()) {
+      const newMeetingResponseId = `m-${Date.now()}`
+      const mRes = {
+        id: newMeetingResponseId,
+        customerId: targetCustomerId,
+        customerName: isNew && newCustomer ? newCustomer.name : (customers.find(c => c.id === targetCustomerId)?.name || ''),
+        salesmanName: activeSalesman.name,
+        response: newLeadForm.notes.trim(),
+        createdAt: new Date().toISOString()
+      }
+      setMeetingResponses(prev => [mRes as MeetingResponse, ...prev])
+      if (supabase && online) {
+        supabase.from('meeting_responses').insert({
+          id: mRes.id,
+          customer_id: targetCustomerId,
+          salesman_id: activeSalesman.id,
+          response: mRes.response,
+          created_at: mRes.createdAt
+        }).then(({ error }) => { if (error) console.warn('meeting_response insert error:', error.message) })
+      }
+    }
+
     if (supabase && online) {
-      const { error: customerError } = await supabase.from('customers').upsert({
-        id: newCustomer.id,
-        name: newCustomer.name,
-        phone: newCustomer.phone,
-        whatsapp: newCustomer.whatsapp,
-        address: newCustomer.address,
-        city: newCustomer.city,
-        tags: newCustomer.tags,
-        dynamic_fields: newCustomer.dynamicFields,
-        assigned_salesman_id: newCustomer.assignedSalesmanId,
-        lat: newCustomer.lat,
-        lng: newCustomer.lng,
-      })
-      if (customerError) {
-        setSavingNewLead(false)
-        return setMessage(`Lead customer save failed: ${customerError.message}`)
+      if (isNew && newCustomer) {
+        const { error: customerError } = await supabase.from('customers').upsert({
+          id: newCustomer.id,
+          name: newCustomer.name,
+          phone: newCustomer.phone,
+          whatsapp: newCustomer.whatsapp,
+          address: newCustomer.address,
+          city: newCustomer.city,
+          tags: newCustomer.tags,
+          dynamic_fields: newCustomer.dynamicFields,
+          assigned_salesman_id: newCustomer.assignedSalesmanId,
+          lat: newCustomer.lat,
+          lng: newCustomer.lng,
+        })
+        if (customerError) {
+          setSavingNewLead(false)
+          return setMessage(`Lead customer save failed: ${customerError.message}`)
+        }
+      } else {
+        const existing = customers.find(c => c.id === targetCustomerId)
+        const mergedDynamicFields = { ...(existing?.dynamicFields || {}), ...newLeadForm.dynamicData }
+        const { error: updateError } = await supabase.from('customers').update({ dynamic_fields: mergedDynamicFields }).eq('id', targetCustomerId)
+        if (updateError) {
+          console.warn('customer dynamic_fields update:', updateError.message)
+        }
       }
 
       const { error: followUpError } = await supabase.from('followups').upsert({
@@ -2024,7 +2149,8 @@ function App() {
 
     setSavingNewLead(false)
     setShowNewLeadModal(false)
-    setNewLeadForm({ name: '', phone: '', city: '', priority: 'medium', remarks: '', dueDate: '' })
+    setNewLeadCustomerSearch('')
+    setNewLeadForm({ customerId: 'new', name: '', phone: '', city: '', notes: '', remarks: '', dueDate: '', dynamicData: {} })
     setMessage('Lead captured successfully!')
   }
 
@@ -2087,11 +2213,14 @@ function App() {
     } else {
       const selectedCustomer = customers.find((item) => item.id === selectedCustomerId)
       if (!selectedCustomer) return setMessage('Customer not found.')
-      const radius = distanceMeters(geo.lat, geo.lng, selectedCustomer.lat, selectedCustomer.lng)
-      if (radius > RADIUS_THRESHOLD_METERS) {
-        return setMessage(
-          `Outside ${RADIUS_THRESHOLD_METERS}m of the customer pin — move closer to start the visit. Current distance: ${Math.round(radius)}m`,
-        )
+      const isFirstVisit = selectedCustomer.lat === 0 && selectedCustomer.lng === 0
+      if (!isFirstVisit) {
+        const radius = distanceMeters(geo.lat, geo.lng, selectedCustomer.lat, selectedCustomer.lng)
+        if (radius > RADIUS_THRESHOLD_METERS) {
+          return setMessage(
+            `Outside ${RADIUS_THRESHOLD_METERS}m of the customer pin — move closer to start the visit. Current distance: ${Math.round(radius)}m`,
+          )
+        }
       }
     }
     const selectedVisitType: VisitType = selectedCustomerId === 'new' ? 'New lead' : 'Existing customer'
@@ -2729,10 +2858,20 @@ function App() {
         customerName = selectedCustomer.name
       }
 
-      if (selectedCustomer && session.selectedCustomerId !== 'new') {
+      const isFirstVisit = selectedCustomer && session.selectedCustomerId !== 'new' && selectedCustomer.lat === 0 && selectedCustomer.lng === 0
+
+      if (selectedCustomer && session.selectedCustomerId !== 'new' && !isFirstVisit) {
         const radius = distanceMeters(leaveGeo.lat, leaveGeo.lng, selectedCustomer.lat, selectedCustomer.lng)
         if (radius > RADIUS_THRESHOLD_METERS) {
           return failVisitSave(`Outside ${RADIUS_THRESHOLD_METERS}m radius at leave time. Current distance: ${Math.round(radius)}m`)
+        }
+      }
+
+      if (isFirstVisit && selectedCustomer) {
+        setCustomers((prev) => prev.map((c) => (c.id === selectedCustomer.id ? { ...c, lat: leaveGeo.lat, lng: leaveGeo.lng } : c)))
+        if (supabase && online) {
+          const { error: locError } = await supabase.from('customers').update({ lat: leaveGeo.lat, lng: leaveGeo.lng }).eq('id', selectedCustomer.id)
+          if (locError) console.warn('failed to map first visit location:', locError.message)
         }
       }
 
@@ -2782,7 +2921,7 @@ function App() {
       })
       if (!supabase || !online) {
         setMeetingResponses((previous) => [
-          { id: `m-${Date.now()}`, customerName, salesmanName: activeSalesman.name, response: notes.trim(), createdAt: capturedAt },
+          { id: `m-${Date.now()}`, customerId, customerName, salesmanName: activeSalesman.name, response: notes.trim(), createdAt: capturedAt },
           ...previous,
         ])
       }
@@ -2849,6 +2988,7 @@ function App() {
         const meetingId = `m-${visitId}`
         const { error: meetingErr } = await supabase.from('meeting_responses').insert({
           id: meetingId,
+          customer_id: customerId,
           customer_name: customerName,
           salesman_name: activeSalesman.name,
           response: notes.trim(),
@@ -3377,17 +3517,17 @@ function App() {
                           {label}
                           {overdueSummarySortCol === col
                             ? <span className="sortArrow active">
-                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                                  {overdueSummarySortDesc
-                                    ? <path d="M6 8.5L1.5 3.5h9L6 8.5z"/>
-                                    : <path d="M6 3.5l4.5 5h-9L6 3.5z"/>}
-                                </svg>
-                              </span>
+                              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                {overdueSummarySortDesc
+                                  ? <path d="M6 8.5L1.5 3.5h9L6 8.5z" />
+                                  : <path d="M6 3.5l4.5 5h-9L6 3.5z" />}
+                              </svg>
+                            </span>
                             : <span className="sortArrow">
-                                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                                  <path d="M6 2l3 3.5H3L6 2zM6 10L3 6.5h6L6 10z"/>
-                                </svg>
-                              </span>}
+                              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                <path d="M6 2l3 3.5H3L6 2zM6 10L3 6.5h6L6 10z" />
+                              </svg>
+                            </span>}
                         </th>
                       ))}
                     </tr>
@@ -3399,8 +3539,8 @@ function App() {
                       </tr>
                     ) : (
                       overdueSummaryStats.map((row) => (
-                        <tr 
-                          key={row.smId} 
+                        <tr
+                          key={row.smId}
                           className={`clickableRow ${overdueSalesmanFilter === row.smId ? 'activeRow' : ''}`}
                           onClick={() => setOverdueSalesmanFilter(prev => prev === row.smId ? 'all' : row.smId)}
                         >
@@ -3434,13 +3574,14 @@ function App() {
                   <thead>
                     <tr>
                       <th className="overdueCompactCell">Salesman</th>
-                      <th className="overdueCompactCell">Client</th>
+                      <th className="overdueCustomerCell">Client</th>
                       <th className="overdueCompactCell">City</th>
                       <th className="overdueCompactCell">Phone</th>
                       <th className="overdueCompactCell">Due date</th>
                       <th className="overdueCompactCell">Priority</th>
                       <th className="overdueCompactCell">Status</th>
                       <th className="overdueLongCell">Remarks</th>
+                      <th className="overdueLongCell">Notes / Response</th>
                       {activeDynamicFields.map((f) => (
                         <th key={f.id} className="dynamicFieldCol" title={f.label}>
                           {f.label}
@@ -3453,7 +3594,7 @@ function App() {
                   <tbody>
                     {filteredOverdueRowsDetailed.length === 0 ? (
                       <tr>
-                        <td colSpan={10 + activeDynamicFields.length} className="muted">
+                        <td colSpan={11 + activeDynamicFields.length} className="muted">
                           No overdue follow-ups.
                         </td>
                       </tr>
@@ -3464,13 +3605,21 @@ function App() {
                         const rows = [
                           <tr key={row.id}>
                             <td className="overdueCompactCell">{row.salesmanName}</td>
-                            <td className="overdueCompactCell">{row.customerName}</td>
+                            <td className="overdueCustomerCell">{row.customerName}</td>
                             <td className="overdueCompactCell">{row.customerCity}</td>
                             <td className="overdueCompactCell">{row.customerPhone}</td>
                             <td className="overdueCompactCell">{formatDate(row.dueDate)}</td>
                             <td className="overdueCompactCell">{row.priority}</td>
                             <td className="overdueCompactCell">{row.status}</td>
                             <td className="overdueLongCell">{row.remarks || '—'}</td>
+                            <td className="overdueLongCell">
+                              <details className="followupNotesDetails">
+                                <summary>View Notes</summary>
+                                <div className="followupNotesContent">
+                                  {meetingResponses.find((m) => m.customerId === row.customerId)?.response || row.lastVisitNotes || 'No previous notes'}
+                                </div>
+                              </details>
+                            </td>
                             {activeDynamicFields.map((field) => {
                               const val = row.lastVisitDynamicFields?.[field.key] || row.customerDynamicFields?.[field.key]
                               return (
@@ -3517,7 +3666,7 @@ function App() {
                         if (isEditing && editingFollowUp) {
                           rows.push(
                             <tr key={`${row.id}-edit`} className="followupEditRow">
-                              <td colSpan={10 + activeDynamicFields.length}>
+                              <td colSpan={11 + activeDynamicFields.length}>
                                 <div className="followupEditCard">
                                   <div className="followupEditHeader">
                                     <div>
@@ -3743,7 +3892,7 @@ function App() {
                     <tr>
                       <th className="meetingCompactCell">Time</th>
                       {role !== 'salesman' ? <th className="meetingCompactCell">Salesman</th> : null}
-                      <th className="meetingCompactCell">Customer</th>
+                      <th className="meetingCustomerCell">Customer</th>
                       <th className="meetingCompactCell">Phone</th>
                       <th className="meetingCompactCell">Due date</th>
                       <th className="meetingCompactCell">Priority</th>
@@ -3770,7 +3919,7 @@ function App() {
                         <tr key={item.id}>
                           <td className="meetingCompactCell">{formatDateTime(item.createdAt)}</td>
                           {role !== 'salesman' ? <td className="meetingCompactCell">{item.salesmanName}</td> : null}
-                          <td className="meetingCompactCell">{item.customerName}</td>
+                          <td className="meetingCustomerCell">{item.customerName}</td>
                           <td className="meetingCompactCell">{customerPhone}</td>
                           <td className="meetingCompactCell">
                             {linkedFollowUp ? formatDate(linkedFollowUp.dueDate) : '—'}
@@ -4215,6 +4364,7 @@ function App() {
                     <select value={kpiDateRangeType} onChange={(event) => setKpiDateRangeType(event.target.value)}>
                       <option value="all_time">All Time</option>
                       <option value="today">Today</option>
+                      <option value="yesterday">Yesterday</option>
                       <option value="last_7_days">Last 7 Days</option>
                       <option value="last_30_days">Last 30 Days</option>
                       <option value="custom">Custom Range</option>
@@ -4224,22 +4374,22 @@ function App() {
                     <>
                       <label>
                         From
-                        <input 
-                          type="date" 
-                          value={kpiCustomStartDate} 
+                        <input
+                          type="date"
+                          value={kpiCustomStartDate}
                           max={todayIso}
-                          onChange={(event) => setKpiCustomStartDate(event.target.value)} 
+                          onChange={(event) => setKpiCustomStartDate(event.target.value)}
                           title="Start Date"
                         />
                       </label>
                       <label>
                         To
-                        <input 
-                          type="date" 
-                          value={kpiCustomEndDate} 
+                        <input
+                          type="date"
+                          value={kpiCustomEndDate}
                           min={kpiCustomStartDate}
                           max={todayIso}
-                          onChange={(event) => setKpiCustomEndDate(event.target.value)} 
+                          onChange={(event) => setKpiCustomEndDate(event.target.value)}
                           title="End Date"
                         />
                       </label>
@@ -4304,7 +4454,7 @@ function App() {
           <section className="panel">
             <div className="rowBetween" style={{ alignItems: 'center' }}>
               <h2>Pending follow-ups</h2>
-              <button type="button" className="primary" onClick={() => setShowNewLeadModal(true)}>
+              <button type="button" className="primary new-lead-btn" onClick={() => setShowNewLeadModal(true)}>
                 + New Lead
               </button>
             </div>
@@ -4392,6 +4542,7 @@ function App() {
                       <th>Priority</th>
                       <th>Status</th>
                       <th className="followupRemarksCell">Remarks</th>
+                      <th className="followupRemarksCell">Notes / Response</th>
                       {activeDynamicFields.map((f) => <th key={f.id} className='dynamicFieldCol'>{f.label}</th>)}
                       <th>Actions</th>
                     </tr>
@@ -4399,7 +4550,7 @@ function App() {
                   <tbody>
                     {filteredFollowUpsForSalesman.length === 0 ? (
                       <tr>
-                        <td colSpan={(role !== 'salesman' ? 8 : 7) + activeDynamicFields.length} className="muted">
+                        <td colSpan={(role !== 'salesman' ? 9 : 8) + activeDynamicFields.length} className="muted">
                           No follow-ups match the selected filters.
                         </td>
                       </tr>
@@ -4448,6 +4599,14 @@ function App() {
                             <td className="followupRemarksCell">
                               <div className="followupRemarks">{item.remarks || 'No remarks added'}</div>
                             </td>
+                            <td className="followupRemarksCell">
+                              <details className="followupNotesDetails">
+                                <summary>View Notes</summary>
+                                <div className="followupNotesContent">
+                                  {meetingResponses.find((m) => m.customerId === item.customerId)?.response || latestVisitByCustomerId.get(item.customerId)?.notes || 'No previous notes'}
+                                </div>
+                              </details>
+                            </td>
                             {activeDynamicFields.map((field) => {
                               const vFields = latestVisitByCustomerId.get(item.customerId)?.dynamicFields
                               const cFields = customer?.dynamicFields
@@ -4485,7 +4644,7 @@ function App() {
                         if (isEditing && editingFollowUp) {
                           rows.push(
                             <tr key={`${item.id}-edit`} className="followupEditRow">
-                              <td colSpan={(role !== 'salesman' ? 8 : 7) + activeDynamicFields.length}>
+                              <td colSpan={(role !== 'salesman' ? 9 : 8) + activeDynamicFields.length}>
                                 <div className="followupEditCard">
                                   <div className="followupEditHeader">
                                     <div>
@@ -5057,6 +5216,35 @@ function App() {
           </div>
         </header>
 
+        {(role === 'salesman' || role === 'super_salesman') ? (
+          <div className="mobileQuickActions">
+            <button
+              type="button"
+              className="mqaBtn"
+              onClick={() => { setActiveView('add_visit'); setMobileNavOpen(false) }}
+            >
+              <span className="mqaIcon">📍</span>
+              Add Visit
+            </button>
+            <button
+              type="button"
+              className="mqaBtn"
+              onClick={() => { setActiveView('field_followups'); setMobileNavOpen(false) }}
+            >
+              <span className="mqaIcon">📋</span>
+              Follow-ups
+            </button>
+            <button
+              type="button"
+              className="mqaBtn"
+              onClick={() => setShowNewLeadModal(true)}
+            >
+              <span className="mqaIcon">＋</span>
+              New Lead
+            </button>
+          </div>
+        ) : null}
+
         <div className="contentArea">
           {message ? <p className={`message ${messageLooksLikeError ? 'messageError' : 'messageInfo'}`}>{message}</p> : null}
           {mainContent}
@@ -5096,60 +5284,70 @@ function App() {
             <div className="modalBody">
               <form id="newLeadForm" className="grid single" onSubmit={handleSaveNewLead}>
                 <label>
-                  Customer Name *
+                  Customer Name
                   <input
-                    type="text"
+                    list="new-lead-customer-suggestions"
+                    value={newLeadCustomerSearch}
+                    onChange={(event) => handleNewLeadCustomerSearchChange(event.target.value)}
+                    placeholder="Type shop name (suggestions for existing)"
                     required
-                    value={newLeadForm.name}
-                    onChange={(e) => setNewLeadForm(prev => ({ ...prev, name: e.target.value }))}
                   />
-                </label>
-                <label>
-                  Mobile Number *
-                  <input
-                    type="text"
-                    required
-                    pattern="[0-9]{10}"
-                    title="Must be exactly 10 digits"
-                    value={newLeadForm.phone}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '').slice(0, 10)
-                      setNewLeadForm(prev => ({ ...prev, phone: val }))
-                    }}
-                  />
-                </label>
-                <label>
-                  City *
-                  <input
-                    type="text"
-                    required
-                    list="uniqueCitiesDatalist"
-                    value={newLeadForm.city}
-                    onChange={(e) => setNewLeadForm(prev => ({ ...prev, city: e.target.value }))}
-                  />
-                  <datalist id="uniqueCitiesDatalist">
-                    {uniqueCities.map(city => <option key={city} value={city} />)}
+                  <datalist id="new-lead-customer-suggestions">
+                    {filteredNewLeadCustomerSuggestions.map((item) => (
+                      <option key={item.id} value={`${item.name} (${item.city})`} />
+                    ))}
                   </datalist>
                 </label>
+
+                {newLeadForm.customerId === 'new' && (
+                  <>
+                    <label>
+                      Mobile Number *
+                      <input
+                        type="text"
+                        required
+                        pattern="[0-9]{10}"
+                        title="Must be exactly 10 digits"
+                        value={newLeadForm.phone}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '').slice(0, 10)
+                          setNewLeadForm(prev => ({ ...prev, phone: val }))
+                        }}
+                      />
+                    </label>
+                    <label>
+                      City *
+                      <input
+                        type="text"
+                        required
+                        list="uniqueCitiesDatalist"
+                        value={newLeadForm.city}
+                        onChange={(e) => setNewLeadForm(prev => ({ ...prev, city: e.target.value }))}
+                      />
+                      <datalist id="uniqueCitiesDatalist">
+                        {uniqueCities.map(city => <option key={city} value={city} />)}
+                      </datalist>
+                    </label>
+                  </>
+                )}
+
                 <label>
-                  Priority
-                  <select
-                    value={newLeadForm.priority}
-                    onChange={(e) => setNewLeadForm(prev => ({ ...prev, priority: e.target.value as FollowUp['priority'] }))}
-                  >
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                  </select>
+                  Notes
+                  <textarea
+                    rows={3}
+                    value={newLeadForm.notes}
+                    onChange={(e) => setNewLeadForm(prev => ({ ...prev, notes: e.target.value }))}
+                  />
                 </label>
                 <label>
-                  Remark
+                  Next action / remarks
                   <textarea
                     rows={3}
                     value={newLeadForm.remarks}
                     onChange={(e) => setNewLeadForm(prev => ({ ...prev, remarks: e.target.value }))}
                   />
                 </label>
+
                 <label>
                   Follow-up Date *
                   <input
@@ -5160,6 +5358,54 @@ function App() {
                     onChange={(e) => setNewLeadForm(prev => ({ ...prev, dueDate: e.target.value }))}
                   />
                 </label>
+
+                {activeDynamicFields.map((field) => (
+                  <label key={field.id}>
+                    {field.label} {field.required ? '*' : ''}
+                    {field.type === 'textarea' ? (
+                      <textarea
+                        required={field.required}
+                        value={newLeadForm.dynamicData[field.key] || ''}
+                        onChange={(e) =>
+                          setNewLeadForm((prev) => ({
+                            ...prev,
+                            dynamicData: { ...prev.dynamicData, [field.key]: e.target.value },
+                          }))
+                        }
+                      />
+                    ) : field.type === 'select' ? (
+                      <select
+                        required={field.required}
+                        value={newLeadForm.dynamicData[field.key] || ''}
+                        onChange={(e) =>
+                          setNewLeadForm((prev) => ({
+                            ...prev,
+                            dynamicData: { ...prev.dynamicData, [field.key]: e.target.value },
+                          }))
+                        }
+                      >
+                        <option value="">-- Select --</option>
+                        {field.options.map((opt, i) => (
+                          <option key={i} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                        required={field.required}
+                        value={newLeadForm.dynamicData[field.key] || ''}
+                        onChange={(e) =>
+                          setNewLeadForm((prev) => ({
+                            ...prev,
+                            dynamicData: { ...prev.dynamicData, [field.key]: e.target.value },
+                          }))
+                        }
+                      />
+                    )}
+                  </label>
+                ))}
               </form>
             </div>
             <div className="modalFooter">
