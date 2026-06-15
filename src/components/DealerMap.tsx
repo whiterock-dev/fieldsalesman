@@ -5,7 +5,7 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import { CircleMarker, MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -59,6 +59,13 @@ function visitDotIcon(hex: string): L.DivIcon {
   return icon
 }
 
+const liveSalesmanDot = L.divIcon({
+  className: 'live-salesman-dot',
+  html: `<div style="width: 14px; height: 14px; background-color: #3b82f6; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`,
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+})
+
 type SalesmanRef = { id: string; name: string }
 type CustomerPoint = {
   id: string
@@ -68,6 +75,9 @@ type CustomerPoint = {
   lng: number
   salesmanName?: string
   assignedSalesmanId?: string
+  address?: string
+  phone?: string
+  lastVisitDate?: string
 }
 type LivePoint = { lat: number; lng: number; accuracy: number; time: string; salesmanId?: string }
 type VisitPoint = {
@@ -141,6 +151,18 @@ export function DealerMap({
 }: DealerMapProps) {
   const colors = useMemo(() => salesmanColorMap(salesmen ?? []), [salesmen])
 
+  const [myLiveLocation, setMyLiveLocation] = useState<[number, number] | null>(null)
+
+  useEffect(() => {
+    if (!navigator.geolocation) return
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => setMyLiveLocation([pos.coords.latitude, pos.coords.longitude]),
+      (err) => console.warn('Live location error:', err),
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+    )
+    return () => navigator.geolocation.clearWatch(watchId)
+  }, [])
+
   const boundsPoints = useMemo(() => {
     const list: L.LatLngExpression[] = []
     for (const c of customers) {
@@ -152,8 +174,9 @@ export function DealerMap({
     for (const v of recentVisits) {
       if (Number.isFinite(v.lat) && Number.isFinite(v.lng)) list.push([v.lat, v.lng])
     }
+    if (myLiveLocation) list.push(myLiveLocation)
     return list
-  }, [customers, livePoints, recentVisits])
+  }, [customers, livePoints, recentVisits, myLiveLocation])
 
   const showFit = boundsPoints.length > 0
 
@@ -174,6 +197,14 @@ export function DealerMap({
         <ResizeInvalidate />
         {showFit ? <FitBounds points={boundsPoints} /> : null}
 
+        {myLiveLocation ? (
+          <Marker position={myLiveLocation} icon={liveSalesmanDot} zIndexOffset={1000}>
+            <Popup>
+              <strong>Your Current Location</strong>
+            </Popup>
+          </Marker>
+        ) : null}
+
         {customers.map((c) => (
           <Marker
             key={`c-${c.id}`}
@@ -183,15 +214,29 @@ export function DealerMap({
             <Popup>
               <strong>{c.name}</strong>
               <br />
+              {c.address ? <>{c.address}<br /></> : null}
               {c.city}
               <br />
+              {c.phone ? <span style={{ fontSize: '0.9em' }}>Phone: {c.phone}<br /></span> : null}
               <span style={{ fontSize: '0.9em', color: '#334155' }}>
                 Salesman: {c.salesmanName ?? '—'}
               </span>
               <br />
-              <a href={googleMapsSearchUrl(c.lat, c.lng)} target="_blank" rel="noopener noreferrer">
-                Open in Google Maps
-              </a>
+              {c.lastVisitDate ? (
+                <span style={{ fontSize: '0.9em', color: '#334155' }}>
+                  Last visit: {formatDateTime(c.lastVisitDate)}<br />
+                </span>
+              ) : null}
+              <div style={{ marginTop: '10px' }}>
+                <a
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lng}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ display: 'inline-block', width: '100%', textAlign: 'center', padding: '6px 12px', fontSize: '0.9em', background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '4px', textDecoration: 'none', fontWeight: 600, boxSizing: 'border-box' }}
+                >
+                  Get Directions
+                </a>
+              </div>
             </Popup>
           </Marker>
         ))}
