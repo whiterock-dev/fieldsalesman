@@ -3873,7 +3873,6 @@ function App() {
                       salesmanOverdueAndDueTodayRows.flatMap((row) => {
                         const followUp = followUps.find((item) => item.id === row.id)
                         const isEditing = editingFollowUp?.id === row.id
-                        const customer = customerById.get(row.customerId)
                         const rows = [
                           <tr key={row.id}>
                             <td className="overdueCustomerCell">{row.customerName}</td>
