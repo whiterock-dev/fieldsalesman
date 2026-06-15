@@ -86,6 +86,7 @@ type VisitRecord = {
   /** When the rep tapped Start visit at arrival; `capturedAt` is end/leave (photo) time. */
   visitStartedAt?: string
   dynamicFields?: Record<string, string>
+  priority?: 'low' | 'medium' | 'high'
 }
 
 type VisitSession = {
@@ -389,6 +390,7 @@ function App() {
   const [notes, setNotes] = useState('')
   const [nextAction, setNextAction] = useState('')
   const [followUpDate, setFollowUpDate] = useState('')
+  const [visitPriority, setVisitPriority] = useState<FollowUp['priority']>('medium')
   const [dynamicData, setDynamicData] = useState<Record<string, string>>({})
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState('')
@@ -430,6 +432,7 @@ function App() {
   const [_settingsPasswordMessage, setSettingsPasswordMessage] = useState('')
   const [visitHistoryDateFilter, setVisitHistoryDateFilter] = useState('')
   const [visitHistorySalesmanFilter, setVisitHistorySalesmanFilter] = useState('all')
+  const [visitHistoryPriorityFilter, setVisitHistoryPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
   const [visitHistoryClientFilter, setVisitHistoryClientFilter] = useState('')
   const [visitHistoryCityFilter, setVisitHistoryCityFilter] = useState('')
   const [selectedVisitClientId, setSelectedVisitClientId] = useState<string | null>(null)
@@ -471,6 +474,7 @@ function App() {
     notes: '',
     remarks: '',
     dueDate: '',
+    priority: 'medium' as FollowUp['priority'],
     dynamicData: {} as Record<string, string>
   })
   useEffect(() => {
@@ -970,6 +974,7 @@ function App() {
           followUpDate: (r.follow_up_date as string) ?? undefined,
           status: 'synced' as const,
           visitStartedAt: typeof started === 'string' && started ? started : undefined,
+          priority: r.priority as 'low' | 'medium' | 'high' | undefined,
           dynamicFields: toDynamicFieldsObject(row.dynamic_fields),
         }
       })
@@ -1515,11 +1520,12 @@ function App() {
         (!visitHistoryDateFilter || d === visitHistoryDateFilter) &&
         (visitHistorySalesmanFilter === 'all' || v.salesmanId === visitHistorySalesmanFilter) &&
         (!clientQ || client.includes(clientQ)) &&
-        (!cityQ || city.includes(cityQ))
+        (!cityQ || city.includes(cityQ)) &&
+        (visitHistoryPriorityFilter === 'all' || v.priority === visitHistoryPriorityFilter)
       )
     })
     return filtered.slice(0, 100)
-  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilter, visitHistoryCityFilter])
+  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilter, visitHistoryCityFilter, visitHistoryPriorityFilter])
   const selectedVisitClientVisits = useMemo(() => {
     if (!selectedVisitClientId) return []
     return visitHistoryRows
@@ -1973,7 +1979,7 @@ function App() {
     setNewLeadCustomerSearch(value)
     const q = value.trim().toLowerCase()
     if (!q) {
-      setNewLeadForm(prev => ({ ...prev, customerId: 'new', name: '', phone: '', city: '', notes: '', remarks: '', dynamicData: {} }))
+      setNewLeadForm(prev => ({ ...prev, customerId: 'new', name: '', phone: '', city: '', notes: '', remarks: '', priority: 'medium', dynamicData: {} }))
       return
     }
     const matched = dedupedCustomers.find((item) => {
@@ -1997,10 +2003,11 @@ function App() {
         city: matched.city,
         notes: lastVisit?.notes ?? '',
         remarks: lastVisit?.nextAction ?? '',
+        priority: 'medium',
         dynamicData: existingDynamic
       }))
     } else {
-      setNewLeadForm(prev => ({ ...prev, customerId: 'new', name: value, phone: '', city: '', notes: '', remarks: '', dynamicData: {} }))
+      setNewLeadForm(prev => ({ ...prev, customerId: 'new', name: value, phone: '', city: '', notes: '', remarks: '', priority: 'medium', dynamicData: {} }))
     }
   }
 
@@ -2061,12 +2068,7 @@ function App() {
 
     const newFollowUpId = `f-${Date.now()}`
 
-    let priorityVal: FollowUp['priority'] = 'medium'
-    const dynamicPriorityKey = activeDynamicFields.find(f => f.label.toLowerCase().includes('priority'))?.key
-    if (dynamicPriorityKey && newLeadForm.dynamicData[dynamicPriorityKey]) {
-      const p = newLeadForm.dynamicData[dynamicPriorityKey].toLowerCase()
-      if (['high', 'medium', 'low'].includes(p)) priorityVal = p as FollowUp['priority']
-    }
+    let priorityVal: FollowUp['priority'] = newLeadForm.priority || 'medium'
 
     const newFollowUp: FollowUp = {
       id: newFollowUpId,
@@ -2150,7 +2152,7 @@ function App() {
     setSavingNewLead(false)
     setShowNewLeadModal(false)
     setNewLeadCustomerSearch('')
-    setNewLeadForm({ customerId: 'new', name: '', phone: '', city: '', notes: '', remarks: '', dueDate: '', dynamicData: {} })
+    setNewLeadForm({ customerId: 'new', name: '', phone: '', city: '', notes: '', remarks: '', dueDate: '', priority: 'medium', dynamicData: {} })
     setMessage('Lead captured successfully!')
   }
 
@@ -2311,6 +2313,7 @@ function App() {
           p_next_action: pendingVisit.nextAction || null,
           p_follow_up_date: pendingVisit.followUpDate || null,
           p_visit_started_at: pendingVisit.visitStartedAt ?? null,
+          p_priority: pendingVisit.priority ?? 'medium',
           p_dynamic_fields: pendingVisit.dynamicFields ?? {},
           p_max_gps_accuracy_meters: pendingVisit.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
         })
@@ -2903,6 +2906,7 @@ function App() {
         notes: notes.trim(),
         nextAction: nextAction.trim(),
         followUpDate: followUpDate || undefined,
+        priority: visitPriority,
         status: online ? 'synced' : 'queued',
         maxGpsAccuracyMeters: maxGpsAccuracy,
         visitStartedAt,
@@ -2930,7 +2934,7 @@ function App() {
           id: `f-${Date.now()}`,
           customerId,
           dueDate: followUpDate,
-          priority: 'medium',
+          priority: visitPriority,
           status: 'pending',
           archived: false,
           remarks: nextAction.trim() || 'Follow-up from visit',
@@ -2974,6 +2978,7 @@ function App() {
           p_next_action: payload.nextAction || null,
           p_follow_up_date: payload.followUpDate || null,
           p_visit_started_at: payload.visitStartedAt ?? null,
+          p_priority: payload.priority ?? 'medium',
           p_dynamic_fields: payload.dynamicFields ?? {},
           p_max_gps_accuracy_meters: payload.maxGpsAccuracyMeters ?? GPS_THRESHOLD_METERS,
         })
@@ -3015,6 +3020,7 @@ function App() {
       setNotes('')
       setNextAction('')
       setFollowUpDate('')
+      setVisitPriority('medium')
       setDynamicData({})
       setPhotoFile(null)
       setPhotoPreview('')
@@ -3195,6 +3201,14 @@ function App() {
           <label>
             Follow-up date
             <input type="date" value={followUpDate} onChange={(event) => setFollowUpDate(event.target.value)} />
+          </label>
+          <label>
+            Priority
+            <select value={visitPriority} onChange={(event) => setVisitPriority(event.target.value as FollowUp['priority'])}>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
           </label>
           {activeDynamicFields.length ? (
             <div className="dynamic-fields-section">
@@ -4927,6 +4941,18 @@ function App() {
                     placeholder="Search client"
                   />
                 </label>
+                <label>
+                  Priority
+                  <select
+                    value={visitHistoryPriorityFilter}
+                    onChange={(event) => setVisitHistoryPriorityFilter(event.target.value as 'all' | FollowUp['priority'])}
+                  >
+                    <option value="all">All</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
                 {role !== 'salesman' ? (
                   <label>
                     City
@@ -4948,6 +4974,7 @@ function App() {
                       <th>Customer</th>
                       <th>City</th>
                       <th>Type</th>
+                      <th>Priority</th>
                       <th>GPS</th>
                       <th>Status</th>
                       {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
@@ -4957,7 +4984,7 @@ function App() {
                   <tbody>
                     {visitHistoryRows.length === 0 ? (
                       <tr>
-                        <td colSpan={(role !== 'salesman' ? 9 : 8) + activeDynamicFields.length} className="muted">
+                        <td colSpan={(role !== 'salesman' ? 10 : 9) + activeDynamicFields.length} className="muted">
                           No visits found for the selected filters.
                         </td>
                       </tr>
@@ -4999,6 +5026,15 @@ function App() {
                             <td>{customer?.city ?? '—'}</td>
                             <td>{visit.visitType}</td>
                             <td>
+                              {visit.priority ? (
+                                <span className={`followupPill followupPill--${visit.priority}`}>
+                                  {visit.priority}
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                            <td>
                               {visit.lat.toFixed(4)}, {visit.lng.toFixed(4)} (±{Math.round(visit.accuracy)}m){' '}
                               <a
                                 href={googleMapsSearchUrl(visit.lat, visit.lng)}
@@ -5030,7 +5066,7 @@ function App() {
                         if (!isExpanded) return [parentRow]
                         const expandedRow = (
                           <tr key={`${visit.id}-history`} className="visitHistoryExpandedRow">
-                            <td colSpan={(role !== 'salesman' ? 9 : 8) + activeDynamicFields.length}>
+                            <td colSpan={(role !== 'salesman' ? 10 : 9) + activeDynamicFields.length}>
                               <div className="visitHistoryMeta">
                                 <strong>{visit.customerName}</strong>
                                 <span>Total visits: {selectedVisitClientVisits.length}</span>
@@ -5043,6 +5079,7 @@ function App() {
                                       <th>Ended</th>
                                       {role !== 'salesman' ? <th>Salesman</th> : null}
                                       <th>Type</th>
+                                      <th>Priority</th>
                                       <th>GPS</th>
                                       <th>Status</th>
                                       <th>Notes</th>
@@ -5059,6 +5096,15 @@ function App() {
                                         <td>{formatDateTime(clientVisit.capturedAt)}</td>
                                         {role !== 'salesman' ? <td>{clientVisit.salesmanName}</td> : null}
                                         <td>{clientVisit.visitType}</td>
+                                        <td>
+                                          {clientVisit.priority ? (
+                                            <span className={`followupPill followupPill--${clientVisit.priority}`}>
+                                              {clientVisit.priority}
+                                            </span>
+                                          ) : (
+                                            '—'
+                                          )}
+                                        </td>
                                         <td>
                                           {clientVisit.lat.toFixed(4)}, {clientVisit.lng.toFixed(4)} (±{Math.round(clientVisit.accuracy)}m){' '}
                                           <a
@@ -5357,6 +5403,18 @@ function App() {
                     value={newLeadForm.dueDate}
                     onChange={(e) => setNewLeadForm(prev => ({ ...prev, dueDate: e.target.value }))}
                   />
+                </label>
+
+                <label>
+                  Priority
+                  <select
+                    value={newLeadForm.priority}
+                    onChange={(e) => setNewLeadForm(prev => ({ ...prev, priority: e.target.value as FollowUp['priority'] }))}
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
                 </label>
 
                 {activeDynamicFields.map((field) => (

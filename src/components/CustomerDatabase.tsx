@@ -134,10 +134,6 @@ export function CustomerDatabase({
     () => findFieldByHint(activeDynamicFields, ['customer_type', 'customer type']),
     [activeDynamicFields],
   )
-  const priorityField = useMemo(
-    () => findFieldByHint(activeDynamicFields, ['priority']),
-    [activeDynamicFields],
-  )
   const firmField = useMemo(
     () => findFieldByHint(activeDynamicFields, ['firm', 'firm_name', 'firm name']),
     [activeDynamicFields]
@@ -156,7 +152,6 @@ export function CustomerDatabase({
   const [cityFilter, setCityFilter] = useState('all')
   const [stateFilterVal, setStateFilterVal] = useState('all')
   const [customerTypeFilterVal, setCustomerTypeFilterVal] = useState('all')
-  const [priorityFilterVal, setPriorityFilterVal] = useState('all')
 
   /* debounce search */
   useEffect(() => {
@@ -207,11 +202,6 @@ export function CustomerDatabase({
     return [...new Set(scopedCustomers.map(c => dynamicVal(c, customerTypeField.key)).filter(Boolean))].sort()
   }, [scopedCustomers, customerTypeField])
 
-  const uniquePriorities = useMemo(() => {
-    if (!priorityField) return []
-    return [...new Set(scopedCustomers.map(c => dynamicVal(c, priorityField.key)).filter(Boolean))].sort()
-  }, [scopedCustomers, priorityField])
-
   /* ── filtered data ── */
   const filtered = useMemo(() => {
     const q = searchDebounced.trim().toLowerCase()
@@ -226,10 +216,9 @@ export function CustomerDatabase({
       if (cityFilter !== 'all' && c.city !== cityFilter) return false
       if (stateFilterVal !== 'all' && stateField && dynamicVal(c, stateField.key) !== stateFilterVal) return false
       if (customerTypeFilterVal !== 'all' && customerTypeField && dynamicVal(c, customerTypeField.key) !== customerTypeFilterVal) return false
-      if (priorityFilterVal !== 'all' && priorityField && dynamicVal(c, priorityField.key) !== priorityFilterVal) return false
       return true
     })
-  }, [scopedCustomers, searchDebounced, salesmanFilter, cityFilter, stateFilterVal, customerTypeFilterVal, priorityFilterVal, stateField, customerTypeField, priorityField, firmField])
+  }, [scopedCustomers, searchDebounced, salesmanFilter, cityFilter, stateFilterVal, customerTypeFilterVal, stateField, customerTypeField, firmField])
 
   /* ── open edit modal ── */
   const openEdit = useCallback((c: CustomerRecord) => {
@@ -654,15 +643,6 @@ export function CustomerDatabase({
             </label>
           )}
 
-          {priorityField && (
-            <label className="cdFilterItem">
-              <span className="cdFilterLabel">Priority</span>
-              <select value={priorityFilterVal} onChange={e => setPriorityFilterVal(e.target.value)}>
-                <option value="all">All</option>
-                {uniquePriorities.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </label>
-          )}
         </div>
         <p className="cdFilterCount">{filtered.length} of {scopedCustomers.length} records</p>
       </article>
