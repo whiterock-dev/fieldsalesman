@@ -1287,8 +1287,7 @@ button:focus-visible {
 }
 
 .visitHistoryToggle {
-  padding: 0.2rem 0.35rem;
-  line-height: 1;
+  /* Uses standard button size */
 }
 
 .visitHistoryToggle.isOpen {

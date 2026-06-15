@@ -149,6 +149,7 @@ type NavId =
   | 'field_tracking'
   | 'field_customers'
   | 'visits'
+  | 'salesman_overdue'
 
 const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) => boolean }[] = [
   { id: 'dashboard', label: 'Dashboard', section: 'Overview', show: (r) => r !== 'salesman' },
@@ -162,6 +163,7 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
   { id: 'field_followups', label: 'Pending follow-ups', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
   { id: 'field_tracking', label: 'Live tracking', section: 'Field', show: (r) => r === 'super_salesman' },
   { id: 'field_customers', label: 'My customers', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
+  { id: 'salesman_overdue', label: 'My Overdue Follow-ups', section: 'Field', show: (r) => r === 'salesman' },
   { id: 'admin_overdue', label: 'Overdue follow-ups', section: 'Admin', show: (r) => r !== 'salesman' },
   { id: 'admin_meetings', label: 'Meeting responses', section: 'Admin', show: () => true },
   { id: 'admin_kpi', label: 'KPI table', section: 'Admin', show: (r) => r !== 'salesman' },
@@ -175,7 +177,7 @@ function isNavId(id: string): id is NavId {
 }
 
 function defaultViewForRole(role: Role): NavId {
-  return role === 'salesman' ? 'field_followups' : 'dashboard'
+  return role === 'salesman' ? 'salesman_overdue' : 'dashboard'
 }
 
 function parseNavFromLocation(): NavId {
@@ -375,6 +377,7 @@ function App() {
   const [customers, setCustomers] = useState<Customer[]>(() => (supabaseEnabled ? [] : INITIAL_CUSTOMERS))
   const [followUps, setFollowUps] = useState<FollowUp[]>(() => (supabaseEnabled ? [] : INITIAL_FOLLOWUPS))
   const [visits, setVisits] = useState<VisitRecord[]>([])
+  const [dashboardStats, setDashboardStats] = useState({ customers: 0, visits: 0, lastUpdated: '' })
   const [meetingResponses, setMeetingResponses] = useState<MeetingResponse[]>([])
   const [formFields, setFormFields] = useState<FormField[]>([])
   const [livePoints, setLivePoints] = useState<LivePoint[]>([])
@@ -839,18 +842,18 @@ function App() {
       const [
         { data: inviteRows, error: invitesErr },
         { data: profileRows, error: profilesErr },
-        { data: customerRows, error: customersErr },
+        { data: customerRows, error: customersErr, count: customersCount },
         { data: followupRows, error: followupsErr },
-        { data: visitRows, error: visitsErr },
+        { data: visitRows, error: visitsErr, count: visitsCount },
         meetingResult,
         formFieldResult,
         { data: liveRows, error: liveErr },
       ] = await Promise.all([
         sb.from('app_invites').select('email, role, added_at').order('added_at', { ascending: true }),
         sb.from('profiles').select('id, full_name, role, email, phone'),
-        sb.from('customers').select('*').order('created_at', { ascending: false }),
+        sb.from('customers').select('*', { count: 'exact' }).order('created_at', { ascending: false }),
         sb.from('followups').select('*').order('due_date', { ascending: true }),
-        sb.from('visits').select('*').order('captured_at', { ascending: false }).limit(400),
+        sb.from('visits').select('*', { count: 'exact' }).order('captured_at', { ascending: false }).limit(400),
         sb.from('meeting_responses').select('*').order('created_at', { ascending: false }).limit(200),
         sb.from('form_fields').select('*').order('order', { ascending: true }).order('created_at', { ascending: true }),
         sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(200),
@@ -888,6 +891,18 @@ function App() {
           }
         }
       }
+
+      const now = new Date()
+      const formatTime = now.toLocaleString('en-IN', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true
+      }).replace(',', '')
+
+      setDashboardStats({
+        customers: customersCount ?? (customerRows?.length || 0),
+        visits: visitsCount ?? (visitRows?.length || 0),
+        lastUpdated: formatTime
+      })
 
       if (!invitesErr) {
         setInvitedUsers(
@@ -1167,6 +1182,33 @@ function App() {
       })
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
   }, [followUps, customerById, latestVisitByCustomerId, salesmen])
+  const salesmanOverdueAndDueTodayRows = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return followUps
+      .filter(
+        (item) =>
+          item.salesmanId === activeSalesman.id &&
+          item.status !== 'closed' &&
+          !item.archived &&
+          item.dueDate <= today,
+      )
+      .map((item) => {
+        const customer = customerById.get(item.customerId)
+        const lastVisit = latestVisitByCustomerId.get(item.customerId)
+        return {
+          ...item,
+          customerName: customer?.name ?? 'Unknown customer',
+          customerCity: customer?.city ?? '—',
+          customerPhone: customer?.phone ?? '—',
+          customerDynamicFields: customer?.dynamicFields ?? {},
+          lastVisitDynamicFields: lastVisit?.dynamicFields ?? {},
+          lastVisitType: lastVisit?.visitType ?? '—',
+          lastVisitAt: lastVisit?.capturedAt ?? '',
+          lastVisitNotes: lastVisit?.notes ?? '',
+        }
+      })
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+  }, [followUps, activeSalesman.id, customerById, latestVisitByCustomerId])
   const filteredOverdueRowsDetailed = useMemo(
     () =>
       overdueRowsDetailed.filter((row) =>
@@ -3342,14 +3384,21 @@ function App() {
       case 'dashboard':
         return (
           <section className="panel">
-            <h2>Dashboard</h2>
+            <div className="rowBetween" style={{ alignItems: 'baseline', marginBottom: '1rem' }}>
+              <h2>Dashboard</h2>
+              {dashboardStats.lastUpdated ? (
+                <div className="muted" style={{ fontSize: '0.875rem' }}>
+                  Last updated: {dashboardStats.lastUpdated}
+                </div>
+              ) : null}
+            </div>
             <div className="grid two">
               <article className="card">
                 <h3>Summary</h3>
                 <div className="dashboardMetricGrid">
                   <div className="dashboardMetricTile softBlue">
                     <p className="dashboardMetricLabel">Customers</p>
-                    <p className="dashboardMetricValue">{dedupedCustomers.length}</p>
+                    <p className="dashboardMetricValue">{dashboardStats.customers || dedupedCustomers.length}</p>
                     <p className="dashboardMetricDesc">Unique customer records synced in CRM.</p>
                   </div>
                   <div className="dashboardMetricTile softPeach">
@@ -3359,11 +3408,11 @@ function App() {
                   </div>
                   <div className="dashboardMetricTile softMint">
                     <p className="dashboardMetricLabel">Visits logged</p>
-                    <p className="dashboardMetricValue">{syncedVisits.length}</p>
+                    <p className="dashboardMetricValue">{dashboardStats.visits || syncedVisits.length}</p>
                     <p className="dashboardMetricDesc">Successfully synced field visits only.</p>
                   </div>
                 </div>
-                <p className="muted">Live updates: realtime sync with periodic 15s refresh fallback.</p>
+                <p className="muted">Live updates: realtime sync with periodic 5m refresh fallback.</p>
               </article>
               <article className="card">
                 <h3>Quick links</h3>
@@ -3402,7 +3451,7 @@ function App() {
                     </div>
                     <div className="dashboardMetricTile softSky">
                       <p className="dashboardMetricLabel">Total visits</p>
-                      <p className="dashboardMetricValue">{syncedVisits.length}</p>
+                      <p className="dashboardMetricValue">{dashboardStats.visits || syncedVisits.length}</p>
                       <p className="dashboardMetricDesc">All synced visits across your team.</p>
                     </div>
                     <div className="dashboardMetricTile softRose">
@@ -3485,10 +3534,13 @@ function App() {
                   id: c.id,
                   name: c.name,
                   city: c.city,
+                  address: c.address,
+                  phone: c.phone,
                   lat: c.lat,
                   lng: c.lng,
                   assignedSalesmanId: c.assignedSalesmanId,
                   salesmanName: mapVisibleSalesmen.find((x) => x.id === c.assignedSalesmanId)?.name,
+                  lastVisitDate: latestVisitByCustomerId.get(c.id)?.capturedAt,
                 }))}
                 livePoints={[]}
                 recentVisits={filteredMapRecentVisits}
@@ -3681,6 +3733,223 @@ function App() {
                           rows.push(
                             <tr key={`${row.id}-edit`} className="followupEditRow">
                               <td colSpan={11 + activeDynamicFields.length}>
+                                <div className="followupEditCard">
+                                  <div className="followupEditHeader">
+                                    <div>
+                                      <strong>Edit follow-up</strong>
+                                      <p className="muted">Update the due date, status, priority, and remarks in one place.</p>
+                                    </div>
+                                  </div>
+                                  <div className="followupEditGrid">
+                                    <label>
+                                      Due date
+                                      <input
+                                        type="date"
+                                        value={editingFollowUp.dueDate}
+                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
+                                      />
+                                    </label>
+                                    <label>
+                                      Priority
+                                      <select
+                                        value={editingFollowUp.priority}
+                                        onChange={(e) =>
+                                          setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })
+                                        }
+                                      >
+                                        <option value="low">Low</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="high">High</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Status
+                                      <select
+                                        value={editingFollowUp.status}
+                                        onChange={(e) =>
+                                          setEditingFollowUp({ ...editingFollowUp, status: e.target.value as FollowUpStatus })
+                                        }
+                                      >
+                                        <option value="pending">Pending</option>
+                                        <option value="in_progress">In progress</option>
+                                        <option value="closed">Closed</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Remarks
+                                      <textarea
+                                        value={editingFollowUp.remarks}
+                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
+                                      />
+                                    </label>
+                                  </div>
+                                  <div className="followupEditActions">
+                                    <button type="button" onClick={() => void saveFollowUpEdit(editingFollowUp)}>
+                                      Save
+                                    </button>
+                                    <button type="button" className="secondary" onClick={() => setEditingFollowUp(null)}>
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>,
+                          )
+                        }
+                        return rows
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </section>
+        )
+      }
+      case 'salesman_overdue': {
+        return (
+          <section className="panel">
+            <h2>My Overdue Follow-ups</h2>
+
+            <div className="grid two" style={{ gridTemplateColumns: '1fr', marginBottom: '1.25rem' }}>
+              <article className="card">
+                <h3>My Follow-up Summary</h3>
+                <div className="dashboardMetricGrid">
+                  <div className="dashboardMetricTile softRose">
+                    <p className="dashboardMetricLabel">Overdue</p>
+                    <p className="dashboardMetricValue">{overdueFollowUpsForSalesman.length}</p>
+                    <p className="dashboardMetricDesc">Overdue follow-ups needing immediate action.</p>
+                  </div>
+                  <div className="dashboardMetricTile softSky">
+                    <p className="dashboardMetricLabel">Due Today</p>
+                    <p className="dashboardMetricValue">{followUpsDueTodayForSalesman.length}</p>
+                    <p className="dashboardMetricDesc">Follow-ups scheduled for today.</p>
+                  </div>
+                  <div className="dashboardMetricTile softBlue">
+                    <p className="dashboardMetricLabel">Total Pending</p>
+                    <p className="dashboardMetricValue">{pendingFollowUpsForSalesman.length}</p>
+                    <p className="dashboardMetricDesc">All your open/pending follow-up tasks.</p>
+                  </div>
+                  <div className="dashboardMetricTile softLavender">
+                    <p className="dashboardMetricLabel">Upcoming</p>
+                    <p className="dashboardMetricValue">{pendingFollowUpsForSalesman.filter(f => f.dueDate > todayIso).length}</p>
+                    <p className="dashboardMetricDesc">Future scheduled follow-ups.</p>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <article className="card">
+              <h3>Overdue &amp; Due Today Follow-ups</h3>
+              <div className="scrollArea overdueTableWrap">
+                <table className="overdueTable">
+                  <thead>
+                    <tr>
+                      <th className="overdueCustomerCell">Client</th>
+                      <th className="overdueCompactCell">City</th>
+                      <th className="overdueCompactCell">Phone</th>
+                      <th className="overdueCompactCell">Due date</th>
+                      <th className="overdueCompactCell">Priority</th>
+                      <th className="overdueCompactCell">Status</th>
+                      <th className="overdueLongCell">Remarks</th>
+                      <th className="overdueLongCell">Notes / Response</th>
+                      {activeDynamicFields.map((f) => (
+                        <th key={f.id} className="dynamicFieldCol" title={f.label}>
+                          {f.label}
+                        </th>
+                      ))}
+                      <th className="overdueCompactCell">Last visit</th>
+                      <th className="overdueCompactCell">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {salesmanOverdueAndDueTodayRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={10 + activeDynamicFields.length} className="muted">
+                          No overdue or due today follow-ups! Keep up the good work.
+                        </td>
+                      </tr>
+                    ) : (
+                      salesmanOverdueAndDueTodayRows.flatMap((row) => {
+                        const followUp = followUps.find((item) => item.id === row.id)
+                        const isEditing = editingFollowUp?.id === row.id
+                        const customer = customerById.get(row.customerId)
+                        const rows = [
+                          <tr key={row.id}>
+                            <td className="overdueCustomerCell">{row.customerName}</td>
+                            <td className="overdueCompactCell">{row.customerCity}</td>
+                            <td className="overdueCompactCell">{row.customerPhone}</td>
+                            <td className="overdueCompactCell" style={{ color: row.dueDate < todayIso ? '#dc2626' : '#d97706', fontWeight: 600 }}>
+                              {formatDate(row.dueDate)}
+                            </td>
+                            <td className="overdueCompactCell">
+                              {row.priority ? (
+                                <span className={`followupPill followupPill--${row.priority}`}>
+                                  {row.priority}
+                                </span>
+                              ) : '—'}
+                            </td>
+                            <td className="overdueCompactCell">{row.status}</td>
+                            <td className="overdueLongCell">{row.remarks || '—'}</td>
+                            <td className="overdueLongCell">
+                              <details className="followupNotesDetails">
+                                <summary>View Notes</summary>
+                                <div className="followupNotesContent">
+                                  {meetingResponses.find((m) => m.customerId === row.customerId)?.response || row.lastVisitNotes || 'No previous notes'}
+                                </div>
+                              </details>
+                            </td>
+                            {activeDynamicFields.map((field) => {
+                              const val = row.lastVisitDynamicFields?.[field.key] || row.customerDynamicFields?.[field.key]
+                              return (
+                                <td key={field.id} className="dynamicFieldCol" title={val || '—'}>
+                                  {val || '—'}
+                                </td>
+                              )
+                            })}
+                            <td className="overdueCompactCell">
+                              {row.lastVisitAt ? `${formatDate(row.lastVisitAt)} (${row.lastVisitType})` : '—'}
+                            </td>
+                            <td className="overdueCompactCell">
+                              {followUp ? (
+                                <div className="followupActions">
+                                  {followUp.status !== 'closed' ? (
+                                    <button type="button" onClick={() => void markFollowUpComplete(followUp.id)}>
+                                      Complete
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="secondary"
+                                    onClick={(event) => {
+                                      setEditingFollowUp({ ...followUp })
+                                      const tableWrap = event.currentTarget.closest('.overdueTableWrap')
+                                      requestAnimationFrame(() => {
+                                        requestAnimationFrame(() => {
+                                          const scopedEditRow =
+                                            tableWrap instanceof HTMLElement
+                                              ? tableWrap.querySelector('.followupEditRow')
+                                              : document.querySelector('.followupEditRow')
+                                          if (scopedEditRow instanceof HTMLElement) {
+                                            scopedEditRow.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
+                                          }
+                                        })
+                                      })
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                </div>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          </tr>,
+                        ]
+                        if (isEditing && editingFollowUp) {
+                          rows.push(
+                            <tr key={`${row.id}-edit`} className="followupEditRow">
+                              <td colSpan={10 + activeDynamicFields.length}>
                                 <div className="followupEditCard">
                                   <div className="followupEditHeader">
                                     <div>
@@ -4979,12 +5248,13 @@ function App() {
                       <th>Status</th>
                       {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
                       <th>Photo</th>
+                      <th>Previous Visit History</th>
                     </tr>
                   </thead>
                   <tbody>
                     {visitHistoryRows.length === 0 ? (
                       <tr>
-                        <td colSpan={(role !== 'salesman' ? 10 : 9) + activeDynamicFields.length} className="muted">
+                        <td colSpan={(role !== 'salesman' ? 11 : 10) + activeDynamicFields.length} className="muted">
                           No visits found for the selected filters.
                         </td>
                       </tr>
@@ -4999,30 +5269,7 @@ function App() {
                             </td>
                             <td>{formatDateTime(visit.capturedAt)}</td>
                             {role !== 'salesman' ? <td>{visit.salesmanName}</td> : null}
-                            <td>
-                              <div className="visitCustomerCell">
-                                <span>{visit.customerName}</span>
-                                <button
-                                  type="button"
-                                  className={`secondary visitHistoryToggle${isExpanded ? ' isOpen' : ''}`}
-                                  title={isExpanded ? 'Hide client history' : 'View client history'}
-                                  aria-label={isExpanded ? 'Hide client history' : 'View client history'}
-                                  onClick={() => {
-                                    if (isExpanded) {
-                                      setSelectedVisitClientId(null)
-                                      setSelectedVisitHistoryRowId(null)
-                                      return
-                                    }
-                                    setSelectedVisitClientId(visit.customerId)
-                                    setSelectedVisitHistoryRowId(visit.id)
-                                  }}
-                                >
-                                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-3.3-6.9M21 4v5h-5" />
-                                  </svg>
-                                </button>
-                              </div>
-                            </td>
+                            <td>{visit.customerName}</td>
                             <td>{customer?.city ?? '—'}</td>
                             <td>{visit.visitType}</td>
                             <td>
@@ -5061,12 +5308,29 @@ function App() {
                                 {visitPhotoOpeningId === visit.id ? 'Opening…' : 'View'}
                               </button>
                             </td>
+                            <td>
+                              <button
+                                type="button"
+                                className={`secondary visitHistoryToggle${isExpanded ? ' isOpen' : ''}`}
+                                onClick={() => {
+                                  if (isExpanded) {
+                                    setSelectedVisitClientId(null)
+                                    setSelectedVisitHistoryRowId(null)
+                                    return
+                                  }
+                                  setSelectedVisitClientId(visit.customerId)
+                                  setSelectedVisitHistoryRowId(visit.id)
+                                }}
+                              >
+                                {isExpanded ? 'Hide History' : 'View History'}
+                              </button>
+                            </td>
                           </tr>
                         )
                         if (!isExpanded) return [parentRow]
                         const expandedRow = (
                           <tr key={`${visit.id}-history`} className="visitHistoryExpandedRow">
-                            <td colSpan={(role !== 'salesman' ? 10 : 9) + activeDynamicFields.length}>
+                            <td colSpan={(role !== 'salesman' ? 11 : 10) + activeDynamicFields.length}>
                               <div className="visitHistoryMeta">
                                 <strong>{visit.customerName}</strong>
                                 <span>Total visits: {selectedVisitClientVisits.length}</span>
