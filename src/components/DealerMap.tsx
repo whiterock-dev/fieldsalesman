@@ -13,7 +13,6 @@ import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import { colorForSalesmanId, salesmanColorMap, UNASSIGNED_PIN_COLOR } from '../mapColors'
-import { googleMapsSearchUrl } from '../lib/maps'
 import { formatDateTime } from '../lib/dateUtils'
 
 const DefaultIcon = L.icon({
@@ -44,24 +43,25 @@ function coloredPinIcon(hex: string): L.Icon {
   return icon
 }
 
-const visitDotIconCache = new Map<string, L.DivIcon>()
-function visitDotIcon(hex: string): L.DivIcon {
-  let icon = visitDotIconCache.get(hex)
-  if (!icon) {
-    icon = L.divIcon({
-      className: 'visit-marker-icon',
-      html: `<span class="visit-marker-dot" style="background:${hex}"></span>`,
-      iconSize: [14, 14],
-      iconAnchor: [7, 7],
-    })
-    visitDotIconCache.set(hex, icon)
-  }
-  return icon
-}
+
 
 const liveSalesmanDot = L.divIcon({
   className: 'live-salesman-dot',
-  html: `<div style="width: 14px; height: 14px; background-color: #3b82f6; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5);"></div>`,
+  html: `
+    <div style="position: relative; width: 18px; height: 18px;">
+      <div style="position: absolute; width: 18px; height: 18px; background-color: #3b82f6; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.5); z-index: 2;"></div>
+      <div class="live-pulse-ring" style="position: absolute; top: -13px; left: -13px; width: 44px; height: 44px; background-color: rgba(59, 130, 246, 0.4); border-radius: 50%; z-index: 1;"></div>
+    </div>
+    <style>
+      @keyframes pulse-ring {
+        0% { transform: scale(0.3); opacity: 0.8; }
+        80%, 100% { transform: scale(1.5); opacity: 0; }
+      }
+      .live-pulse-ring {
+        animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+      }
+    </style>
+  `,
   iconSize: [18, 18],
   iconAnchor: [9, 9],
 })
@@ -80,14 +80,29 @@ type CustomerPoint = {
   lastVisitDate?: string
 }
 type LivePoint = { lat: number; lng: number; accuracy: number; time: string; salesmanId?: string }
-type VisitPoint = {
-  id: string
-  customerName: string
-  lat: number
-  lng: number
-  capturedAt: string
-  salesmanName: string
-  salesmanId?: string
+
+
+function LocateControl({ location }: { location: L.LatLngExpression | null }) {
+  const map = useMap()
+  if (!location) return null
+  return (
+    <div className="leaflet-top leaflet-right">
+      <div className="leaflet-control leaflet-bar" style={{ marginTop: '80px', marginRight: '10px' }}>
+        <a
+          href="#"
+          role="button"
+          title="Locate me"
+          onClick={(e) => {
+            e.preventDefault()
+            map.flyTo(location, 16, { duration: 1 })
+          }}
+          style={{ width: '34px', height: '34px', lineHeight: '34px', textAlign: 'center', fontSize: '18px', display: 'block', backgroundColor: '#fff', color: '#333', textDecoration: 'none' }}
+        >
+          <span style={{ position: 'relative', top: '-1px' }}>🎯</span>
+        </a>
+      </div>
+    </div>
+  )
 }
 
 function FitBounds({ points }: { points: L.LatLngExpression[] }) {
@@ -127,7 +142,6 @@ function ResizeInvalidate() {
 type DealerMapProps = {
   customers: CustomerPoint[]
   livePoints: LivePoint[]
-  recentVisits?: VisitPoint[]
   /** Used to resolve salesman names on live pings when only salesmanId is set */
   salesmen?: SalesmanRef[]
   center?: [number, number]
@@ -143,7 +157,6 @@ function salesmanNameForId(salesmen: SalesmanRef[] | undefined, id: string | und
 export function DealerMap({
   customers,
   livePoints,
-  recentVisits = [],
   salesmen,
   center = [20.5937, 78.9629],
   zoom = 5,
@@ -171,12 +184,9 @@ export function DealerMap({
     for (const p of livePoints) {
       if (Number.isFinite(p.lat) && Number.isFinite(p.lng)) list.push([p.lat, p.lng])
     }
-    for (const v of recentVisits) {
-      if (Number.isFinite(v.lat) && Number.isFinite(v.lng)) list.push([v.lat, v.lng])
-    }
     if (myLiveLocation) list.push(myLiveLocation)
     return list
-  }, [customers, livePoints, recentVisits, myLiveLocation])
+  }, [customers, livePoints, myLiveLocation])
 
   const showFit = boundsPoints.length > 0
 
@@ -195,6 +205,7 @@ export function DealerMap({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <ResizeInvalidate />
+        <LocateControl location={myLiveLocation} />
         {showFit ? <FitBounds points={boundsPoints} /> : null}
 
         {myLiveLocation ? (
@@ -214,6 +225,12 @@ export function DealerMap({
             <Popup>
               <strong>{c.name}</strong>
               <br />
+              {myLiveLocation ? (
+                <span style={{ fontSize: '0.9em', color: '#059669', fontWeight: 600 }}>
+                  📍 { (L.latLng(myLiveLocation as [number, number]).distanceTo([c.lat, c.lng]) / 1000).toFixed(2) } km away
+                  <br />
+                </span>
+              ) : null}
               {c.address ? <>{c.address}<br /></> : null}
               {c.city}
               <br />
@@ -273,25 +290,6 @@ export function DealerMap({
           )
         })}
 
-        {recentVisits.slice(0, 30).map((v) => (
-          <Marker
-            key={`v-${v.id}`}
-            position={[v.lat, v.lng]}
-            icon={visitDotIcon(colorForSalesmanId(colors, v.salesmanId))}
-          >
-            <Popup>
-              <strong>Visit</strong>: {v.customerName}
-              <br />
-              <span style={{ fontSize: '0.9em', color: '#334155' }}>Salesman: {v.salesmanName}</span>
-              <br />
-              {formatDateTime(v.capturedAt)}
-              <br />
-              <a href={googleMapsSearchUrl(v.lat, v.lng)} target="_blank" rel="noopener noreferrer">
-                Open in Google Maps
-              </a>
-            </Popup>
-          </Marker>
-        ))}
       </MapContainer>
       <div className="map-legend">
         <span>
@@ -303,10 +301,6 @@ export function DealerMap({
             <i className="legend-dot live" style={{ background: '#9333ea' }} /> Live ping (same color as that salesman)
           </span>
         ) : null}
-        <span>
-          <i className="legend-dot visit" style={{ background: '#16a34a' }} /> Recent visits (field salesmen; salesman
-          color)
-        </span>
       </div>
     </div>
   )

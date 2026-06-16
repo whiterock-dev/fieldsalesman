@@ -12,6 +12,7 @@ import { colorForSalesmanId, salesmanColorMap } from './mapColors'
 import { googleMapsSearchUrl } from './lib/maps'
 import { formatDate, formatDateTime } from './lib/dateUtils'
 import { exportToCsv } from './lib/exportUtils'
+import { SearchableCityDropdown } from './components/SearchableCityDropdown'
 
 const DealerMap = lazy(async () => {
   const module = await import('./components/DealerMap')
@@ -48,12 +49,18 @@ type Customer = {
   whatsapp: string
   address: string
   city: string
+  cityId: string | null
   tags: string[]
   assignedSalesmanId: string
   lat: number
   lng: number
   dynamicFields?: Record<string, string>
   updatedAt?: string
+}
+export type CityMaster = {
+  id: string
+  name: string
+  isActive: boolean
 }
 type FollowUp = {
   id: string
@@ -98,6 +105,7 @@ type VisitSession = {
     phone: string
     address: string
     city: string
+    cityId?: string
   }
 }
 type MeetingResponse = {
@@ -144,6 +152,7 @@ type NavId =
   | 'admin_meetings'
   | 'admin_kpi'
   | 'admin_customers'
+  | 'admin_cities'
   | 'settings'
   | 'field_followups'
   | 'field_tracking'
@@ -168,6 +177,7 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
   { id: 'admin_meetings', label: 'Meeting responses', section: 'Admin', show: () => true },
   { id: 'admin_kpi', label: 'KPI table', section: 'Admin', show: (r) => r !== 'salesman' },
   { id: 'admin_customers', label: 'Customer database', section: 'Admin', show: () => true },
+  { id: 'admin_cities', label: 'City management', section: 'Admin', show: (r) => r === 'owner' || r === 'super_salesman' },
   { id: 'settings', label: 'Settings', section: 'Account', show: () => true },
   { id: 'visits', label: 'Visit history', section: 'Overview', show: () => true },
 ]
@@ -221,6 +231,7 @@ const INITIAL_CUSTOMERS: Customer[] = [
     whatsapp: '9990011122',
     address: 'Shastri Nagar Market',
     city: 'Jaipur',
+    cityId: null,
     tags: ['gypsum', 'soffit'],
     assignedSalesmanId: 's1',
     lat: 26.9165,
@@ -233,6 +244,7 @@ const INITIAL_CUSTOMERS: Customer[] = [
     whatsapp: '9884411100',
     address: 'Navrangpura Main Rd',
     city: 'Ahmedabad',
+    cityId: null,
     tags: ['t-grid'],
     assignedSalesmanId: 's2',
     lat: 23.0322,
@@ -244,6 +256,195 @@ const INITIAL_FOLLOWUPS: FollowUp[] = [
   { id: 'f1', customerId: 'c1', dueDate: '2026-03-16', priority: 'high', status: 'pending', archived: false, remarks: 'Collection pending', salesmanId: 's1' },
   { id: 'f2', customerId: 'c2', dueDate: '2026-03-20', priority: 'medium', status: 'pending', archived: false, remarks: 'Quotation follow-up', salesmanId: 's2' },
 ]
+
+
+
+function AdminCitiesPanel({
+  cities,
+  setCities,
+  onRefresh
+}: {
+  cities: CityMaster[]
+  setCities: React.Dispatch<React.SetStateAction<CityMaster[]>>
+  onRefresh: () => void
+}) {
+  const [newCity, setNewCity] = useState('')
+  const [mergeSourceId, setMergeSourceId] = useState('')
+  const [mergeTargetId, setMergeTargetId] = useState('')
+  const [loading, setLoading] = useState(false)
+  
+  const [editingCityId, setEditingCityId] = useState('')
+  const [editingCityName, setEditingCityName] = useState('')
+
+  const handleStartEdit = (c: CityMaster) => {
+    setEditingCityId(c.id)
+    setEditingCityName(c.name)
+  }
+
+  const handleSaveEdit = async (id: string) => {
+    if (!editingCityName.trim()) return
+    setLoading(true)
+    const newName = editingCityName.trim()
+    const { error } = await supabase!.from('city_master').update({ name: newName }).eq('id', id)
+    
+    if (error) {
+      alert(`Error: ${error.message}`)
+    } else {
+      // Instantly update the UI and re-sort alphabetically!
+      setCities(prev => {
+        const next = prev.map(c => c.id === id ? { ...c, name: newName } : c)
+        return next.sort((a, b) => a.name.localeCompare(b.name))
+      })
+      setEditingCityId('')
+      setEditingCityName('')
+      
+      // Fire and forget the heavy legacy sync so the UI doesn't freeze
+      supabase!.from('customers').update({ city: newName }).eq('city_id', id).then(({ error: updErr }) => {
+        if (updErr) console.warn('Failed to update legacy city names:', updErr.message)
+        onRefresh()
+      })
+    }
+    setLoading(false)
+  }
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newCity.trim()) return
+    setLoading(true)
+    const { data, error } = await supabase!.from('city_master').insert({ name: newCity.trim() }).select().single()
+    if (error) {
+      alert(`Error: ${error.message}`)
+    } else if (data) {
+      setCities(prev => [...prev, { id: data.id, name: data.name, isActive: data.is_active }].sort((a, b) => a.name.localeCompare(b.name)))
+      setNewCity('')
+      onRefresh()
+    }
+    setLoading(false)
+  }
+
+  const handleToggle = async (id: string, currentStatus: boolean, cityName: string) => {
+    const action = currentStatus ? 'DISABLE' : 'ENABLE'
+    if (!confirm(`Are you sure you want to ${action} the city: ${cityName}?\n\nIf disabled, salesmen will no longer be able to select this city for new leads.`)) return
+
+    setLoading(true)
+    const { error } = await supabase!.from('city_master').update({ is_active: !currentStatus }).eq('id', id)
+    if (error) {
+      alert(`Error: ${error.message}`)
+    } else {
+      setCities(prev => prev.map(c => c.id === id ? { ...c, isActive: !currentStatus } : c))
+      onRefresh()
+    }
+    setLoading(false)
+  }
+
+  const handleMerge = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId) return alert('Invalid merge selection.')
+    
+    const sourceName = cities.find(c => c.id === mergeSourceId)?.name || ''
+    const targetName = cities.find(c => c.id === mergeTargetId)?.name || ''
+    
+    if (!confirm(`CRITICAL ACTION:\n\nYou are about to MERGE "${sourceName}" INTO "${targetName}".\n\nAll existing customers currently in "${sourceName}" will be permanently moved to "${targetName}", and "${sourceName}" will be deleted forever.\n\nAre you absolutely sure you want to proceed?`)) return
+    setLoading(true)
+    
+    const { error: updErr } = await supabase!.from('customers')
+      .update({ city_id: mergeTargetId, city: targetName })
+      .eq('city_id', mergeSourceId)
+      
+    if (updErr) {
+      alert(`Customer update error: ${updErr.message}`)
+      setLoading(false)
+      return
+    }
+
+    const { error: delErr } = await supabase!.from('city_master').delete().eq('id', mergeSourceId)
+    if (delErr) {
+      alert(`Delete error: ${delErr.message}`)
+    } else {
+      setCities(prev => prev.filter(c => c.id !== mergeSourceId))
+      setMergeSourceId('')
+      setMergeTargetId('')
+      onRefresh()
+    }
+    setLoading(false)
+  }
+
+  return (
+    <section className="panel">
+      <h2>City Management</h2>
+      <div style={{ display: 'grid', gap: '2rem', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+        <article className="card">
+          <h3>Add New City</h3>
+          <form onSubmit={handleAdd} className="grid single">
+            <input placeholder="City Name" value={newCity} onChange={e => setNewCity(e.target.value)} required />
+            <button type="submit" className="primary" disabled={loading}>Add City</button>
+          </form>
+        </article>
+        
+        <article className="card">
+          <h3>Merge Duplicate Cities</h3>
+          <form onSubmit={handleMerge} className="grid single">
+            <select value={mergeSourceId} onChange={e => setMergeSourceId(e.target.value)} required>
+              <option value="">-- Select INCORRECT City --</option>
+              {cities.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <div style={{ textAlign: 'center', fontWeight: 'bold' }}>&darr; Merge Into &darr;</div>
+            <select value={mergeTargetId} onChange={e => setMergeTargetId(e.target.value)} required>
+              <option value="">-- Select CORRECT City --</option>
+              {cities.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <button type="submit" className="secondary" disabled={loading || !mergeSourceId || !mergeTargetId}>Execute Merge</button>
+          </form>
+        </article>
+      </div>
+
+      <article className="card" style={{ marginTop: '2rem' }}>
+        <h3>Master City List</h3>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="dataTable">
+            <thead>
+              <tr><th>Name</th><th>Status</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+              {cities.map(c => (
+                <tr key={c.id}>
+                  <td>
+                    {editingCityId === c.id ? (
+                      <input 
+                        value={editingCityName} 
+                        onChange={e => setEditingCityName(e.target.value)} 
+                        autoFocus 
+                        style={{ padding: '0.25rem', width: '100%', maxWidth: '300px' }} 
+                      />
+                    ) : (
+                      c.name
+                    )}
+                  </td>
+                  <td>{c.isActive ? 'Active' : 'Disabled'}</td>
+                  <td style={{ display: 'flex', gap: '0.5rem' }}>
+                    {editingCityId === c.id ? (
+                      <>
+                        <button onClick={() => handleSaveEdit(c.id)} disabled={loading || !editingCityName.trim()} className="primary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>Save</button>
+                        <button onClick={() => setEditingCityId('')} disabled={loading} className="secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>Cancel</button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => handleStartEdit(c)} disabled={loading} className="secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>Rename</button>
+                        <button onClick={() => handleToggle(c.id, c.isActive, c.name)} disabled={loading} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>
+                          {c.isActive ? 'Disable' : 'Enable'}
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  )
+}
 
 function dateString(isoDate: string) {
   return new Date(isoDate).toISOString().slice(0, 10)
@@ -381,6 +582,7 @@ function App() {
   const [meetingResponses, setMeetingResponses] = useState<MeetingResponse[]>([])
   const [formFields, setFormFields] = useState<FormField[]>([])
   const [livePoints, setLivePoints] = useState<LivePoint[]>([])
+  const [cities, setCities] = useState<CityMaster[]>([])
 
   const scheduleWorkspaceReloadRef = useRef<(() => void) | null>(null)
   const [online, setOnline] = useState<boolean>(navigator.onLine)
@@ -388,7 +590,7 @@ function App() {
   const [selectedCustomerId, setSelectedCustomerId] = useState('new')
   const [quickLeadPhone, setQuickLeadPhone] = useState('')
   const [quickLeadAddress, setQuickLeadAddress] = useState('')
-  const [quickLeadCity, setQuickLeadCity] = useState('')
+  const [quickLeadCityId, setQuickLeadCityId] = useState('')
   const [visitCustomerSearch, setVisitCustomerSearch] = useState('')
   const [notes, setNotes] = useState('')
   const [nextAction, setNextAction] = useState('')
@@ -461,7 +663,7 @@ function App() {
   const [salesmanFollowUpCustomerFilterDebounced, setSalesmanFollowUpCustomerFilterDebounced] = useState('')
   const [myCustomersNameFilter, setMyCustomersNameFilter] = useState('')
   const [myCustomersNameFilterDebounced, setMyCustomersNameFilterDebounced] = useState('')
-  const [myCustomersCityFilter, setMyCustomersCityFilter] = useState('all')
+  const [myCustomersCityFilter, setMyCustomersCityFilter] = useState('')
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
   const [editingMeetingResponse, setEditingMeetingResponse] = useState<EditingMeetingResponse | null>(null)
   const [archivingFollowUpId, setArchivingFollowUpId] = useState<string | null>(null)
@@ -474,6 +676,7 @@ function App() {
     name: '',
     phone: '',
     city: '',
+    cityId: '',
     notes: '',
     remarks: '',
     dueDate: '',
@@ -496,9 +699,6 @@ function App() {
     [teamProfiles],
   )
 
-  const uniqueCities = useMemo(() => {
-    return [...new Set(customers.map(c => c.city).filter(Boolean))].sort()
-  }, [customers])
 
   const accessAllowed = useMemo(() => {
     const email = authSession?.user?.email
@@ -848,15 +1048,17 @@ function App() {
         meetingResult,
         formFieldResult,
         { data: liveRows, error: liveErr },
+        { data: cityRows, error: citiesErr },
       ] = await Promise.all([
         sb.from('app_invites').select('email, role, added_at').order('added_at', { ascending: true }),
         sb.from('profiles').select('id, full_name, role, email, phone'),
-        sb.from('customers').select('*', { count: 'exact' }).order('created_at', { ascending: false }),
+        sb.from('customers').select('*, city_master:city_id(name)', { count: 'exact' }).order('created_at', { ascending: false }),
         sb.from('followups').select('*').order('due_date', { ascending: true }),
         sb.from('visits').select('*', { count: 'exact' }).order('captured_at', { ascending: false }).limit(400),
         sb.from('meeting_responses').select('*').order('created_at', { ascending: false }).limit(200),
         sb.from('form_fields').select('*').order('order', { ascending: true }).order('created_at', { ascending: true }),
-        sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(200),
+        sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(2000),
+        sb.from('city_master').select('*').order('name', { ascending: true }),
       ])
       if (closed) return
       if (invitesErr) console.warn('app_invites:', invitesErr.message)
@@ -867,6 +1069,16 @@ function App() {
       if (meetingResult.error) console.warn('meeting_responses:', meetingResult.error.message)
       if (formFieldResult.error) console.warn('form_fields:', formFieldResult.error.message)
       if (liveErr) console.warn('live_locations:', liveErr.message)
+      if (citiesErr) console.warn('city_master:', citiesErr.message)
+
+      const safeCityRows = citiesErr ? [] : (cityRows ?? [])
+      setCities(
+        safeCityRows.map((r) => ({
+          id: r.id as string,
+          name: r.name as string,
+          isActive: Boolean(r.is_active),
+        }))
+      )
 
       const meetingRows = meetingResult.error ? [] : (meetingResult.data ?? [])
       const formFieldRows = formFieldResult.error ? [] : (formFieldResult.data ?? [])
@@ -942,7 +1154,8 @@ function App() {
         phone: r.phone as string,
         whatsapp: (r.whatsapp as string) ?? '',
         address: (r.address as string) ?? '',
-        city: (r.city as string) ?? '',
+        city: ((r as any).city_master?.name) || (r.city as string) || '',
+        cityId: (r.city_id as string | null) ?? null,
         tags: (r.tags as string[]) ?? [],
         assignedSalesmanId: (r.assigned_salesman_id as string) ?? '',
         lat: Number(r.lat),
@@ -1400,14 +1613,15 @@ function App() {
   }, [teamProfiles])
 
   const myCustomerCities = useMemo(() => {
-    const cities = [...new Set(myCustomers.map((c) => c.city).filter(Boolean))]
-    return cities.sort((a, b) => a.localeCompare(b))
-  }, [myCustomers])
+    const activeCityIds = [...new Set(myCustomers.map((c) => c.cityId).filter(Boolean))]
+    const mapped = activeCityIds.map(id => cities.find(c => c.id === id)).filter(Boolean) as CityMaster[]
+    return mapped.sort((a, b) => a.name.localeCompare(b.name))
+  }, [myCustomers, cities])
   const filteredMyCustomers = useMemo(() => {
     const q = myCustomersNameFilterDebounced.trim().toLowerCase()
     return myCustomers.filter((item) => {
       const nameOk = q ? item.name.toLowerCase().includes(q) : true
-      const cityOk = myCustomersCityFilter === 'all' ? true : item.city === myCustomersCityFilter
+      const cityOk = myCustomersCityFilter ? item.cityId === myCustomersCityFilter : true
       return nameOk && cityOk
     })
   }, [myCustomers, myCustomersNameFilterDebounced, myCustomersCityFilter])
@@ -1447,7 +1661,7 @@ function App() {
       setSelectedCustomerId('new')
       setQuickLeadPhone('')
       setQuickLeadAddress('')
-      setQuickLeadCity('')
+
       setNotes('')
       setNextAction('')
       return
@@ -1462,7 +1676,7 @@ function App() {
       // Pre-fill customer phone and address
       setQuickLeadPhone(matched.phone)
       setQuickLeadAddress(matched.address)
-      setQuickLeadCity(matched.city)
+
 
       // Pre-fill notes and next action from last visit
       const lastVisit = latestVisitByCustomerId.get(matched.id)
@@ -1472,7 +1686,7 @@ function App() {
       setSelectedCustomerId('new')
       setQuickLeadPhone('')
       setQuickLeadAddress('')
-      setQuickLeadCity('')
+
       setNotes('')
       setNextAction('')
     }
@@ -1495,45 +1709,19 @@ function App() {
   }, [role, mapCustomers, mapSalesmanFilter])
 
   const mapLivePoints = useMemo(() => {
-    if (role === 'salesman') return livePoints.filter((p) => p.salesmanId === activeSalesman.id)
-    return livePoints
+    const points = role === 'salesman' ? livePoints.filter((p) => p.salesmanId === activeSalesman.id) : livePoints
+    const seen = new Set<string>()
+    const latest: LivePoint[] = []
+    for (const p of points) {
+      if (!p.salesmanId) continue
+      if (!seen.has(p.salesmanId)) {
+        seen.add(p.salesmanId)
+        latest.push(p)
+      }
+    }
+    return latest
   }, [role, livePoints, activeSalesman.id])
 
-  const mapRecentVisits = useMemo(() => {
-    const isFieldSalesmanVisit = (v: VisitRecord) => {
-      const p = teamProfiles.find((x) => x.id === v.salesmanId)
-      if (!p) return true
-      return p.role === 'salesman' || p.role === 'super_salesman'
-    }
-    const slice = visits.filter(isFieldSalesmanVisit).slice(0, 40)
-    if (role === 'salesman') {
-      return slice
-        .filter((v) => v.salesmanId === activeSalesman.id)
-        .map((v) => ({
-          id: v.id,
-          customerName: v.customerName,
-          lat: v.lat,
-          lng: v.lng,
-          capturedAt: v.capturedAt,
-          salesmanName: v.salesmanName,
-          salesmanId: v.salesmanId,
-        }))
-    }
-    return slice.map((v) => ({
-      id: v.id,
-      customerName: v.customerName,
-      lat: v.lat,
-      lng: v.lng,
-      capturedAt: v.capturedAt,
-      salesmanName: v.salesmanName,
-      salesmanId: v.salesmanId,
-    }))
-  }, [role, visits, activeSalesman.id, teamProfiles])
-  const filteredMapRecentVisits = useMemo(() => {
-    if (role !== 'owner' && role !== 'sub_admin') return mapRecentVisits
-    if (mapSalesmanFilter === 'all') return mapRecentVisits
-    return mapRecentVisits.filter((v) => v.salesmanId === mapSalesmanFilter)
-  }, [role, mapRecentVisits, mapSalesmanFilter])
 
   const mapVisibleSalesmen = useMemo(() => {
     if (role !== 'salesman') return salesmen
@@ -1554,15 +1742,14 @@ function App() {
     }
     const filtered = out.filter((v) => {
       const d = v.capturedAt.slice(0, 10)
-      const city = (customerById.get(v.customerId)?.city ?? '').toLowerCase()
+      const cityId = customerById.get(v.customerId)?.cityId ?? ''
       const client = v.customerName.toLowerCase()
-      const cityQ = visitHistoryCityFilter.trim().toLowerCase()
       const clientQ = visitHistoryClientFilter.trim().toLowerCase()
       return (
         (!visitHistoryDateFilter || d === visitHistoryDateFilter) &&
         (visitHistorySalesmanFilter === 'all' || v.salesmanId === visitHistorySalesmanFilter) &&
         (!clientQ || client.includes(clientQ)) &&
-        (!cityQ || city.includes(cityQ)) &&
+        (!visitHistoryCityFilter || cityId === visitHistoryCityFilter) &&
         (visitHistoryPriorityFilter === 'all' || v.priority === visitHistoryPriorityFilter)
       )
     })
@@ -2049,7 +2236,7 @@ function App() {
         dynamicData: existingDynamic
       }))
     } else {
-      setNewLeadForm(prev => ({ ...prev, customerId: 'new', name: value, phone: '', city: '', notes: '', remarks: '', priority: 'medium', dynamicData: {} }))
+      setNewLeadForm(prev => ({ ...prev, customerId: 'new', name: value, phone: '', city: '', cityId: '', notes: '', remarks: '', priority: 'medium', dynamicData: {} }))
     }
   }
 
@@ -2063,7 +2250,7 @@ function App() {
       if (!newLeadForm.phone.trim() || !/^\d{10}$/.test(newLeadForm.phone.trim())) {
         return setMessage('Mobile Number must be exactly 10 digits.')
       }
-      if (!newLeadForm.city.trim()) return setMessage('City is required.')
+      if (!newLeadForm.cityId) return setMessage('Please select a valid city from the dropdown.')
     } else {
       if (!targetCustomerId) return setMessage('Please select a customer.')
     }
@@ -2089,7 +2276,8 @@ function App() {
         phone: newLeadForm.phone.trim(),
         whatsapp: newLeadForm.phone.trim(),
         address: '',
-        city: newLeadForm.city.trim(),
+        city: cities.find(c => c.id === newLeadForm.cityId)?.name || '',
+        cityId: newLeadForm.cityId,
         tags: ['New Lead'],
         dynamicFields: newLeadForm.dynamicData,
         assignedSalesmanId: activeSalesman.id,
@@ -2194,7 +2382,7 @@ function App() {
     setSavingNewLead(false)
     setShowNewLeadModal(false)
     setNewLeadCustomerSearch('')
-    setNewLeadForm({ customerId: 'new', name: '', phone: '', city: '', notes: '', remarks: '', dueDate: '', priority: 'medium', dynamicData: {} })
+    setNewLeadForm({ customerId: 'new', name: '', phone: '', city: '', cityId: '', notes: '', remarks: '', dueDate: '', priority: 'medium', dynamicData: {} })
     setMessage('Lead captured successfully!')
   }
 
@@ -2249,6 +2437,12 @@ function App() {
       if (!visitCustomerSearch.trim() || !quickLeadPhone.trim()) {
         return setMessage('Enter customer name and phone before starting a new lead visit.')
       }
+      if (!quickLeadCityId) {
+        return setMessage('Please select a valid city from the dropdown.')
+      }
+      if (!quickLeadAddress.trim()) {
+        return setMessage('Please enter an address.')
+      }
       const leadMobile = parseTenDigitMobile(quickLeadPhone)
       if (!leadMobile) {
         return setMessage('Enter a valid 10-digit mobile number.')
@@ -2276,7 +2470,8 @@ function App() {
         name: visitCustomerSearch.trim(),
         phone: leadPhoneForSession,
         address: quickLeadAddress.trim() || 'Address pending',
-        city: quickLeadCity.trim() || 'Unknown',
+        city: cities.find(c => c.id === quickLeadCityId)?.name || '',
+        cityId: quickLeadCityId,
       },
     })
     setGeo(null)
@@ -2871,6 +3066,7 @@ function App() {
           whatsapp: ql.phone,
           address: ql.address,
           city: ql.city.trim() || 'Unknown',
+          cityId: ql.cityId || null,
           tags: [],
           dynamicFields: dynamicData,
           assignedSalesmanId: activeSalesman.id,
@@ -2889,6 +3085,7 @@ function App() {
             whatsapp: newCustomer.whatsapp,
             address: newCustomer.address,
             city: newCustomer.city,
+            city_id: newCustomer.cityId,
             tags: newCustomer.tags,
             dynamic_fields: dynamicData,
             assigned_salesman_id: newCustomer.assignedSalesmanId,
@@ -3057,7 +3254,7 @@ function App() {
       setSelectedCustomerId('new')
       setQuickLeadPhone('')
       setQuickLeadAddress('')
-      setQuickLeadCity('')
+
       setVisitCustomerSearch('')
       setNotes('')
       setNextAction('')
@@ -3203,9 +3400,15 @@ function App() {
                   title="10 digits; optional +91 is normalized automatically"
                 />
               </label>
-              <label>
+              <label style={{ position: 'relative', zIndex: 10 }}>
                 City
-                <input value={quickLeadCity} onChange={(event) => setQuickLeadCity(event.target.value)} />
+                <div style={{ marginTop: '0.25rem' }}>
+                  <SearchableCityDropdown
+                    cities={cities}
+                    valueId={quickLeadCityId}
+                    onChange={(val) => setQuickLeadCityId(val)}
+                  />
+                </div>
               </label>
               <label>
                 Address
@@ -3542,8 +3745,7 @@ function App() {
                   salesmanName: mapVisibleSalesmen.find((x) => x.id === c.assignedSalesmanId)?.name,
                   lastVisitDate: latestVisitByCustomerId.get(c.id)?.capturedAt,
                 }))}
-                livePoints={[]}
-                recentVisits={filteredMapRecentVisits}
+                livePoints={mapLivePoints}
                 salesmen={mapVisibleSalesmen}
               />
             </Suspense>
@@ -5042,10 +5244,13 @@ function App() {
             ) : null}
           </section>
         )
+      case 'admin_cities':
+        return <AdminCitiesPanel cities={cities} setCities={setCities} onRefresh={() => scheduleWorkspaceReloadRef.current?.()} />
       case 'admin_customers':
         return (
           <Suspense fallback={<section className="panel"><p>Loading customer database…</p></section>}>
             <CustomerDatabase
+              cities={cities}
               customers={dedupedCustomers}
               salesmen={salesmen}
               formFields={formFields}
@@ -5072,17 +5277,15 @@ function App() {
               </label>
             </div>
             <article className="card">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '0.8rem' }}>
-                <select
-                  style={{ fontSize: '0.8rem' }}
-                  value={myCustomersCityFilter}
-                  onChange={(event) => setMyCustomersCityFilter(event.target.value)}
-                >
-                  <option value="all">All cities</option>
-                  {myCustomerCities.map((city) => (
-                    <option key={city} value={city}>{city}</option>
-                  ))}
-                </select>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '0.8rem', zIndex: 5, position: 'relative' }}>
+                <div style={{ minWidth: '200px' }}>
+                  <SearchableCityDropdown
+                    cities={myCustomerCities}
+                    valueId={myCustomersCityFilter}
+                    onChange={(val) => setMyCustomersCityFilter(val)}
+                    placeholder="All cities"
+                  />
+                </div>
               </div>
               <div className="customersTableWrap">
                 <table className="customersTable">
@@ -5224,11 +5427,13 @@ function App() {
                 {role !== 'salesman' ? (
                   <label>
                     City
-                    <input
-                      value={visitHistoryCityFilter}
-                      onChange={(event) => setVisitHistoryCityFilter(event.target.value)}
-                      placeholder="Search city"
-                    />
+                    <div style={{ marginTop: '0.25rem' }}>
+                      <SearchableCityDropdown
+                        cities={cities}
+                        valueId={visitHistoryCityFilter}
+                        onChange={(val) => setVisitHistoryCityFilter(val)}
+                      />
+                    </div>
                   </label>
                 ) : null}
               </div>
@@ -5626,16 +5831,11 @@ function App() {
                     </label>
                     <label>
                       City *
-                      <input
-                        type="text"
-                        required
-                        list="uniqueCitiesDatalist"
-                        value={newLeadForm.city}
-                        onChange={(e) => setNewLeadForm(prev => ({ ...prev, city: e.target.value }))}
+                      <SearchableCityDropdown
+                        cities={cities}
+                        valueId={newLeadForm.cityId || ''}
+                        onChange={(cityId) => setNewLeadForm(prev => ({ ...prev, cityId, city: '' }))}
                       />
-                      <datalist id="uniqueCitiesDatalist">
-                        {uniqueCities.map(city => <option key={city} value={city} />)}
-                      </datalist>
                     </label>
                   </>
                 )}
