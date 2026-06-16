@@ -174,13 +174,20 @@ begin
   end if;
 
   if p_visit_type = 'Existing customer' then
-    v_distance :=
-      6371000 * acos(
-        cos(radians(v_customer.lat)) * cos(radians(p_lat)) * cos(radians(p_lng) - radians(v_customer.lng))
-        + sin(radians(v_customer.lat)) * sin(radians(p_lat))
-      );
-    if v_distance > v_radius_m then
-      raise exception 'Visit rejected: outside %sm customer radius (%.2f m)', v_radius_m, v_distance;
+    if v_customer.lat = 0 and v_customer.lng = 0 then
+      -- First visit: update customer location and allow visit
+      update customers set lat = p_lat, lng = p_lng where id = p_customer_id;
+      v_distance := 0;
+    else
+      -- Subsequent visits: calculate and validate distance
+      v_distance :=
+        6371000 * acos(
+          cos(radians(v_customer.lat)) * cos(radians(p_lat)) * cos(radians(p_lng) - radians(v_customer.lng))
+          + sin(radians(v_customer.lat)) * sin(radians(p_lat))
+        );
+      if v_distance > v_radius_m then
+        raise exception 'Visit rejected: outside %sm customer radius (%.2f m)', v_radius_m, v_distance;
+      end if;
     end if;
   else
     v_distance := null;

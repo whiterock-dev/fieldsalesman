@@ -10,6 +10,8 @@ import { supabase } from '../lib/supabase'
 import { exportToCsv } from '../lib/exportUtils'
 import { formatDateTime } from '../lib/dateUtils'
 import type { Role } from '../lib/roles'
+import { SearchableCityDropdown } from './SearchableCityDropdown'
+import type { CityMaster } from '../App'
 
 /* ───────────── Local types (mirrors App.tsx – avoids circular imports) ───────────── */
 
@@ -20,6 +22,7 @@ type CustomerRecord = {
   whatsapp: string
   address: string
   city: string
+  cityId: string | null
   tags: string[]
   assignedSalesmanId: string
   lat: number
@@ -45,6 +48,7 @@ type SalesmanInfo = { id: string; name: string }
 /* ───────────── Props ───────────── */
 
 export type CustomerDatabaseProps = {
+  cities: CityMaster[]
   customers: CustomerRecord[]
   salesmen: SalesmanInfo[]
   formFields: DynamicField[]
@@ -113,6 +117,7 @@ function parseCsv(text: string) {
 /* ───────────── Component ───────────── */
 
 export function CustomerDatabase({
+  cities,
   customers,
   salesmen,
   formFields,
@@ -149,7 +154,7 @@ export function CustomerDatabase({
   const [search, setSearch] = useState('')
   const [searchDebounced, setSearchDebounced] = useState('')
   const [salesmanFilter, setSalesmanFilter] = useState('all')
-  const [cityFilter, setCityFilter] = useState('all')
+  const [cityFilterId, setCityFilterId] = useState('')
   const [stateFilterVal, setStateFilterVal] = useState('all')
   const [customerTypeFilterVal, setCustomerTypeFilterVal] = useState('all')
 
@@ -162,9 +167,9 @@ export function CustomerDatabase({
   /* ── edit modal state ── */
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null)
   const [editForm, setEditForm] = useState<{
-    name: string; phone: string; city: string; address: string; whatsapp: string
+    name: string; phone: string; city: string; cityId: string; address: string; whatsapp: string
     assignedSalesmanId: string; dynamicFields: Record<string, string>
-  }>({ name: '', phone: '', city: '', address: '', whatsapp: '', assignedSalesmanId: '', dynamicFields: {} })
+  }>({ name: '', phone: '', city: '', cityId: '', address: '', whatsapp: '', assignedSalesmanId: '', dynamicFields: {} })
   const [saving, setSaving] = useState(false)
   const [editMessage, setEditMessage] = useState('')
   const editFormRef = useRef<HTMLFormElement>(null)
@@ -188,10 +193,7 @@ export function CustomerDatabase({
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   /* ── computed filter options ── */
-  const uniqueCities = useMemo(
-    () => [...new Set(scopedCustomers.map(c => c.city).filter(Boolean))].sort(),
-    [scopedCustomers],
-  )
+
   const uniqueStates = useMemo(() => {
     if (!stateField) return []
     return [...new Set(scopedCustomers.map(c => dynamicVal(c, stateField.key)).filter(Boolean))].sort()
@@ -213,12 +215,18 @@ export function CustomerDatabase({
         if (!haystack.includes(q)) return false
       }
       if (salesmanFilter !== 'all' && c.assignedSalesmanId !== salesmanFilter) return false
-      if (cityFilter !== 'all' && c.city !== cityFilter) return false
+      if (cityFilterId) {
+        if (c.cityId && c.cityId !== cityFilterId) return false
+        if (!c.cityId) {
+          const filterCityName = cities.find(x => x.id === cityFilterId)?.name
+          if (filterCityName && c.city !== filterCityName) return false
+        }
+      }
       if (stateFilterVal !== 'all' && stateField && dynamicVal(c, stateField.key) !== stateFilterVal) return false
       if (customerTypeFilterVal !== 'all' && customerTypeField && dynamicVal(c, customerTypeField.key) !== customerTypeFilterVal) return false
       return true
     })
-  }, [scopedCustomers, searchDebounced, salesmanFilter, cityFilter, stateFilterVal, customerTypeFilterVal, stateField, customerTypeField, firmField])
+  }, [scopedCustomers, searchDebounced, salesmanFilter, cityFilterId, stateFilterVal, customerTypeFilterVal, stateField, customerTypeField, firmField, cities])
 
   /* ── open edit modal ── */
   const openEdit = useCallback((c: CustomerRecord) => {
@@ -227,6 +235,7 @@ export function CustomerDatabase({
       name: c.name,
       phone: c.phone,
       city: c.city,
+      cityId: c.cityId || '',
       address: c.address,
       whatsapp: c.whatsapp,
       assignedSalesmanId: c.assignedSalesmanId,
@@ -243,6 +252,12 @@ export function CustomerDatabase({
     setEditMessage('')
 
     try {
+      if (!editForm.cityId) {
+        setEditMessage('Error: You must select a valid active city from the dropdown.')
+        setSaving(false)
+        return
+      }
+
       // Build changed fields for audit
       const changedFields: Record<string, { old: string; new: string }> = {}
       const orig = editingCustomer
@@ -278,6 +293,7 @@ export function CustomerDatabase({
           name: editForm.name,
           phone: editForm.phone,
           city: editForm.city,
+          city_id: editForm.cityId || null,
           address: editForm.address,
           whatsapp: editForm.whatsapp,
           assigned_salesman_id: editForm.assignedSalesmanId,
@@ -615,12 +631,16 @@ export function CustomerDatabase({
             </label>
           )}
 
-          <label className="cdFilterItem">
+          <label className="cdFilterItem cdFilterCity">
             <span className="cdFilterLabel">City</span>
-            <select value={cityFilter} onChange={e => setCityFilter(e.target.value)}>
-              <option value="all">All Cities</option>
-              {uniqueCities.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <div style={{ marginTop: '0.25rem' }}>
+              <SearchableCityDropdown
+                cities={cities}
+                valueId={cityFilterId}
+                onChange={val => setCityFilterId(val)}
+                placeholder="All Cities"
+              />
+            </div>
           </label>
 
           {stateField && (
@@ -763,13 +783,19 @@ export function CustomerDatabase({
                     }}
                   />
                 </label>
-                <label>
+                <label style={{ position: 'relative', zIndex: 10 }}>
                   City *
-                  <input
-                    type="text" required
-                    value={editForm.city}
-                    onChange={e => setEditForm(p => ({ ...p, city: e.target.value }))}
-                  />
+                  <div style={{ marginTop: '0.25rem' }}>
+                    <SearchableCityDropdown
+                      cities={cities}
+                      valueId={editForm.cityId}
+                      fallbackName={editForm.city}
+                      onChange={(cityId) => {
+                        const selected = cities.find(c => c.id === cityId)
+                        setEditForm(p => ({ ...p, cityId, city: selected ? selected.name : '' }))
+                      }}
+                    />
+                  </div>
                 </label>
                 <label>
                   Address
