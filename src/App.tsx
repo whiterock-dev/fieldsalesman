@@ -272,7 +272,7 @@ function AdminCitiesPanel({
   const [mergeSourceId, setMergeSourceId] = useState('')
   const [mergeTargetId, setMergeTargetId] = useState('')
   const [loading, setLoading] = useState(false)
-  
+
   const [editingCityId, setEditingCityId] = useState('')
   const [editingCityName, setEditingCityName] = useState('')
 
@@ -286,7 +286,7 @@ function AdminCitiesPanel({
     setLoading(true)
     const newName = editingCityName.trim()
     const { error } = await supabase!.from('city_master').update({ name: newName }).eq('id', id)
-    
+
     if (error) {
       alert(`Error: ${error.message}`)
     } else {
@@ -297,7 +297,7 @@ function AdminCitiesPanel({
       })
       setEditingCityId('')
       setEditingCityName('')
-      
+
       // Fire and forget the heavy legacy sync so the UI doesn't freeze
       supabase!.from('customers').update({ city: newName }).eq('city_id', id).then(({ error: updErr }) => {
         if (updErr) console.warn('Failed to update legacy city names:', updErr.message)
@@ -340,17 +340,17 @@ function AdminCitiesPanel({
   const handleMerge = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId) return alert('Invalid merge selection.')
-    
+
     const sourceName = cities.find(c => c.id === mergeSourceId)?.name || ''
     const targetName = cities.find(c => c.id === mergeTargetId)?.name || ''
-    
+
     if (!confirm(`CRITICAL ACTION:\n\nYou are about to MERGE "${sourceName}" INTO "${targetName}".\n\nAll existing customers currently in "${sourceName}" will be permanently moved to "${targetName}", and "${sourceName}" will be deleted forever.\n\nAre you absolutely sure you want to proceed?`)) return
     setLoading(true)
-    
+
     const { error: updErr } = await supabase!.from('customers')
       .update({ city_id: mergeTargetId, city: targetName })
       .eq('city_id', mergeSourceId)
-      
+
     if (updErr) {
       alert(`Customer update error: ${updErr.message}`)
       setLoading(false)
@@ -380,7 +380,7 @@ function AdminCitiesPanel({
             <button type="submit" className="primary" disabled={loading}>Add City</button>
           </form>
         </article>
-        
+
         <article className="card">
           <h3>Merge Duplicate Cities</h3>
           <form onSubmit={handleMerge} className="grid single">
@@ -410,11 +410,11 @@ function AdminCitiesPanel({
                 <tr key={c.id}>
                   <td>
                     {editingCityId === c.id ? (
-                      <input 
-                        value={editingCityName} 
-                        onChange={e => setEditingCityName(e.target.value)} 
-                        autoFocus 
-                        style={{ padding: '0.25rem', width: '100%', maxWidth: '300px' }} 
+                      <input
+                        value={editingCityName}
+                        onChange={e => setEditingCityName(e.target.value)}
+                        autoFocus
+                        style={{ padding: '0.25rem', width: '100%', maxWidth: '300px' }}
                       />
                     ) : (
                       c.name
@@ -2328,7 +2328,9 @@ function App() {
         supabase.from('meeting_responses').insert({
           id: mRes.id,
           customer_id: targetCustomerId,
+          customer_name: mRes.customerName,
           salesman_id: activeSalesman.id,
+          salesman_name: mRes.salesmanName,
           response: mRes.response,
           created_at: mRes.createdAt
         }).then(({ error }) => { if (error) console.warn('meeting_response insert error:', error.message) })
@@ -2563,6 +2565,24 @@ function App() {
           .update({ dynamic_fields: { ...(customerById.get(pendingVisit.customerId)?.dynamicFields || {}), ...(pendingVisit.dynamicFields || {}) } })
           .eq('id', pendingVisit.customerId)
         if (customerUpdateError) console.warn('offline customer dynamic_fields sync:', customerUpdateError.message)
+
+        if (pendingVisit.notes && pendingVisit.notes.trim() !== '') {
+          const meetingId = `m-${pendingVisit.id}`
+          const { error: meetingErr } = await supabase.from('meeting_responses').insert({
+            id: meetingId,
+            customer_id: pendingVisit.customerId,
+            customer_name: customer.name,
+            salesman_id: pendingVisit.salesmanId || activeSalesman.id,
+            salesman_name: pendingVisit.salesmanName || 'Unknown',
+            response: pendingVisit.notes.trim(),
+            created_at: pendingVisit.capturedAt,
+            visit_id: pendingVisit.id,
+          })
+          if (meetingErr) {
+            console.warn('offline meeting_responses sync:', meetingErr.message)
+          }
+        }
+
         setVisits((previous) =>
           previous.map((item) => (item.id === pendingVisit.id ? { ...item, status: 'synced' } : item)),
         )
@@ -3234,6 +3254,7 @@ function App() {
           id: meetingId,
           customer_id: customerId,
           customer_name: customerName,
+          salesman_id: activeSalesman.id,
           salesman_name: activeSalesman.name,
           response: notes.trim(),
           created_at: capturedAt,
