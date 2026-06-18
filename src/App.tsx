@@ -218,11 +218,11 @@ function syncNavToLocation(view: NavId) {
 }
 
 /** Max reported GPS uncertainty allowed for existing-customer visit flows. */
-const GPS_THRESHOLD_METERS = 200
+const GPS_THRESHOLD_METERS = 300
 /** New leads have no prior map pin — keep a slightly tighter GPS expectation. */
 const GPS_THRESHOLD_NEW_LEAD_METERS = 150
 /** Max distance from customer map pin for existing-customer visits. */
-const RADIUS_THRESHOLD_METERS = 150
+const RADIUS_THRESHOLD_METERS = 300
 const INITIAL_CUSTOMERS: Customer[] = [
   {
     id: 'c1',
