@@ -87,7 +87,9 @@ create index if not exists idx_live_locations_salesman_captured_at on live_locat
 
 create table if not exists meeting_responses (
   id text primary key,
+  customer_id text references customers(id) on delete cascade,
   customer_name text not null,
+  salesman_id text references profiles(id) on delete cascade,
   salesman_name text not null,
   response text not null,
   created_at timestamptz not null default now(),
@@ -117,6 +119,8 @@ create table if not exists password_reset_otps (
 );
 
 create index if not exists idx_meeting_responses_created_at on meeting_responses (created_at desc);
+create index if not exists idx_meeting_responses_customer_id on meeting_responses (customer_id);
+create index if not exists idx_meeting_responses_salesman_id on meeting_responses (salesman_id);
 create index if not exists idx_form_fields_order on form_fields ("order", created_at);
 create index if not exists idx_password_reset_otps_user on password_reset_otps (user_id, created_at desc);
 create index if not exists idx_password_reset_otps_mobile on password_reset_otps (mobile, created_at desc);
