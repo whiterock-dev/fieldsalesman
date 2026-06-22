@@ -82,42 +82,83 @@ type CustomerPoint = {
 type LivePoint = { lat: number; lng: number; accuracy: number; time: string; salesmanId?: string }
 
 
-function LocateControl({ location }: { location: L.LatLngExpression | null }) {
+function LocateControl({ location, geoBlocked }: { location: L.LatLngExpression | null; geoBlocked: boolean }) {
   const map = useMap()
-  if (!location) return null
+  const [errMsg, setErrMsg] = useState<string | null>(null)
+  const errTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showErr = (msg: string) => {
+    setErrMsg(msg)
+    if (errTimerRef.current) clearTimeout(errTimerRef.current)
+    errTimerRef.current = setTimeout(() => setErrMsg(null), 4000)
+  }
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (location && !geoBlocked) {
+      map.flyTo(location, 16, { duration: 1 })
+    } else if (navigator.geolocation) {
+      // Force a re-check if it was blocked, or if we don't have location yet
+      navigator.geolocation.getCurrentPosition(
+        (pos) => map.flyTo([pos.coords.latitude, pos.coords.longitude], 16, { duration: 1 }),
+        (err) => {
+          if (err.code === err.PERMISSION_DENIED) {
+            showErr('Location permission denied. Enable it in browser settings and try again.')
+          } else if (err.code === err.TIMEOUT) {
+            showErr('Location timed out. Try again in an open area.')
+          } else {
+            showErr('Could not get location. Make sure GPS is on.')
+          }
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+      )
+    } else {
+      showErr('Geolocation is not supported by this browser.')
+    }
+  }
+
+  const isBlocked = geoBlocked
+
   return (
-    <div className="leaflet-top leaflet-right">
-      <div className="leaflet-control leaflet-bar" style={{ marginTop: '80px', marginRight: '10px' }}>
+    <div className="leaflet-top leaflet-left">
+      <div className="leaflet-control leaflet-bar" style={{ marginTop: '80px', marginLeft: '10px' }}>
         <a
           href="#"
           role="button"
-          title="Locate me"
-          onClick={(e) => {
-            e.preventDefault()
-            map.flyTo(location, 16, { duration: 1 })
+          title={isBlocked ? 'Location blocked — tap for help' : 'Go to my location'}
+          onClick={handleClick}
+          style={{
+            width: '30px', height: '30px', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', backgroundColor: '#fff',
+            color: isBlocked ? '#dc2626' : '#333', textDecoration: 'none',
           }}
-          style={{ width: '34px', height: '34px', lineHeight: '34px', textAlign: 'center', fontSize: '18px', display: 'block', backgroundColor: '#fff', color: '#333', textDecoration: 'none' }}
         >
-          <span style={{ position: 'relative', top: '-1px' }}>🎯</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+            <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>
+          </svg>
         </a>
       </div>
+      {errMsg ? (
+        <div style={{
+          marginTop: '4px', marginLeft: '10px', maxWidth: '200px',
+          background: '#1e293b', color: '#fff', fontSize: '0.75rem',
+          padding: '6px 10px', borderRadius: '6px', lineHeight: 1.4,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+        }}>
+          {errMsg}
+        </div>
+      ) : null}
     </div>
   )
 }
 
 function FitBounds({ points }: { points: L.LatLngExpression[] }) {
   const map = useMap()
-  const lastFitKeyRef = useRef<string>('')
+  // Only fit bounds ONCE on initial mount — never reset the user's manual zoom.
+  const hasRunRef = useRef(false)
   useEffect(() => {
-    if (points.length === 0) return
-    const key = points
-      .map((p) => {
-        const ll = Array.isArray(p) ? p : [0, 0]
-        return `${Number(ll[0]).toFixed(5)},${Number(ll[1]).toFixed(5)}`
-      })
-      .join('|')
-    if (key === lastFitKeyRef.current) return
-    lastFitKeyRef.current = key
+    if (hasRunRef.current || points.length === 0) return
+    hasRunRef.current = true
     const bounds = L.latLngBounds(points)
     map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15 })
   }, [map, points])
@@ -165,18 +206,31 @@ export function DealerMap({
   const colors = useMemo(() => salesmanColorMap(salesmen ?? []), [salesmen])
 
   const [myLiveLocation, setMyLiveLocation] = useState<[number, number] | null>(null)
+  // Tracks whether the user has denied / blocked location access
+  const [geoBlocked, setGeoBlocked] = useState(false)
 
   useEffect(() => {
-    if (!navigator.geolocation) return
+    if (!navigator.geolocation) {
+      setGeoBlocked(true)
+      return
+    }
     const watchId = navigator.geolocation.watchPosition(
-      (pos) => setMyLiveLocation([pos.coords.latitude, pos.coords.longitude]),
-      (err) => console.warn('Live location error:', err),
+      (pos) => {
+        setGeoBlocked(false)
+        setMyLiveLocation([pos.coords.latitude, pos.coords.longitude])
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) setGeoBlocked(true)
+        // POSITION_UNAVAILABLE / TIMEOUT are transient — don't block the button for those
+      },
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
     )
     return () => navigator.geolocation.clearWatch(watchId)
   }, [])
 
   const boundsPoints = useMemo(() => {
+    // Deliberately excludes myLiveLocation — including it causes FitBounds to
+    // re-fire on every GPS tick, resetting the user's manual zoom on mobile.
     const list: L.LatLngExpression[] = []
     for (const c of customers) {
       if (Number.isFinite(c.lat) && Number.isFinite(c.lng)) list.push([c.lat, c.lng])
@@ -184,9 +238,8 @@ export function DealerMap({
     for (const p of livePoints) {
       if (Number.isFinite(p.lat) && Number.isFinite(p.lng)) list.push([p.lat, p.lng])
     }
-    if (myLiveLocation) list.push(myLiveLocation)
     return list
-  }, [customers, livePoints, myLiveLocation])
+  }, [customers, livePoints])
 
   const showFit = boundsPoints.length > 0
 
@@ -205,7 +258,7 @@ export function DealerMap({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <ResizeInvalidate />
-        <LocateControl location={myLiveLocation} />
+        <LocateControl location={myLiveLocation} geoBlocked={geoBlocked} />
         {showFit ? <FitBounds points={boundsPoints} /> : null}
 
         {myLiveLocation ? (
