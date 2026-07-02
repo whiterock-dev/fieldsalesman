@@ -1696,14 +1696,10 @@ function App() {
     if (role === 'salesman') {
       return dedupedCustomers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
     }
-    if (role === 'super_salesman') {
-      const mine = dedupedCustomers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
-      return mine.length ? mine : dedupedCustomers
-    }
     return dedupedCustomers
   }, [role, dedupedCustomers, activeSalesman.id])
   const filteredMapCustomers = useMemo(() => {
-    if (role !== 'owner' && role !== 'sub_admin') return mapCustomers
+    if (role !== 'owner' && role !== 'sub_admin' && role !== 'super_salesman') return mapCustomers
     if (mapSalesmanFilter === 'all') return mapCustomers
     return mapCustomers.filter((c) => c.assignedSalesmanId === mapSalesmanFilter)
   }, [role, mapCustomers, mapSalesmanFilter])
