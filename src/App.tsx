@@ -71,6 +71,7 @@ type FollowUp = {
   archived: boolean
   remarks: string
   salesmanId: string
+  visitId?: string
 }
 type VisitRecord = {
   id: string
@@ -1054,8 +1055,8 @@ function App() {
         sb.from('profiles').select('id, full_name, role, email, phone'),
         sb.from('customers').select('*, city_master:city_id(name)', { count: 'exact' }).order('created_at', { ascending: false }),
         sb.from('followups').select('*').order('due_date', { ascending: true }),
-        sb.from('visits').select('*', { count: 'exact' }).order('captured_at', { ascending: false }).limit(400),
-        sb.from('meeting_responses').select('*').order('created_at', { ascending: false }).limit(200),
+        sb.from('visits').select('*', { count: 'exact' }).order('captured_at', { ascending: false }),
+        sb.from('meeting_responses').select('*').order('created_at', { ascending: false }),
         sb.from('form_fields').select('*').order('order', { ascending: true }).order('created_at', { ascending: true }),
         sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(2000),
         sb.from('city_master').select('*').order('name', { ascending: true }),
@@ -1179,6 +1180,7 @@ function App() {
             : (r.status as FollowUpStatus) === 'closed',
           remarks: (r.remarks as string) ?? '',
           salesmanId: r.salesman_id as string,
+          visitId: (r as Record<string, unknown>).visit_id as string | undefined,
         })),
       )
 
@@ -2370,6 +2372,7 @@ function App() {
         status: newFollowUp.status,
         archived: newFollowUp.archived,
         remarks: newFollowUp.remarks,
+        visit_id: newFollowUp.visitId,
       })
       if (followUpError) {
         setSavingNewLead(false)
@@ -3194,6 +3197,7 @@ function App() {
           archived: false,
           remarks: nextAction.trim() || 'Follow-up from visit',
           salesmanId: activeSalesman.id,
+          visitId: visitId,
         }
         setFollowUps((previous) => [nextFollowUp, ...previous])
         if (supabase && online) {
@@ -3206,6 +3210,7 @@ function App() {
             status: nextFollowUp.status,
             archived: nextFollowUp.archived,
             remarks: nextFollowUp.remarks,
+            visit_id: nextFollowUp.visitId,
           })
           if (error) setMessage(`Follow-up save warning: ${error.message}`)
         }
@@ -3901,7 +3906,7 @@ function App() {
                               <details className="followupNotesDetails">
                                 <summary>View Notes</summary>
                                 <div className="followupNotesContent">
-                                  {meetingResponses.find((m) => m.customerId === row.customerId)?.response || row.lastVisitNotes || 'No previous notes'}
+                                  {meetingResponses.find((m) => (row.visitId ? m.visitId === row.visitId : m.customerId === row.customerId))?.response || row.lastVisitNotes || 'No previous notes'}
                                 </div>
                               </details>
                             </td>
@@ -4113,7 +4118,7 @@ function App() {
                               <details className="followupNotesDetails">
                                 <summary>View Notes</summary>
                                 <div className="followupNotesContent">
-                                  {meetingResponses.find((m) => m.customerId === row.customerId)?.response || row.lastVisitNotes || 'No previous notes'}
+                                  {meetingResponses.find((m) => (row.visitId ? m.visitId === row.visitId : m.customerId === row.customerId))?.response || row.lastVisitNotes || 'No previous notes'}
                                 </div>
                               </details>
                             </td>
@@ -5104,7 +5109,7 @@ function App() {
                               <details className="followupNotesDetails">
                                 <summary>View Notes</summary>
                                 <div className="followupNotesContent">
-                                  {meetingResponses.find((m) => m.customerId === item.customerId)?.response || latestVisitByCustomerId.get(item.customerId)?.notes || 'No previous notes'}
+                                  {meetingResponses.find((m) => (item.visitId ? m.visitId === item.visitId : m.customerId === item.customerId))?.response || latestVisitByCustomerId.get(item.customerId)?.notes || 'No previous notes'}
                                 </div>
                               </details>
                             </td>
