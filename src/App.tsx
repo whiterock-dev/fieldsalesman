@@ -1377,7 +1377,7 @@ function App() {
   const overdueRowsDetailed = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
     return followUps
-      .filter((item) => item.status !== 'closed' && item.dueDate < today)
+      .filter((item) => !item.archived && item.status !== 'closed' && item.dueDate < today)
       .map((item) => {
         const customer = customerById.get(item.customerId)
         const lastVisit = latestVisitByCustomerId.get(item.customerId)
@@ -1751,7 +1751,7 @@ function App() {
         (visitHistoryPriorityFilter === 'all' || v.priority === visitHistoryPriorityFilter)
       )
     })
-    return filtered.slice(0, 100)
+    return filtered;
   }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilter, visitHistoryCityFilter, visitHistoryPriorityFilter])
   const selectedVisitClientVisits = useMemo(() => {
     if (!selectedVisitClientId) return []
@@ -4415,7 +4415,7 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {meetingRowsDetailed.slice(0, 80).flatMap(({ item, linkedVisit, customerPhone, dynamicValues }) => {
+                    {meetingRowsDetailed.flatMap(({ item, linkedVisit, customerPhone, dynamicValues }) => {
                       const isEditing = editingMeetingResponse?.id === item.id
                       const linkedCustomerId = linkedVisit?.customerId
                       const linkedFollowUp = linkedCustomerId
