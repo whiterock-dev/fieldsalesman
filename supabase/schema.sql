@@ -33,6 +33,8 @@ create table if not exists customers (
   dynamic_fields jsonb not null default '{}'::jsonb,
   lat double precision not null,
   lng double precision not null,
+  is_deleted boolean not null default false,
+  category text check (category in ('A', 'B', 'C', 'D', 'E')),
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
@@ -46,6 +48,9 @@ create table if not exists followups (
   priority text not null check (priority in ('low', 'medium', 'high')),
   status text not null check (status in ('pending', 'in_progress', 'closed')),
   remarks text,
+  is_deleted boolean not null default false,
+  archived boolean not null default false,
+  visit_id text references visits(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
@@ -67,6 +72,7 @@ create table if not exists visits (
   visit_started_at timestamptz,
   priority text not null default 'medium' check (priority in ('low', 'medium', 'high')),
   dynamic_fields jsonb not null default '{}'::jsonb,
+  is_deleted boolean not null default false,
   created_at timestamptz not null default now()
 );
 
@@ -92,6 +98,7 @@ create table if not exists meeting_responses (
   salesman_id text references profiles(id) on delete cascade,
   salesman_name text not null,
   response text not null,
+  is_deleted boolean not null default false,
   created_at timestamptz not null default now(),
   visit_id text
 );
@@ -281,3 +288,29 @@ CREATE POLICY "Salesman can view logs for their assigned customers" ON customer_
 
 CREATE POLICY "Users can insert edit logs" ON customer_edit_log
   FOR INSERT WITH CHECK (auth.uid()::text = edited_by);
+
+-- Customer delete audit log
+create table if not exists customer_delete_log (
+  id uuid primary key default gen_random_uuid(),
+  deleted_by text not null references profiles(id),
+  deleted_at timestamptz not null default now(),
+  customer_ids jsonb not null,
+  record_count int not null
+);
+
+create index if not exists idx_customer_delete_log_deleted_at on customer_delete_log(deleted_at desc);
+
+-- Enable RLS on delete log
+ALTER TABLE customer_delete_log ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Admins can view all delete logs" ON customer_delete_log
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM profiles 
+      WHERE profiles.id = auth.uid()::text 
+      AND profiles.role IN ('owner', 'sub_admin')
+    )
+  );
+
+CREATE POLICY "Users can insert delete logs" ON customer_delete_log
+  FOR INSERT WITH CHECK (auth.uid()::text = deleted_by);

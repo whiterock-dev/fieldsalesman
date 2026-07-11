@@ -29,6 +29,7 @@ type CustomerRecord = {
   lng: number
   dynamicFields?: Record<string, string>
   updatedAt?: string
+  category?: 'A' | 'B' | 'C' | 'D' | 'E' | null
 }
 
 type DynamicField = {
@@ -157,6 +158,7 @@ export function CustomerDatabase({
   const [cityFilterId, setCityFilterId] = useState('')
   const [stateFilterVal, setStateFilterVal] = useState('all')
   const [customerTypeFilterVal, setCustomerTypeFilterVal] = useState('all')
+  const [customerCategoryFilter, setCustomerCategoryFilter] = useState('all')
 
   /* debounce search */
   useEffect(() => {
@@ -168,8 +170,8 @@ export function CustomerDatabase({
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null)
   const [editForm, setEditForm] = useState<{
     name: string; phone: string; city: string; cityId: string; address: string; whatsapp: string
-    assignedSalesmanId: string; dynamicFields: Record<string, string>
-  }>({ name: '', phone: '', city: '', cityId: '', address: '', whatsapp: '', assignedSalesmanId: '', dynamicFields: {} })
+    assignedSalesmanId: string; category: string; dynamicFields: Record<string, string>
+  }>({ name: '', phone: '', city: '', cityId: '', address: '', whatsapp: '', assignedSalesmanId: '', category: '', dynamicFields: {} })
   const [saving, setSaving] = useState(false)
   const [editMessage, setEditMessage] = useState('')
   const editFormRef = useRef<HTMLFormElement>(null)
@@ -180,6 +182,12 @@ export function CustomerDatabase({
   const [bulkAssignSalesmanId, setBulkAssignSalesmanId] = useState('')
   const [isBulkAssigning, setIsBulkAssigning] = useState(false)
   const [bulkAssignError, setBulkAssignError] = useState('')
+
+  /* ── bulk delete state ── */
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+  const [deleteSuccessMessage, setDeleteSuccessMessage] = useState('')
 
   /* ── audit log state ── */
   const [auditLogCustomer, setAuditLogCustomer] = useState<CustomerRecord | null>(null)
@@ -224,9 +232,10 @@ export function CustomerDatabase({
       }
       if (stateFilterVal !== 'all' && stateField && dynamicVal(c, stateField.key) !== stateFilterVal) return false
       if (customerTypeFilterVal !== 'all' && customerTypeField && dynamicVal(c, customerTypeField.key) !== customerTypeFilterVal) return false
+      if (customerCategoryFilter !== 'all' && c.category !== customerCategoryFilter) return false
       return true
     })
-  }, [scopedCustomers, searchDebounced, salesmanFilter, cityFilterId, stateFilterVal, customerTypeFilterVal, stateField, customerTypeField, firmField, cities])
+  }, [scopedCustomers, searchDebounced, salesmanFilter, cityFilterId, stateFilterVal, customerTypeFilterVal, customerCategoryFilter, stateField, customerTypeField, firmField, cities])
 
   /* ── open edit modal ── */
   const openEdit = useCallback((c: CustomerRecord) => {
@@ -239,6 +248,7 @@ export function CustomerDatabase({
       address: c.address,
       whatsapp: c.whatsapp,
       assignedSalesmanId: c.assignedSalesmanId,
+      category: c.category || '',
       dynamicFields: { ...(c.dynamicFields ?? {}) },
     })
     setEditMessage('')
@@ -273,6 +283,9 @@ export function CustomerDatabase({
           new: profileNameById.get(editForm.assignedSalesmanId) ?? editForm.assignedSalesmanId,
         }
       }
+      if (editForm.category !== orig.category) {
+        changedFields['category'] = { old: orig.category || '—', new: editForm.category || '—' }
+      }
       // Dynamic field changes
       for (const field of activeDynamicFields) {
         const oldVal = dynamicVal(orig, field.key)
@@ -297,6 +310,7 @@ export function CustomerDatabase({
           address: editForm.address,
           whatsapp: editForm.whatsapp,
           assigned_salesman_id: editForm.assignedSalesmanId,
+          category: editForm.category || null,
           dynamic_fields: editForm.dynamicFields,
         })
         .eq('id', editingCustomer.id)
@@ -567,8 +581,44 @@ export function CustomerDatabase({
     }
   }
 
+  const handleBulkDelete = async () => {
+    if (!supabase || selectedCustomerIds.size === 0) return
+    setIsDeleting(true)
+    setDeleteError('')
+    try {
+      const ids = Array.from(selectedCustomerIds)
+      
+      const { error: custErr } = await supabase.from('customers').update({ is_deleted: true }).in('id', ids)
+      if (custErr) throw custErr
+      
+      await supabase.from('visits').update({ is_deleted: true }).in('customer_id', ids)
+      await supabase.from('followups').update({ is_deleted: true }).in('customer_id', ids)
+      await supabase.from('meeting_responses').update({ is_deleted: true }).in('customer_id', ids)
+
+      // Audit logs
+      const { error: auditErr } = await supabase.from('customer_delete_log').insert({
+        deleted_by: currentUserId,
+        customer_ids: ids,
+        record_count: ids.length
+      })
+      if (auditErr) console.warn('Delete audit log write failed:', auditErr)
+
+      setDeleteConfirmOpen(false)
+      setSelectedCustomerIds(new Set())
+      setDeleteSuccessMessage(`${ids.length} customer records deleted successfully.`)
+      setTimeout(() => setDeleteSuccessMessage(''), 3000)
+      onDataChanged()
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   /* ── Render ── */
   const canReassign = role === 'owner' || role === 'sub_admin' || role === 'super_salesman'
+  const canDelete = role === 'owner' || role === 'sub_admin'
+  const showCheckboxes = canReassign || canDelete
   const showSalesmanFilter = role !== 'salesman'
 
   return (
@@ -576,6 +626,23 @@ export function CustomerDatabase({
       <div className="cdHeader">
         <h2>Customer Database</h2>
         <div className="cdActionGroup">
+          {canDelete && (
+            <button 
+              type="button" 
+              className="secondary cdExportBtn" 
+              onClick={() => setDeleteConfirmOpen(true)}
+              disabled={selectedCustomerIds.size === 0}
+              style={{ 
+                borderColor: selectedCustomerIds.size > 0 ? '#dc2626' : undefined, 
+                color: selectedCustomerIds.size > 0 ? '#dc2626' : undefined 
+              }}
+            >
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: 6 }}>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Delete {selectedCustomerIds.size > 0 && `(${selectedCustomerIds.size})`}
+            </button>
+          )}
           {canReassign && (
             <button 
               type="button" 
@@ -584,7 +651,7 @@ export function CustomerDatabase({
               disabled={selectedCustomerIds.size === 0}
               style={{ borderColor: selectedCustomerIds.size > 0 ? 'var(--accent)' : undefined, color: selectedCustomerIds.size > 0 ? 'var(--accent)' : undefined }}
             >
-              Assign Salesman ({selectedCustomerIds.size})
+              Assign Salesman {selectedCustomerIds.size > 0 && `(${selectedCustomerIds.size})`}
             </button>
           )}
           <button type="button" className="secondary cdExportBtn" onClick={handleDownloadTemplate}>
@@ -607,6 +674,12 @@ export function CustomerDatabase({
           </button>
         </div>
       </div>
+
+      {deleteSuccessMessage && (
+        <div className="cdEditMsg" style={{ backgroundColor: '#ecfdf5', color: '#065f46', borderColor: '#a7f3d0', marginBottom: '1rem' }}>
+          {deleteSuccessMessage}
+        </div>
+      )}
 
       {/* ── Filter bar ── */}
       <article className="card cdFiltersCard">
@@ -663,6 +736,18 @@ export function CustomerDatabase({
             </label>
           )}
 
+          <label className="cdFilterItem">
+            <span className="cdFilterLabel">Category</span>
+            <select value={customerCategoryFilter} onChange={e => setCustomerCategoryFilter(e.target.value)}>
+              <option value="all">All</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+              <option value="D">D</option>
+              <option value="E">E</option>
+            </select>
+          </label>
+
         </div>
         <p className="cdFilterCount">{filtered.length} of {scopedCustomers.length} records</p>
       </article>
@@ -681,7 +766,7 @@ export function CustomerDatabase({
             <table className="cdTable">
               <thead>
                 <tr>
-                  {canReassign && (
+                  {showCheckboxes && (
                     <th style={{ width: '40px', textAlign: 'center' }}>
                       <input 
                         type="checkbox" 
@@ -690,7 +775,8 @@ export function CustomerDatabase({
                       />
                     </th>
                   )}
-                  <th className="cdStickyCol">Customer Name</th>
+                  <th className="cdStickyCol cdNameCell">Customer Name</th>
+                  <th className="cdStickyCol2">Category</th>
                   <th>Mobile</th>
                   <th>City</th>
                   <th>Address</th>
@@ -703,7 +789,7 @@ export function CustomerDatabase({
               <tbody>
                 {filtered.map(c => (
                   <tr key={c.id}>
-                    {canReassign && (
+                    {showCheckboxes && (
                       <td style={{ textAlign: 'center' }}>
                         <input 
                           type="checkbox" 
@@ -713,6 +799,13 @@ export function CustomerDatabase({
                       </td>
                     )}
                     <td className="cdStickyCol cdNameCell"><strong>{c.name}</strong></td>
+                    <td className="cdStickyCol2">
+                      {c.category ? (
+                        <span style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--text)', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                          {c.category}
+                        </span>
+                      ) : '—'}
+                    </td>
                     <td className="cdCompactCell">{c.phone}</td>
                     <td className="cdCompactCell">{c.city || '—'}</td>
                     <td className="cdCompactCell cdAddressCell">{c.address || '—'}</td>
@@ -812,6 +905,20 @@ export function CustomerDatabase({
                     value={editForm.whatsapp}
                     onChange={e => setEditForm(p => ({ ...p, whatsapp: e.target.value }))}
                   />
+                </label>
+                <label>
+                  Category
+                  <select
+                    value={editForm.category}
+                    onChange={e => setEditForm(p => ({ ...p, category: e.target.value }))}
+                  >
+                    <option value="">— Select Category —</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                    <option value="E">E</option>
+                  </select>
                 </label>
 
                 {/* Salesman reassignment (admin only) */}
@@ -994,6 +1101,35 @@ export function CustomerDatabase({
               <button type="button" className="secondary" onClick={() => setBulkAssignOpen(false)} disabled={isBulkAssigning}>Cancel</button>
               <button type="button" className="primary" onClick={handleBulkReassign} disabled={isBulkAssigning}>
                 {isBulkAssigning ? 'Reassigning...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    {/* ── Bulk Delete Modal ── */}
+      {deleteConfirmOpen && (
+        <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => !isDeleting && setDeleteConfirmOpen(false)}>
+          <div className="modalCard" onClick={e => e.stopPropagation()}>
+            <div className="modalHeader">
+              <h2>Delete Customers?</h2>
+            </div>
+            <div className="modalBody">
+              <p style={{ marginBottom: '1rem' }}>
+                You are about to permanently delete <strong>{selectedCustomerIds.size}</strong> customer records.<br /><br />
+                This action cannot be undone.<br /><br />
+                Are you sure you want to continue?
+              </p>
+              
+              {deleteError && (
+                <div className="cdEditMsg cdEditMsgErr" style={{ marginBottom: '1rem' }}>
+                  {deleteError}
+                </div>
+              )}
+            </div>
+            <div className="modalFooter">
+              <button type="button" className="secondary" onClick={() => setDeleteConfirmOpen(false)} disabled={isDeleting}>Cancel</button>
+              <button type="button" className="primary" style={{ backgroundColor: '#dc2626', borderColor: '#b91c1c', color: '#ffffff' }} onClick={handleBulkDelete} disabled={isDeleting}>
+                {isDeleting ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>

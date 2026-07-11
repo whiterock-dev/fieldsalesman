@@ -2912,8 +2912,27 @@ a:hover {
   background: var(--accent-subtle);
 }
 
+.cdStickyCol2 {
+  position: sticky;
+  left: 220px;
+  z-index: 1;
+  background: #fff;
+  border-right: 1px solid var(--border);
+}
+
+.cdTable thead .cdStickyCol2 {
+  z-index: 3;
+  background: #fff;
+}
+
+.cdTable tbody tr:hover .cdStickyCol2 {
+  background: var(--accent-subtle);
+}
+
 .cdNameCell {
-  min-width: 140px;
+  width: 220px;
+  min-width: 220px;
+  max-width: 220px;
   white-space: normal;
   word-break: break-word;
 }

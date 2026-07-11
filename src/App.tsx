@@ -56,6 +56,7 @@ type Customer = {
   lng: number
   dynamicFields?: Record<string, string>
   updatedAt?: string
+  category?: 'A' | 'B' | 'C' | 'D' | 'E' | null
 }
 export type CityMaster = {
   id: string
@@ -641,14 +642,17 @@ function App() {
   const [visitHistoryPriorityFilter, setVisitHistoryPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
   const [visitHistoryClientFilter, setVisitHistoryClientFilter] = useState('')
   const [visitHistoryCityFilter, setVisitHistoryCityFilter] = useState('')
+  const [visitHistoryCategoryFilter, setVisitHistoryCategoryFilter] = useState('all')
   const [selectedVisitClientId, setSelectedVisitClientId] = useState<string | null>(null)
   const [selectedVisitHistoryRowId, setSelectedVisitHistoryRowId] = useState<string | null>(null)
   const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
   const [overdueSalesmanFilter, setOverdueSalesmanFilter] = useState('all')
+  const [overdueCategoryFilter, setOverdueCategoryFilter] = useState('all')
   const [overdueSummarySortCol, setOverdueSummarySortCol] = useState<'smName' | 'assigned' | 'dueToday' | 'overdue'>('overdue')
   const [overdueSummarySortDesc, setOverdueSummarySortDesc] = useState(true)
   const [meetingDateFilter, setMeetingDateFilter] = useState('')
   const [meetingSalesmanFilter, setMeetingSalesmanFilter] = useState('all')
+  const [meetingCategoryFilter, setMeetingCategoryFilter] = useState('all')
   const [newFieldLabel, setNewFieldLabel] = useState('')
   const [newFieldType, setNewFieldType] = useState<FormField['type']>('text')
   const [newFieldRequired, setNewFieldRequired] = useState(false)
@@ -662,6 +666,7 @@ function App() {
   const [salesmanFollowUpSalesmanFilter, setSalesmanFollowUpSalesmanFilter] = useState('all')
   const [salesmanFollowUpCustomerFilter, setSalesmanFollowUpCustomerFilter] = useState('')
   const [salesmanFollowUpCustomerFilterDebounced, setSalesmanFollowUpCustomerFilterDebounced] = useState('')
+  const [salesmanFollowUpCategoryFilter, setSalesmanFollowUpCategoryFilter] = useState('all')
   const [myCustomersNameFilter, setMyCustomersNameFilter] = useState('')
   const [myCustomersNameFilterDebounced, setMyCustomersNameFilterDebounced] = useState('')
   const [myCustomersCityFilter, setMyCustomersCityFilter] = useState('')
@@ -1053,10 +1058,10 @@ function App() {
       ] = await Promise.all([
         sb.from('app_invites').select('email, role, added_at').order('added_at', { ascending: true }),
         sb.from('profiles').select('id, full_name, role, email, phone'),
-        sb.from('customers').select('*, city_master:city_id(name)', { count: 'exact' }).order('created_at', { ascending: false }),
-        sb.from('followups').select('*').order('due_date', { ascending: true }),
-        sb.from('visits').select('*', { count: 'exact' }).order('captured_at', { ascending: false }),
-        sb.from('meeting_responses').select('*').order('created_at', { ascending: false }),
+        sb.from('customers').select('*, city_master:city_id(name)', { count: 'exact' }).is('is_deleted', false).order('created_at', { ascending: false }),
+        sb.from('followups').select('*').is('is_deleted', false).order('due_date', { ascending: true }),
+        sb.from('visits').select('*', { count: 'exact' }).is('is_deleted', false).order('captured_at', { ascending: false }),
+        sb.from('meeting_responses').select('*').is('is_deleted', false).order('created_at', { ascending: false }),
         sb.from('form_fields').select('*').order('order', { ascending: true }).order('created_at', { ascending: true }),
         sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(2000),
         sb.from('city_master').select('*').order('name', { ascending: true }),
@@ -1163,6 +1168,7 @@ function App() {
         lng: Number(r.lng),
         dynamicFields: toDynamicFieldsObject(r.dynamic_fields),
         updatedAt: ((r as Record<string, unknown>).updated_at as string) ?? undefined,
+        category: (r.category as 'A'|'B'|'C'|'D'|'E'|null) ?? null,
       }))
       setCustomers(customersMapped)
 
@@ -1386,6 +1392,7 @@ function App() {
           ...item,
           salesmanName,
           customerName: customer?.name ?? 'Unknown customer',
+          customerCategory: customer?.category ?? null,
           customerCity: customer?.city ?? '—',
           customerPhone: customer?.phone ?? '—',
           customerDynamicFields: customer?.dynamicFields ?? {},
@@ -1413,6 +1420,7 @@ function App() {
         return {
           ...item,
           customerName: customer?.name ?? 'Unknown customer',
+          customerCategory: customer?.category ?? null,
           customerCity: customer?.city ?? '—',
           customerPhone: customer?.phone ?? '—',
           customerDynamicFields: customer?.dynamicFields ?? {},
@@ -1426,10 +1434,12 @@ function App() {
   }, [followUps, activeSalesman.id, customerById, latestVisitByCustomerId])
   const filteredOverdueRowsDetailed = useMemo(
     () =>
-      overdueRowsDetailed.filter((row) =>
-        overdueSalesmanFilter === 'all' ? true : row.salesmanId === overdueSalesmanFilter,
-      ),
-    [overdueRowsDetailed, overdueSalesmanFilter],
+      overdueRowsDetailed.filter((row) => {
+        if (overdueSalesmanFilter !== 'all' && row.salesmanId !== overdueSalesmanFilter) return false
+        if (overdueCategoryFilter !== 'all' && row.customerCategory !== overdueCategoryFilter) return false
+        return true
+      }),
+    [overdueRowsDetailed, overdueSalesmanFilter, overdueCategoryFilter],
   )
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), [])
   const overdueSummaryStats = useMemo(() => {
@@ -1467,11 +1477,15 @@ function App() {
         const onOrBeforeTo = salesmanFollowUpDateTo ? item.dueDate <= salesmanFollowUpDateTo : true
         const priorityOk = salesmanFollowUpPriorityFilter === 'all' ? true : item.priority === salesmanFollowUpPriorityFilter
         let customerMatch = true
+        let categoryMatch = true
+        const customer = customers.find((c) => c.id === item.customerId)
         if (lowerSearch) {
-          const customer = customers.find((c) => c.id === item.customerId)
           customerMatch = !!customer && customer.name.toLowerCase().includes(lowerSearch)
         }
-        return onOrAfterFrom && onOrBeforeTo && priorityOk && customerMatch
+        if (salesmanFollowUpCategoryFilter !== 'all') {
+          categoryMatch = !!customer && customer.category === salesmanFollowUpCategoryFilter
+        }
+        return onOrAfterFrom && onOrBeforeTo && priorityOk && customerMatch && categoryMatch
       })
     },
     [
@@ -1480,6 +1494,7 @@ function App() {
       salesmanFollowUpDateTo,
       salesmanFollowUpPriorityFilter,
       salesmanFollowUpCustomerFilterDebounced,
+      salesmanFollowUpCategoryFilter,
       customers,
     ],
   )
@@ -1492,11 +1507,15 @@ function App() {
         const priorityOk = salesmanFollowUpPriorityFilter === 'all' ? true : item.priority === salesmanFollowUpPriorityFilter
         const archiveOk = salesmanFollowUpArchiveFilter ? item.archived : !item.archived
         let customerMatch = true
+        let categoryMatch = true
+        const customer = customers.find((c) => c.id === item.customerId)
         if (lowerSearch) {
-          const customer = customers.find((c) => c.id === item.customerId)
           customerMatch = !!customer && customer.name.toLowerCase().includes(lowerSearch)
         }
-        return onOrAfterFrom && onOrBeforeTo && priorityOk && archiveOk && customerMatch
+        if (salesmanFollowUpCategoryFilter !== 'all') {
+          categoryMatch = !!customer && customer.category === salesmanFollowUpCategoryFilter
+        }
+        return onOrAfterFrom && onOrBeforeTo && priorityOk && archiveOk && customerMatch && categoryMatch
       })
     },
     [
@@ -1506,6 +1525,7 @@ function App() {
       salesmanFollowUpPriorityFilter,
       salesmanFollowUpArchiveFilter,
       salesmanFollowUpCustomerFilterDebounced,
+      salesmanFollowUpCategoryFilter,
       customers,
     ],
   )
@@ -1740,7 +1760,8 @@ function App() {
     }
     const filtered = out.filter((v) => {
       const d = v.capturedAt.slice(0, 10)
-      const cityId = customerById.get(v.customerId)?.cityId ?? ''
+      const customer = customerById.get(v.customerId)
+      const cityId = customer?.cityId ?? ''
       const client = v.customerName.toLowerCase()
       const clientQ = visitHistoryClientFilter.trim().toLowerCase()
       return (
@@ -1748,11 +1769,12 @@ function App() {
         (visitHistorySalesmanFilter === 'all' || v.salesmanId === visitHistorySalesmanFilter) &&
         (!clientQ || client.includes(clientQ)) &&
         (!visitHistoryCityFilter || cityId === visitHistoryCityFilter) &&
-        (visitHistoryPriorityFilter === 'all' || v.priority === visitHistoryPriorityFilter)
+        (visitHistoryPriorityFilter === 'all' || v.priority === visitHistoryPriorityFilter) &&
+        (visitHistoryCategoryFilter === 'all' || customer?.category === visitHistoryCategoryFilter)
       )
     })
     return filtered;
-  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilter, visitHistoryCityFilter, visitHistoryPriorityFilter])
+  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilter, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter])
   const selectedVisitClientVisits = useMemo(() => {
     if (!selectedVisitClientId) return []
     return visitHistoryRows
@@ -1789,7 +1811,9 @@ function App() {
       return roleScopedRows.filter((m) => {
         const dateOk = meetingDateFilter ? m.createdAt.slice(0, 10) === meetingDateFilter : true
         const salesmanOk = role === 'salesman' ? true : meetingSalesmanFilter === 'all' ? true : m.salesmanName === meetingSalesmanFilter
-        return dateOk && salesmanOk
+        const customer = customerById.get(m.customerId)
+        const categoryOk = meetingCategoryFilter === 'all' ? true : customer?.category === meetingCategoryFilter
+        return dateOk && salesmanOk && categoryOk
       })
     },
     [
@@ -1800,6 +1824,8 @@ function App() {
       myCustomerNames,
       meetingDateFilter,
       meetingSalesmanFilter,
+      meetingCategoryFilter,
+      customerById,
     ],
   )
   const exportVisitHistoryCsv = () => {
@@ -2373,7 +2399,7 @@ function App() {
         archived: newFollowUp.archived,
         remarks: newFollowUp.remarks,
         visit_id: newFollowUp.visitId,
-      })
+      }, { onConflict: 'id' })
       if (followUpError) {
         setSavingNewLead(false)
         return setMessage(`Lead follow-up save failed: ${followUpError.message}`)
@@ -3200,23 +3226,7 @@ function App() {
           visitId: visitId,
         }
         setFollowUps((previous) => [nextFollowUp, ...previous])
-        if (supabase && online) {
-          const { error } = await supabase.from('followups').upsert({
-            id: nextFollowUp.id,
-            customer_id: nextFollowUp.customerId,
-            salesman_id: nextFollowUp.salesmanId,
-            due_date: nextFollowUp.dueDate,
-            priority: nextFollowUp.priority,
-            status: nextFollowUp.status,
-            archived: nextFollowUp.archived,
-            remarks: nextFollowUp.remarks,
-            visit_id: nextFollowUp.visitId,
-          })
-          if (error) setMessage(`Follow-up save warning: ${error.message}`)
-        }
-      }
-
-      if (supabase && online) {
+      }      if (supabase && online) {
         const { error: customerDynamicFieldsError } = await supabase
           .from('customers')
           .update({ dynamic_fields: { ...(customerById.get(payload.customerId)?.dynamicFields || {}), ...(payload.dynamicFields || {}) } })
@@ -3269,6 +3279,21 @@ function App() {
             previous.map((v) => (v.id === payload.id ? { ...v, id: visitRowId } : v)),
           )
         }
+
+        if (followUpDate) {
+          const { error } = await supabase.from('followups').upsert({
+            id: `f-${Date.now()}`,
+            customer_id: customerId,
+            salesman_id: activeSalesman.id,
+            due_date: followUpDate,
+            priority: visitPriority,
+            status: 'pending',
+            archived: false,
+            remarks: nextAction.trim() || 'Follow-up from visit',
+            visit_id: visitRowId,
+          }, { onConflict: 'id' })
+          if (error) setMessage(`Follow-up save warning: ${error.message}`)
+        }
       }
 
       setVisitSession(null)
@@ -3315,6 +3340,7 @@ function App() {
         return {
           item,
           linkedVisit,
+          customerCategory: customer?.category ?? null,
           customerPhone: customer?.phone || customer?.whatsapp || '—',
           dynamicValues: activeDynamicFields.map((field) => {
             const value = linkedVisit?.dynamicFields?.[field.key] ?? customer?.dynamicFields?.[field.key]
@@ -3858,13 +3884,25 @@ function App() {
                     ))}
                   </select>
                 </label>
+                <label>
+                  Category
+                  <select value={overdueCategoryFilter} onChange={(e) => setOverdueCategoryFilter(e.target.value)}>
+                    <option value="all">All</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                    <option value="E">E</option>
+                  </select>
+                </label>
               </div>
               <div className="scrollArea overdueTableWrap">
                 <table className="overdueTable">
                   <thead>
                     <tr>
                       <th className="overdueCompactCell">Salesman</th>
-                      <th className="overdueCustomerCell">Client</th>
+                      <th className="overdueCustomerCell">Customer</th>
+                      <th className="overdueCompactCell">Category</th>
                       <th className="overdueCompactCell">City</th>
                       <th className="overdueCompactCell">Phone</th>
                       <th className="overdueCompactCell">Due date</th>
@@ -3896,6 +3934,13 @@ function App() {
                           <tr key={row.id}>
                             <td className="overdueCompactCell">{row.salesmanName}</td>
                             <td className="overdueCustomerCell">{row.customerName}</td>
+                            <td className="overdueCompactCell">
+                              {row.customerCategory ? (
+                                <span className="badge" style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--text)', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                  {row.customerCategory}
+                                </span>
+                              ) : '—'}
+                            </td>
                             <td className="overdueCompactCell">{row.customerCity}</td>
                             <td className="overdueCompactCell">{row.customerPhone}</td>
                             <td className="overdueCompactCell">{formatDate(row.dueDate)}</td>
@@ -4250,7 +4295,7 @@ function App() {
         return (
           <section className="panel">
             <div className="rowBetween" style={{ alignItems: 'center' }}>
-              <h2>Meeting responses</h2>
+              <h2>Meeting Responses</h2>
             </div>
             {(role === 'owner' || role === 'sub_admin') ? (
               <article className="card">
@@ -4366,6 +4411,17 @@ function App() {
                     </select>
                   </label>
                 ) : null}
+                <label>
+                  Category
+                  <select value={meetingCategoryFilter} onChange={(event) => setMeetingCategoryFilter(event.target.value)}>
+                    <option value="all">All</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                    <option value="E">E</option>
+                  </select>
+                </label>
                 {role === 'owner' && (
                   <button
                     type="button"
@@ -4399,6 +4455,7 @@ function App() {
                       <th className="meetingCompactCell">Time</th>
                       {role !== 'salesman' ? <th className="meetingCompactCell">Salesman</th> : null}
                       <th className="meetingCustomerCell">Customer</th>
+                      <th className="meetingCompactCell">Category</th>
                       <th className="meetingCompactCell">Phone</th>
                       <th className="meetingCompactCell">Due date</th>
                       <th className="meetingCompactCell">Priority</th>
@@ -4415,7 +4472,7 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {meetingRowsDetailed.flatMap(({ item, linkedVisit, customerPhone, dynamicValues }) => {
+                    {meetingRowsDetailed.flatMap(({ item, linkedVisit, customerCategory, customerPhone, dynamicValues }) => {
                       const isEditing = editingMeetingResponse?.id === item.id
                       const linkedCustomerId = linkedVisit?.customerId
                       const linkedFollowUp = linkedCustomerId
@@ -4426,6 +4483,13 @@ function App() {
                           <td className="meetingCompactCell">{formatDateTime(item.createdAt)}</td>
                           {role !== 'salesman' ? <td className="meetingCompactCell">{item.salesmanName}</td> : null}
                           <td className="meetingCustomerCell">{item.customerName}</td>
+                          <td className="meetingCompactCell">
+                            {customerCategory ? (
+                              <span className="badge" style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--text)', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                {customerCategory}
+                              </span>
+                            ) : '—'}
+                          </td>
                           <td className="meetingCompactCell">{customerPhone}</td>
                           <td className="meetingCompactCell">
                             {linkedFollowUp ? formatDate(linkedFollowUp.dueDate) : '—'}
@@ -5020,6 +5084,20 @@ function App() {
                   </label>
                 )}
                 <label>
+                  Category
+                  <select
+                    value={salesmanFollowUpCategoryFilter}
+                    onChange={(event) => setSalesmanFollowUpCategoryFilter(event.target.value)}
+                  >
+                    <option value="all">All</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                    <option value="E">E</option>
+                  </select>
+                </label>
+                <label>
                   Archived
                   <button
                     type="button"
@@ -5042,6 +5120,7 @@ function App() {
                   <thead>
                     <tr>
                       <th>Customer</th>
+                      <th>Category</th>
                       {role !== 'salesman' ? <th>Salesman</th> : null}
                       <th>City</th>
                       <th>Due date</th>
@@ -5086,6 +5165,13 @@ function App() {
                                   <span>Archive</span>
                                 </div>
                               </div>
+                            </td>
+                            <td>
+                              {customer?.category ? (
+                                <span className="badge" style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--text)', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                  {customer.category}
+                                </span>
+                              ) : '—'}
                             </td>
                             {role !== 'salesman' ? (
                               <td className="followupSalesmanCell followupCompactCell">{salesmanName}</td>
@@ -5392,7 +5478,7 @@ function App() {
           <section className="panel">
             <article className="card">
               <div className="rowBetween" style={{ alignItems: 'center' }}>
-                <h3>Visit history</h3>
+                <h3>Visit History</h3>
                 {role === 'owner' ? (
                   <button
                     type="button"
@@ -5446,6 +5532,20 @@ function App() {
                     <option value="high">High</option>
                   </select>
                 </label>
+                <label>
+                  Category
+                  <select
+                    value={visitHistoryCategoryFilter}
+                    onChange={(event) => setVisitHistoryCategoryFilter(event.target.value)}
+                  >
+                    <option value="all">All</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                    <option value="E">E</option>
+                  </select>
+                </label>
                 {role !== 'salesman' ? (
                   <label>
                     City
@@ -5467,6 +5567,7 @@ function App() {
                       <th>Ended</th>
                       {role !== 'salesman' ? <th>Salesman</th> : null}
                       <th>Customer</th>
+                      <th>Category</th>
                       <th>City</th>
                       <th>Type</th>
                       <th>Priority</th>
@@ -5495,7 +5596,14 @@ function App() {
                             </td>
                             <td>{formatDateTime(visit.capturedAt)}</td>
                             {role !== 'salesman' ? <td>{visit.salesmanName}</td> : null}
-                            <td>{visit.customerName}</td>
+                            <td className='meetingCustomerCell'>{visit.customerName}</td>
+                            <td>
+                              {customer?.category ? (
+                                <span className="badge" style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--text)', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                  {customer.category}
+                                </span>
+                              ) : '—'}
+                            </td>
                             <td>{customer?.city ?? '—'}</td>
                             <td>{visit.visitType}</td>
                             <td>
