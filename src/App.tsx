@@ -3,7 +3,7 @@ import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { LoginScreen } from './components/LoginScreen'
 import { findInviteForEmail, normalizeEmail, type InvitedUser } from './lib/invites'
-import { addableRolesFor, type Role } from './lib/roles'
+import { addableRolesFor, resettableRolesFor, type Role } from './lib/roles'
 import { formatSignInError } from './lib/authMessages'
 import { clampTenDigitMobileInput, parseTenDigitMobile } from './lib/mobilePhone'
 import { isValidPassword, PASSWORD_POLICY_HINT } from './lib/passwordPolicy'
@@ -637,6 +637,15 @@ function App() {
   const [settingsNewPassword, setSettingsNewPassword] = useState('')
   const [settingsConfirmPassword, setSettingsConfirmPassword] = useState('')
   const [_settingsPasswordMessage, setSettingsPasswordMessage] = useState('')
+  const [resetPasswordModal, setResetPasswordModal] = useState<{ email: string; role: Role } | null>(null)
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
+  const [resetShowPassword, setResetShowPassword] = useState(false)
+  const [resetBusy, setResetBusy] = useState(false)
+  const [resetMessage, setResetMessage] = useState('')
+  const [resetMessageIsError, setResetMessageIsError] = useState(false)
+  const [resetSuccess, setResetSuccess] = useState(false)
+  const [resetSavedPassword, setResetSavedPassword] = useState('')
   const [visitHistoryDateFilter, setVisitHistoryDateFilter] = useState('')
   const [visitHistorySalesmanFilter, setVisitHistorySalesmanFilter] = useState('all')
   const [visitHistoryPriorityFilter, setVisitHistoryPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
@@ -734,6 +743,7 @@ function App() {
   const canInviteTeam = addableTeamRoles.length > 0
   const canSeeTeamDirectory = role === 'owner' || role === 'sub_admin' || role === 'super_salesman'
   const canRemoveInvites = role === 'owner'
+  const canResetPasswords = role === 'owner' || role === 'sub_admin'
 
   const allowedNavIds = useMemo(() => NAV_ITEMS.filter((item) => item.show(role)).map((item) => item.id), [role])
 
@@ -1168,7 +1178,7 @@ function App() {
         lng: Number(r.lng),
         dynamicFields: toDynamicFieldsObject(r.dynamic_fields),
         updatedAt: ((r as Record<string, unknown>).updated_at as string) ?? undefined,
-        category: (r.category as 'A'|'B'|'C'|'D'|'E'|null) ?? null,
+        category: (r.category as 'A' | 'B' | 'C' | 'D' | 'E' | null) ?? null,
       }))
       setCustomers(customersMapped)
 
@@ -2804,6 +2814,90 @@ function App() {
     setSettingsPasswordMessage('Password updated.')
   }
 
+  const openResetPasswordModal = (email: string, userRole: Role) => {
+    setResetPasswordModal({ email, role: userRole })
+    setResetNewPassword('')
+    setResetConfirmPassword('')
+    setResetShowPassword(false)
+    setResetMessage('')
+    setResetMessageIsError(false)
+    setResetSuccess(false)
+    setResetSavedPassword('')
+  }
+
+  const closeResetPasswordModal = () => {
+    setResetPasswordModal(null)
+    setResetNewPassword('')
+    setResetConfirmPassword('')
+    setResetShowPassword(false)
+    setResetMessage('')
+    setResetMessageIsError(false)
+    setResetSuccess(false)
+    setResetSavedPassword('')
+  }
+
+  const submitResetPassword = async () => {
+    if (resetBusy || !resetPasswordModal || !supabase) return
+    setResetMessage('')
+    setResetMessageIsError(false)
+    if (!resetNewPassword) {
+      setResetMessageIsError(true)
+      setResetMessage('Password cannot be blank.')
+      return
+    }
+    if (resetNewPassword.length < 8) {
+      setResetMessageIsError(true)
+      setResetMessage('Password must contain at least 8 characters.')
+      return
+    }
+    if (resetNewPassword !== resetConfirmPassword) {
+      setResetMessageIsError(true)
+      setResetMessage('Password and Confirm Password do not match.')
+      return
+    }
+    if (!isValidPassword(resetNewPassword)) {
+      setResetMessageIsError(true)
+      setResetMessage(PASSWORD_POLICY_HINT)
+      return
+    }
+    setResetBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('reset-user-password', {
+        body: { targetEmail: resetPasswordModal.email, newPassword: resetNewPassword },
+      })
+      if (error) {
+        const status = error instanceof FunctionsHttpError ? error.context?.status : undefined
+        if (status === 401) {
+          setResetMessageIsError(true)
+          setResetMessage('Reset failed: function gateway rejected your session (401). Redeploy with verify_jwt = false.')
+          return
+        }
+        setResetMessageIsError(true)
+        setResetMessage(
+          error.message.includes('Failed to fetch') || error.message.includes('404')
+            ? 'Reset failed: deploy the Edge Function `reset-user-password` (run `npm run deploy:function:reset-password`).'
+            : `Reset failed: ${error.message}`,
+        )
+        return
+      }
+      const payload = data as { ok?: boolean; error?: string; message?: string } | null
+      if (!payload?.ok) {
+        setResetMessageIsError(true)
+        setResetMessage(payload?.error ?? 'Unable to update password. Please try again.')
+        return
+      }
+      setResetSuccess(true)
+      setResetSavedPassword(resetNewPassword)
+      setResetMessage(payload.message ?? 'Password has been changed successfully.')
+      setResetMessageIsError(false)
+    } catch (err) {
+      setResetMessageIsError(true)
+      setResetMessage(`Unable to update password. Please try again. (${err instanceof Error ? err.message : String(err)})`)
+    } finally {
+      setResetBusy(false)
+    }
+  }
+
   const handleSignOut = async () => {
     if (signingOut) return
     setSigningOut(true)
@@ -3226,7 +3320,7 @@ function App() {
           visitId: visitId,
         }
         setFollowUps((previous) => [nextFollowUp, ...previous])
-      }      if (supabase && online) {
+      } if (supabase && online) {
         const { error: customerDynamicFieldsError } = await supabase
           .from('customers')
           .update({ dynamic_fields: { ...(customerById.get(payload.customerId)?.dynamicFields || {}), ...(payload.dynamicFields || {}) } })
@@ -4836,13 +4930,13 @@ function App() {
                         <th>Email</th>
                         <th>Role</th>
                         <th>Added</th>
-                        {canRemoveInvites ? <th aria-label="Actions" /> : null}
+                        {(canRemoveInvites || canResetPasswords) ? <th className="settingsActionsCell2">Action</th> : null}
                       </tr>
                     </thead>
                     <tbody>
                       {invitedUsers.length === 0 ? (
                         <tr>
-                          <td colSpan={canRemoveInvites ? 4 : 3} className="muted">
+                          <td colSpan={(canRemoveInvites || canResetPasswords) ? 4 : 3} className="muted">
                             No invites yet. The first sign-in while this list is empty is added as <strong>owner</strong>.
                             After that, owners add everyone (including more owners) here under Add user.
                           </td>
@@ -4858,11 +4952,18 @@ function App() {
                                 <span className="roleBadge">{u.role.replace(/_/g, ' ')}</span>
                               </td>
                               <td className="muted settingsDateCell">{formatDateTime(u.addedAt)}</td>
-                              {canRemoveInvites ? (
+                              {(canRemoveInvites || canResetPasswords) ? (
                                 <td className="settingsActionsCell">
-                                  <button type="button" className="secondary danger" onClick={() => removeInvitedUser(u.email)}>
-                                    Remove
-                                  </button>
+                                  {canResetPasswords && resettableRolesFor(role).includes(u.role) ? (
+                                    <button type="button" className="secondary" onClick={() => openResetPasswordModal(u.email, u.role)}>
+                                      Reset Password
+                                    </button>
+                                  ) : null}
+                                  {canRemoveInvites ? (
+                                    <button type="button" className="secondary danger" onClick={() => removeInvitedUser(u.email)}>
+                                      Remove
+                                    </button>
+                                  ) : null}
                                 </td>
                               ) : null}
                             </tr>
@@ -4918,6 +5019,87 @@ function App() {
                   </table>
                 </div>
               </article>
+            ) : null}
+            {resetPasswordModal ? (
+              <div className="resetPasswordOverlay" onClick={(e) => { if (e.target === e.currentTarget) closeResetPasswordModal() }}>
+                <div className="resetPasswordModal">
+                  {!resetSuccess ? (
+                    <>
+                      <h3>Reset User Password</h3>
+                      <p className="muted" style={{ marginBottom: '1rem' }}>Resetting password for <strong>{resetPasswordModal.email}</strong></p>
+                      {resetMessage ? (
+                        <p className={resetMessageIsError ? 'message messageError' : 'message messageSuccess'} role="status">{resetMessage}</p>
+                      ) : null}
+                      <div className="formGrid">
+                        <label>
+                          New Password *
+                          <input
+                            type={resetShowPassword ? 'text' : 'password'}
+                            autoComplete="new-password"
+                            value={resetNewPassword}
+                            onChange={(e) => setResetNewPassword(e.target.value)}
+                            placeholder="Enter new password"
+                          />
+                        </label>
+                        <label>
+                          Confirm Password *
+                          <input
+                            type={resetShowPassword ? 'text' : 'password'}
+                            autoComplete="new-password"
+                            value={resetConfirmPassword}
+                            onChange={(e) => setResetConfirmPassword(e.target.value)}
+                            placeholder="Re-enter password"
+                          />
+                        </label>
+                      </div>
+                      <label className="resetShowPasswordLabel">
+                        <input type="checkbox" checked={resetShowPassword} onChange={(e) => setResetShowPassword(e.target.checked)} />
+                        Show Password
+                      </label>
+                      <p className="muted" style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>{PASSWORD_POLICY_HINT}</p>
+                      <div className="resetPasswordButtons">
+                        <button type="button" className="secondary" onClick={closeResetPasswordModal} disabled={resetBusy}>Cancel</button>
+                        <button type="button" onClick={() => void submitResetPassword()} disabled={resetBusy}>
+                          {resetBusy ? 'Saving...' : 'Save Password'}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h3>Reset User Password</h3>
+                      <p className="message messageSuccess" role="status">{resetMessage}</p>
+                      <p className="muted" style={{ marginBottom: '0.5rem' }}>Password for <strong>{resetPasswordModal.email}</strong>:</p>
+                      <div className="resetPasswordDisplay">
+                        <code className="resetPasswordValue">{resetSavedPassword}</code>
+                      </div>
+                      <div className="resetPasswordShareActions">
+                        <button type="button" className="secondary" onClick={() => { void navigator.clipboard.writeText(resetSavedPassword); setResetMessage('Password copied to clipboard!') }}>
+                          📋 Copy Password
+                        </button>
+                        {(() => {
+                          const targetProfile = teamProfiles.find((p) => p.email?.toLowerCase() === resetPasswordModal.email.toLowerCase())
+                          let waNum = ''
+                          if (targetProfile?.phone) {
+                            const tenDigit = clampTenDigitMobileInput(targetProfile.phone)
+                            if (tenDigit.length === 10) waNum = `91${tenDigit}`
+                          }
+                          const text = encodeURIComponent(`Your new password for WhiteRock Field Salesman has been reset.\n\nEmail: ${resetPasswordModal.email}\nNew Password: ${resetSavedPassword}`)
+                          const waUrl = waNum ? `https://wa.me/${waNum}?text=${text}` : `https://wa.me/?text=${text}`
+                          
+                          return (
+                            <a href={waUrl} target="_blank" rel="noopener noreferrer" className="secondary resetWhatsAppBtn">
+                              📱 Send via WhatsApp
+                            </a>
+                          )
+                        })()}
+                      </div>
+                      <div className="resetPasswordButtons" style={{ marginTop: '1rem' }}>
+                        <button type="button" onClick={closeResetPasswordModal}>Close</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             ) : null}
           </section>
         )

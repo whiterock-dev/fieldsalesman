@@ -16,3 +16,10 @@ export function addableRolesFor(inviter: Role): Role[] {
   if (inviter === 'super_salesman') return ['salesman']
   return []
 }
+
+/** Which roles the signed-in user can reset passwords for (Settings → Reset Password). */
+export function resettableRolesFor(resetter: Role): Role[] {
+  if (resetter === 'owner') return ['salesman', 'super_salesman', 'sub_admin']
+  if (resetter === 'sub_admin') return ['salesman', 'super_salesman']
+  return []
+}

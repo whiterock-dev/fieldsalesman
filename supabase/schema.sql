@@ -314,3 +314,31 @@ CREATE POLICY "Admins can view all delete logs" ON customer_delete_log
 
 CREATE POLICY "Users can insert delete logs" ON customer_delete_log
   FOR INSERT WITH CHECK (auth.uid()::text = deleted_by);
+
+-- Password reset audit log
+create table if not exists password_reset_log (
+  id uuid primary key default gen_random_uuid(),
+  target_user_id text not null references profiles(id),
+  target_email text not null,
+  changed_by_id text not null references profiles(id),
+  changed_by_name text not null,
+  action text not null default 'Password Reset',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_password_reset_log_created_at
+  on password_reset_log(created_at desc);
+
+alter table password_reset_log enable row level security;
+
+CREATE POLICY "Admins can view password reset logs" ON password_reset_log
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE profiles.id = auth.uid()::text
+      AND profiles.role IN ('owner', 'sub_admin')
+    )
+  );
+
+CREATE POLICY "System can insert password reset logs" ON password_reset_log
+  FOR INSERT WITH CHECK (true);

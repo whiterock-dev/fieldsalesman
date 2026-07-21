@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "deploy:function:invite": "supabase functions deploy invite-user-with-password"
+    "deploy:function:invite": "npx supabase functions deploy invite-user-with-password",
+    "deploy:function:reset-password": "npx supabase functions deploy reset-user-password"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.99.2",
