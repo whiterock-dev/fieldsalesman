@@ -171,17 +171,17 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
     section: 'Field',
     show: (r) => r === 'salesman' || r === 'super_salesman',
   },
-  { id: 'field_followups', label: 'Pending follow-ups', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
-  { id: 'field_tracking', label: 'Live tracking', section: 'Field', show: (r) => r === 'super_salesman' },
-  { id: 'field_customers', label: 'My customers', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
-  { id: 'salesman_overdue', label: 'My Overdue Follow-ups', section: 'Field', show: (r) => r === 'salesman' },
-  { id: 'admin_overdue', label: 'Overdue follow-ups', section: 'Admin', show: (r) => r !== 'salesman' },
-  { id: 'admin_meetings', label: 'Meeting responses', section: 'Admin', show: () => true },
-  { id: 'admin_kpi', label: 'KPI table', section: 'Admin', show: (r) => r !== 'salesman' },
-  { id: 'admin_customers', label: 'Customer database', section: 'Admin', show: () => true },
-  { id: 'admin_cities', label: 'City management', section: 'Admin', show: (r) => r === 'owner' || r === 'super_salesman' },
+  { id: 'field_followups', label: 'Pending Follow-ups', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
+  { id: 'field_tracking', label: 'Live Tacking', section: 'Field', show: (r) => r === 'super_salesman' },
+  { id: 'field_customers', label: 'My Customers', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
+  { id: 'salesman_overdue', label: 'Overdue Follow-ups', section: 'Field', show: (r) => r === 'salesman' },
+  { id: 'admin_overdue', label: 'Overdue Follow-ups', section: 'Admin', show: (r) => r !== 'salesman' },
+  { id: 'admin_meetings', label: 'Meeting Responses', section: 'Admin', show: () => true },
+  { id: 'admin_kpi', label: 'KPI Table', section: 'Admin', show: (r) => r !== 'salesman' },
+  { id: 'admin_customers', label: 'Customer Database', section: 'Admin', show: (r) => r === 'owner' || r === 'sub_admin' || r === 'super_salesman' },
+  { id: 'admin_cities', label: 'City Management', section: 'Admin', show: (r) => r === 'owner' || r === 'super_salesman' },
   { id: 'settings', label: 'Settings', section: 'Account', show: () => true },
-  { id: 'visits', label: 'Visit history', section: 'Overview', show: () => true },
+  { id: 'visits', label: 'Visit History', section: 'Overview', show: () => true },
 ]
 
 function isNavId(id: string): id is NavId {
@@ -657,11 +657,14 @@ function App() {
   const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
   const [overdueSalesmanFilter, setOverdueSalesmanFilter] = useState('all')
   const [overdueCategoryFilter, setOverdueCategoryFilter] = useState('all')
+  const [overdueSearchFilter, setOverdueSearchFilter] = useState('')
+  const [overduePriorityFilter, setOverduePriorityFilter] = useState<'all' | FollowUp['priority']>('all')
   const [overdueSummarySortCol, setOverdueSummarySortCol] = useState<'smName' | 'assigned' | 'dueToday' | 'overdue'>('overdue')
   const [overdueSummarySortDesc, setOverdueSummarySortDesc] = useState(true)
   const [meetingDateFilter, setMeetingDateFilter] = useState('')
   const [meetingSalesmanFilter, setMeetingSalesmanFilter] = useState('all')
   const [meetingCategoryFilter, setMeetingCategoryFilter] = useState('all')
+  const [meetingPriorityFilter, setMeetingPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
   const [newFieldLabel, setNewFieldLabel] = useState('')
   const [newFieldType, setNewFieldType] = useState<FormField['type']>('text')
   const [newFieldRequired, setNewFieldRequired] = useState(false)
@@ -1413,16 +1416,18 @@ function App() {
         }
       })
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
-  }, [followUps, customerById, latestVisitByCustomerId, salesmen])
+  }, [followUps, activeSalesman.id, customerById, latestVisitByCustomerId, overdueSearchFilter, overduePriorityFilter])
   const salesmanOverdueAndDueTodayRows = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
+    const q = overdueSearchFilter.trim().toLowerCase()
     return followUps
       .filter(
         (item) =>
           item.salesmanId === activeSalesman.id &&
           item.status !== 'closed' &&
           !item.archived &&
-          item.dueDate <= today,
+          item.dueDate <= today &&
+          (overduePriorityFilter === 'all' ? true : item.priority === overduePriorityFilter)
       )
       .map((item) => {
         const customer = customerById.get(item.customerId)
@@ -1440,16 +1445,28 @@ function App() {
           lastVisitNotes: lastVisit?.notes ?? '',
         }
       })
+      .filter((row) => {
+        if (!q) return true
+        return row.customerName.toLowerCase().includes(q) || row.customerPhone.toLowerCase().includes(q)
+      })
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
-  }, [followUps, activeSalesman.id, customerById, latestVisitByCustomerId])
+  }, [followUps, activeSalesman.id, customerById, latestVisitByCustomerId, overdueSearchFilter])
   const filteredOverdueRowsDetailed = useMemo(
-    () =>
-      overdueRowsDetailed.filter((row) => {
+    () => {
+      const q = overdueSearchFilter.trim().toLowerCase()
+      return overdueRowsDetailed.filter((row) => {
         if (overdueSalesmanFilter !== 'all' && row.salesmanId !== overdueSalesmanFilter) return false
         if (overdueCategoryFilter !== 'all' && row.customerCategory !== overdueCategoryFilter) return false
+        if (overduePriorityFilter !== 'all' && row.priority !== overduePriorityFilter) return false
+        if (q) {
+          const matchName = row.customerName.toLowerCase().includes(q)
+          const matchPhone = row.customerPhone.toLowerCase().includes(q)
+          if (!matchName && !matchPhone) return false
+        }
         return true
-      }),
-    [overdueRowsDetailed, overdueSalesmanFilter, overdueCategoryFilter],
+      })
+    },
+    [overdueRowsDetailed, overdueSalesmanFilter, overdueCategoryFilter, overdueSearchFilter, overduePriorityFilter],
   )
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), [])
   const overdueSummaryStats = useMemo(() => {
@@ -1621,11 +1638,8 @@ function App() {
   }, [customers])
 
   const myCustomers = useMemo(() => {
-    if (role === 'salesman') {
+    if (role === 'salesman' || role === 'super_salesman') {
       return dedupedCustomers.filter((c) => c.assignedSalesmanId === activeSalesman.id)
-    }
-    if (role === 'super_salesman') {
-      return dedupedCustomers
     }
     return dedupedCustomers
   }, [role, dedupedCustomers, activeSalesman.id])
@@ -1652,9 +1666,9 @@ function App() {
   const filteredMyCustomers = useMemo(() => {
     const q = myCustomersNameFilterDebounced.trim().toLowerCase()
     return myCustomers.filter((item) => {
-      const nameOk = q ? item.name.toLowerCase().includes(q) : true
+      const searchOk = q ? (item.name.toLowerCase().includes(q) || item.phone.toLowerCase().includes(q)) : true
       const cityOk = myCustomersCityFilter ? item.cityId === myCustomersCityFilter : true
-      return nameOk && cityOk
+      return searchOk && cityOk
     })
   }, [myCustomers, myCustomersNameFilterDebounced, myCustomersCityFilter])
 
@@ -3427,13 +3441,16 @@ function App() {
     [formFields],
   )
   const meetingRowsDetailed = useMemo(
-    () =>
-      filteredMeetingResponses.map((item) => {
+    () => {
+      let rows = filteredMeetingResponses.map((item) => {
         const linkedVisit = item.visitId ? visitById.get(item.visitId) : undefined
         const customer = linkedVisit ? customerById.get(linkedVisit.customerId) : customerByName.get(item.customerName.trim().toLowerCase())
+        const linkedCustomerId = linkedVisit?.customerId || customer?.id
+        const linkedFollowUp = linkedCustomerId ? followUps.find(f => f.customerId === linkedCustomerId) : undefined
         return {
           item,
           linkedVisit,
+          linkedFollowUp,
           customerCategory: customer?.category ?? null,
           customerPhone: customer?.phone || customer?.whatsapp || '—',
           dynamicValues: activeDynamicFields.map((field) => {
@@ -3441,8 +3458,13 @@ function App() {
             return value || '—'
           }),
         }
-      }),
-    [filteredMeetingResponses, visitById, customerById, customerByName, activeDynamicFields],
+      })
+      if (meetingPriorityFilter !== 'all') {
+        rows = rows.filter(r => r.linkedFollowUp?.priority === meetingPriorityFilter)
+      }
+      return rows
+    },
+    [filteredMeetingResponses, visitById, customerById, customerByName, activeDynamicFields, followUps, meetingPriorityFilter],
   )
 
 
@@ -3968,6 +3990,24 @@ function App() {
             <article className="card">
               <div className="inlineFilters">
                 <label>
+                  Search
+                  <input
+                    type="text"
+                    value={overdueSearchFilter}
+                    onChange={(e) => setOverdueSearchFilter(e.target.value)}
+                    placeholder="Search name or phone"
+                  />
+                </label>
+                <label>
+                  Priority
+                  <select value={overduePriorityFilter} onChange={(e) => setOverduePriorityFilter(e.target.value as 'all' | FollowUp['priority'])}>
+                    <option value="all">All priorities</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                </label>
+                <label>
                   Salesman
                   <select value={overdueSalesmanFilter} onChange={(event) => setOverdueSalesmanFilter(event.target.value)}>
                     <option value="all">All field salesmen</option>
@@ -4217,7 +4257,31 @@ function App() {
             </div>
 
             <article className="card">
-              <h3>Overdue &amp; Due Today Follow-ups</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1rem' }}>
+                <h3 style={{ margin: 0 }}>Overdue &amp; Due Today Follow-ups</h3>
+                <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                  <label className="myCustomersSearchWrap" style={{ margin: 0, width: '250px' }}>
+                    <input
+                      className="myCustomersSearchInput"
+                      value={overdueSearchFilter}
+                      onChange={(event) => setOverdueSearchFilter(event.target.value)}
+                      placeholder="Search name or phone"
+                    />
+                  </label>
+                  <label style={{ margin: 0, width: '150px' }}>
+                    <select
+                      value={overduePriorityFilter}
+                      onChange={(event) => setOverduePriorityFilter(event.target.value as 'all' | FollowUp['priority'])}
+                      style={{ width: '100%' }}
+                    >
+                      <option value="all">All priorities</option>
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
               <div className="scrollArea overdueTableWrap">
                 <table className="overdueTable">
                   <thead>
@@ -4544,6 +4608,15 @@ function App() {
                     <option value="E">E</option>
                   </select>
                 </label>
+                <label>
+                  Priority
+                  <select value={meetingPriorityFilter} onChange={(event) => setMeetingPriorityFilter(event.target.value as 'all' | FollowUp['priority'])}>
+                    <option value="all">All priorities</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                </label>
                 {role === 'owner' && (
                   <button
                     type="button"
@@ -4594,12 +4667,9 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {meetingRowsDetailed.flatMap(({ item, linkedVisit, customerCategory, customerPhone, dynamicValues }) => {
+                    {meetingRowsDetailed.flatMap(({ item, linkedVisit, linkedFollowUp, customerCategory, customerPhone, dynamicValues }) => {
                       const isEditing = editingMeetingResponse?.id === item.id
-                      const linkedCustomerId = linkedVisit?.customerId
-                      const linkedFollowUp = linkedCustomerId
-                        ? followUps.find((f) => f.customerId === linkedCustomerId)
-                        : undefined
+                      const linkedCustomerId = item.customerId
                       const rows = [
                         <tr key={item.id}>
                           <td className="meetingCompactCell">{formatDateTime(item.createdAt)}</td>
@@ -5347,6 +5417,7 @@ function App() {
                       <th>Category</th>
                       {role !== 'salesman' ? <th>Salesman</th> : null}
                       <th>City</th>
+                      <th>Phone</th>
                       <th>Due date</th>
                       <th>Priority</th>
                       <th>Status</th>
@@ -5359,7 +5430,7 @@ function App() {
                   <tbody>
                     {filteredFollowUpsForSalesman.length === 0 ? (
                       <tr>
-                        <td colSpan={(role !== 'salesman' ? 9 : 8) + activeDynamicFields.length} className="muted">
+                        <td colSpan={(role !== 'salesman' ? 10 : 9) + activeDynamicFields.length} className="muted">
                           No follow-ups match the selected filters.
                         </td>
                       </tr>
@@ -5368,6 +5439,7 @@ function App() {
                         const customer = customers.find((entry) => entry.id === item.customerId)
                         const salesmanName = salesmen.find((entry) => entry.id === item.salesmanId)?.name ?? 'Salesman'
                         const customerCity = customer?.city ?? 'Unknown city'
+                        const customerPhone = customer?.phone ?? '—'
                         const isEditing = editingFollowUp?.id === item.id
                         const rows = [
                           <tr key={item.id}>
@@ -5401,6 +5473,21 @@ function App() {
                               <td className="followupSalesmanCell followupCompactCell">{salesmanName}</td>
                             ) : null}
                             <td className="followupCityCell followupCompactCell">{customerCity}</td>
+                            <td className="followupCompactCell">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'nowrap' }}>
+                                <span>{customerPhone}</span>
+                                {customerPhone && customerPhone !== '—' && (
+                                  <div style={{ display: 'flex', gap: '8px', paddingLeft: '4px' }}>
+                                    <a href={`tel:${customerPhone}`} title="Call" style={{ display: 'flex', alignItems: 'center', color: 'var(--accent)', textDecoration: 'none' }}>
+                                      <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                                    </a>
+                                    <a href={`https://wa.me/91${customerPhone.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" title="WhatsApp" style={{ display: 'flex', alignItems: 'center', color: '#25D366', textDecoration: 'none' }}>
+                                      <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/></svg>
+                                    </a>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
                             <td className="followupDateCell followupCompactCell">{formatDate(item.dueDate)}</td>
                             <td className="followupCompactCell">
                               <span className={`followupPill followupPill--${item.priority}`}>
@@ -5460,7 +5547,7 @@ function App() {
                         if (isEditing && editingFollowUp) {
                           rows.push(
                             <tr key={`${item.id}-edit`} className="followupEditRow">
-                              <td colSpan={(role !== 'salesman' ? 9 : 8) + activeDynamicFields.length}>
+                              <td colSpan={(role !== 'salesman' ? 10 : 9) + activeDynamicFields.length}>
                                 <div className="followupEditCard">
                                   <div className="followupEditHeader">
                                     <div>
@@ -5598,19 +5685,19 @@ function App() {
         return (
           <section className="panel">
             <div className="myCustomersHeader">
-              <h2>My customers</h2>
-              <label className="myCustomersSearchWrap">
-                <input
-                  className="myCustomersSearchInput"
-                  value={myCustomersNameFilter}
-                  onChange={(event) => setMyCustomersNameFilter(event.target.value)}
-                  placeholder="Search customer by name"
-                />
-              </label>
+              <h2>My Customers </h2>
             </div>
             <article className="card">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '0.8rem', zIndex: 5, position: 'relative' }}>
-                <div style={{ minWidth: '200px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem', fontSize: '0.85rem', zIndex: 5, position: 'relative' }}>
+                <label className="myCustomersSearchWrap" style={{ margin: 0, width: '250px' }}>
+                  <input
+                    className="myCustomersSearchInput"
+                    value={myCustomersNameFilter}
+                    onChange={(event) => setMyCustomersNameFilter(event.target.value)}
+                    placeholder="Search by name or phone"
+                  />
+                </label>
+                <div style={{ width: '250px' }}>
                   <SearchableCityDropdown
                     cities={myCustomerCities}
                     valueId={myCustomersCityFilter}
@@ -5627,7 +5714,6 @@ function App() {
                       <th>City</th>
                       <th>Phone</th>
                       {/* <th>Tags</th> */}
-                      {role !== 'salesman' ? <th>Salesperson</th> : null}
                       {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
                       <th>Actions</th>
                     </tr>
@@ -5635,7 +5721,7 @@ function App() {
                   <tbody>
                     {filteredMyCustomers.length === 0 ? (
                       <tr>
-                        <td colSpan={(role !== 'salesman' ? 5 : 4) + activeDynamicFields.length} className="muted">
+                        <td colSpan={4 + activeDynamicFields.length} className="muted">
                           No customers match this search.
                         </td>
                       </tr>
@@ -5658,13 +5744,6 @@ function App() {
                               <span className="customerEmptyChip">—</span>
                             )}
                           </td> */}
-                          {role !== 'salesman' ? (
-                            <td className="customersSalesmanCell">
-                              <span className="customerMetaPill customerMetaPill--subtle">
-                                {profileNameById.get(item.assignedSalesmanId) ?? 'Unassigned'}
-                              </span>
-                            </td>
-                          ) : null}
                           {activeDynamicFields.map((field) => {
                             const val = item.dynamicFields?.[field.key]
                             return (

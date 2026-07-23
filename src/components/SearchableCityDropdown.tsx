@@ -58,7 +58,7 @@ export function SearchableCityDropdown({
   }
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ position: 'relative', border: '1px solid #8a8f98', borderRadius: '10px' }}>
       <input
         type="text"
         placeholder={placeholder}
