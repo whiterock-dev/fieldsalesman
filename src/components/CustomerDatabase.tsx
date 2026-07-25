@@ -321,6 +321,16 @@ export function CustomerDatabase({
         return
       }
 
+      // If salesman changed, sync related tables
+      if (editForm.assignedSalesmanId !== orig.assignedSalesmanId) {
+        const newSalesmanName = editForm.assignedSalesmanId ? (profileNameById.get(editForm.assignedSalesmanId) || editForm.assignedSalesmanId) : 'Unassigned';
+        if (editForm.assignedSalesmanId) {
+          await supabase.from('followups').update({ salesman_id: editForm.assignedSalesmanId }).eq('customer_id', editingCustomer.id);
+          await supabase.from('meeting_responses').update({ salesman_name: newSalesmanName }).eq('customer_id', editingCustomer.id);
+          await supabase.from('visits').update({ salesman_id: editForm.assignedSalesmanId, salesman_name: newSalesmanName }).eq('customer_id', editingCustomer.id);
+        }
+      }
+
       // Write audit log
       try {
         await supabase.from('customer_edit_log').insert({
@@ -553,8 +563,16 @@ export function CustomerDatabase({
 
       if (error) throw error
 
-      // Audit logs
       const newSalesmanName = bulkAssignSalesmanId ? (profileNameById.get(bulkAssignSalesmanId) || bulkAssignSalesmanId) : 'Unassigned'
+
+      // Sync related records to the new salesman so they don't show up under the old salesman
+      if (bulkAssignSalesmanId) {
+        await supabase.from('followups').update({ salesman_id: bulkAssignSalesmanId }).in('customer_id', ids);
+        await supabase.from('meeting_responses').update({ salesman_name: newSalesmanName }).in('customer_id', ids);
+        await supabase.from('visits').update({ salesman_id: bulkAssignSalesmanId, salesman_name: newSalesmanName }).in('customer_id', ids);
+      }
+
+      // Audit logs
       const logs = ids.map(id => {
         const c = customers.find(x => x.id === id)
         const oldName = c ? (profileNameById.get(c.assignedSalesmanId) || 'Unassigned') : 'Unknown'
