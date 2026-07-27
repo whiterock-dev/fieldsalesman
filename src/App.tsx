@@ -650,8 +650,11 @@ function App() {
   const [visitHistorySalesmanFilter, setVisitHistorySalesmanFilter] = useState('all')
   const [visitHistoryPriorityFilter, setVisitHistoryPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
   const [visitHistoryClientFilter, setVisitHistoryClientFilter] = useState('')
+  const [visitHistoryClientFilterDebounced, setVisitHistoryClientFilterDebounced] = useState('')
   const [visitHistoryCityFilter, setVisitHistoryCityFilter] = useState('')
   const [visitHistoryCategoryFilter, setVisitHistoryCategoryFilter] = useState('all')
+  const [meetingSearchFilter, setMeetingSearchFilter] = useState('')
+  const [meetingSearchFilterDebounced, setMeetingSearchFilterDebounced] = useState('')
   const [selectedVisitClientId, setSelectedVisitClientId] = useState<string | null>(null)
   const [selectedVisitHistoryRowId, setSelectedVisitHistoryRowId] = useState<string | null>(null)
   const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
@@ -705,9 +708,11 @@ function App() {
     const timeoutId = window.setTimeout(() => {
       setMyCustomersNameFilterDebounced(myCustomersNameFilter)
       setSalesmanFollowUpCustomerFilterDebounced(salesmanFollowUpCustomerFilter)
-    }, 800)
+      setVisitHistoryClientFilterDebounced(visitHistoryClientFilter)
+      setMeetingSearchFilterDebounced(meetingSearchFilter)
+    }, 300)
     return () => window.clearTimeout(timeoutId)
-  }, [myCustomersNameFilter, salesmanFollowUpCustomerFilter])
+  }, [myCustomersNameFilter, salesmanFollowUpCustomerFilter, visitHistoryClientFilter, meetingSearchFilter])
 
   const salesmen = useMemo(
     () =>
@@ -850,7 +855,6 @@ function App() {
     }
     void supabase.auth.getSession().then(({ data: { session } }) => {
       setAuthSession(session)
-      console.log(session)
       finish()
     })
     const {
@@ -1787,18 +1791,20 @@ function App() {
       const customer = customerById.get(v.customerId)
       const cityId = customer?.cityId ?? ''
       const client = v.customerName.toLowerCase()
-      const clientQ = visitHistoryClientFilter.trim().toLowerCase()
+      const clientPhone = (customer?.phone || customer?.whatsapp || '').toLowerCase()
+      const clientQ = visitHistoryClientFilterDebounced.trim().toLowerCase()
+      const matchesSearch = !clientQ || client.includes(clientQ) || clientPhone.includes(clientQ)
       return (
         (!visitHistoryDateFilter || d === visitHistoryDateFilter) &&
         (visitHistorySalesmanFilter === 'all' || v.salesmanId === visitHistorySalesmanFilter) &&
-        (!clientQ || client.includes(clientQ)) &&
+        matchesSearch &&
         (!visitHistoryCityFilter || cityId === visitHistoryCityFilter) &&
         (visitHistoryPriorityFilter === 'all' || v.priority === visitHistoryPriorityFilter) &&
         (visitHistoryCategoryFilter === 'all' || customer?.category === visitHistoryCategoryFilter)
       )
     })
     return filtered;
-  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilter, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter])
+  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter])
   const selectedVisitClientVisits = useMemo(() => {
     if (!selectedVisitClientId) return []
     return visitHistoryRows
@@ -1832,12 +1838,17 @@ function App() {
             return myCustomerNames.has(m.customerName.trim().toLowerCase())
           })
           : meetingResponses
+      const searchQ = meetingSearchFilterDebounced.trim().toLowerCase()
       return roleScopedRows.filter((m) => {
         const dateOk = meetingDateFilter ? m.createdAt.slice(0, 10) === meetingDateFilter : true
         const salesmanOk = role === 'salesman' ? true : meetingSalesmanFilter === 'all' ? true : m.salesmanName === meetingSalesmanFilter
         const customer = customerById.get(m.customerId)
         const categoryOk = meetingCategoryFilter === 'all' ? true : customer?.category === meetingCategoryFilter
-        return dateOk && salesmanOk && categoryOk
+        const searchOk = !searchQ ||
+          m.customerName.toLowerCase().includes(searchQ) ||
+          (customer?.phone || '').includes(searchQ) ||
+          (customer?.whatsapp || '').includes(searchQ)
+        return dateOk && salesmanOk && categoryOk && searchOk
       })
     },
     [
@@ -1850,6 +1861,7 @@ function App() {
       meetingSalesmanFilter,
       meetingCategoryFilter,
       customerById,
+      meetingSearchFilterDebounced,
     ],
   )
   const exportVisitHistoryCsv = () => {
@@ -4580,6 +4592,14 @@ function App() {
             ) : null}
             <article className="card">
               <div className="inlineFilters">
+                <label style={{ flex: '0 1 220px' }}>
+                  Search (name / phone)
+                  <input
+                    value={meetingSearchFilter}
+                    onChange={(event) => setMeetingSearchFilter(event.target.value)}
+                    placeholder="Name or phone…"
+                  />
+                </label>
                 <label>
                   Date
                   <input type="date" value={meetingDateFilter} onChange={(event) => setMeetingDateFilter(event.target.value)} />
@@ -5816,11 +5836,11 @@ function App() {
                   </label>
                 ) : null}
                 <label>
-                  Client name
+                  Customer name / phone
                   <input
                     value={visitHistoryClientFilter}
                     onChange={(event) => setVisitHistoryClientFilter(event.target.value)}
-                    placeholder="Search client"
+                    placeholder="Name or phone…"
                   />
                 </label>
                 <label>
