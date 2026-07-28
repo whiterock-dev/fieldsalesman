@@ -19,13 +19,13 @@ import {
 } from 'firebase/firestore'
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyB9s9C9jaq9dar0A5DXiBLoSJu6DxBThr4',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'whiterock-b2bsales.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'whiterock-b2bsales',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'whiterock-b2bsales.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '423243950429',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:423243950429:web:514f6a1314a5327c4960b4',
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-CV2SJ5M20S',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || '',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '',
 }
 
 const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]
