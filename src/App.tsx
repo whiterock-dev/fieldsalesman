@@ -22,6 +22,10 @@ const CustomerDatabase = lazy(async () => {
   const module = await import('./components/CustomerDatabase')
   return { default: module.CustomerDatabase }
 })
+const FollowupVisitHistory = lazy(async () => {
+  const module = await import('./components/FollowupVisitHistory')
+  return { default: module.FollowupVisitHistory }
+})
 const OFFLINE_VISIT_QUEUE_KEY = 'fs_offline_queued_visits'
 
 async function resolveVisitPhotoSrc(client: SupabaseClient, stored: string): Promise<string | null> {
@@ -160,6 +164,7 @@ type NavId =
   | 'field_tracking'
   | 'field_customers'
   | 'visits'
+  | 'followup_history'
   | 'salesman_overdue'
 
 const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) => boolean }[] = [
@@ -182,6 +187,7 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
   { id: 'admin_cities', label: 'City Management', section: 'Admin', show: (r) => r === 'owner' || r === 'super_salesman' },
   { id: 'settings', label: 'Settings', section: 'Account', show: () => true },
   { id: 'visits', label: 'Visit History', section: 'Overview', show: () => true },
+  { id: 'followup_history', label: 'Followup Visit History', section: 'Overview', show: () => true },
 ]
 
 function isNavId(id: string): id is NavId {
@@ -1397,10 +1403,17 @@ function App() {
     }
     return map
   }, [visits])
+  const [todayIso, setTodayIso] = useState(() => new Date().toISOString().slice(0, 10))
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTodayIso(new Date().toISOString().slice(0, 10))
+    }, 60000)
+    return () => clearInterval(interval)
+  }, [])
+
   const overdueRowsDetailed = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
     return followUps
-      .filter((item) => !item.archived && item.status !== 'closed' && item.dueDate < today)
+      .filter((item) => !item.archived && item.status !== 'closed' && item.dueDate < todayIso)
       .map((item) => {
         const customer = customerById.get(item.customerId)
         const lastVisit = latestVisitByCustomerId.get(item.customerId)
@@ -1420,9 +1433,8 @@ function App() {
         }
       })
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
-  }, [followUps, activeSalesman.id, customerById, latestVisitByCustomerId, overdueSearchFilter, overduePriorityFilter])
+  }, [followUps, activeSalesman.id, customerById, latestVisitByCustomerId, overdueSearchFilter, overduePriorityFilter, todayIso])
   const salesmanOverdueAndDueTodayRows = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
     const q = overdueSearchFilter.trim().toLowerCase()
     return followUps
       .filter(
@@ -1430,7 +1442,7 @@ function App() {
           item.salesmanId === activeSalesman.id &&
           item.status !== 'closed' &&
           !item.archived &&
-          item.dueDate <= today &&
+          item.dueDate <= todayIso &&
           (overduePriorityFilter === 'all' ? true : item.priority === overduePriorityFilter)
       )
       .map((item) => {
@@ -1454,7 +1466,7 @@ function App() {
         return row.customerName.toLowerCase().includes(q) || row.customerPhone.toLowerCase().includes(q)
       })
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
-  }, [followUps, activeSalesman.id, customerById, latestVisitByCustomerId, overdueSearchFilter])
+  }, [followUps, activeSalesman.id, customerById, latestVisitByCustomerId, overdueSearchFilter, overduePriorityFilter, todayIso])
   const filteredOverdueRowsDetailed = useMemo(
     () => {
       const q = overdueSearchFilter.trim().toLowerCase()
@@ -1472,7 +1484,7 @@ function App() {
     },
     [overdueRowsDetailed, overdueSalesmanFilter, overdueCategoryFilter, overdueSearchFilter, overduePriorityFilter],
   )
-  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), [])
+
   const overdueSummaryStats = useMemo(() => {
     const stats = salesmen.map(sm => {
       const smFollowUps = followUps.filter(f => f.salesmanId === sm.id && f.status !== 'closed' && !f.archived)
@@ -2315,6 +2327,7 @@ function App() {
       if (!targetCustomerId) return setMessage('Please select a customer.')
     }
     if (!newLeadForm.dueDate) return setMessage('Follow-up Date is required.')
+    if (newLeadForm.dueDate < todayIso) return setMessage('Previous Follow-up date is not allowed. Please select today or a future date.')
     if (!activeSalesman) return setMessage('No active salesman context found.')
 
     for (const field of activeDynamicFields) {
@@ -2451,6 +2464,9 @@ function App() {
 
 
   const saveFollowUpEdit = async (updatedParam: FollowUp) => {
+    if (updatedParam.dueDate < todayIso) {
+      return setMessage('Previous Follow-up date is not allowed. Please select today or a future date.')
+    }
     const updated = updatedParam.status === 'closed' ? { ...updatedParam, archived: true } : updatedParam
 
     setFollowUps((prev) => prev.map((f) => (f.id === updated.id ? updated : f)))
@@ -3195,6 +3211,9 @@ function App() {
         return failVisitSave('Use Open camera and Capture photo. Images must come from the live camera with timestamp and location on the picture.')
       }
       if (!notes.trim()) return failVisitSave('Meeting notes are required.')
+      if (followUpDate && followUpDate < todayIso) {
+        return failVisitSave('Previous Follow-up date is not allowed. Please select today or a future date.')
+      }
       for (const field of activeDynamicFields) {
         if (field.required && !String(dynamicData[field.key] ?? '').trim()) {
           return failVisitSave(`"${field.label}" is required.`)
@@ -3621,7 +3640,7 @@ function App() {
 
           <label>
             Follow-up date
-            <input type="date" value={followUpDate} onChange={(event) => setFollowUpDate(event.target.value)} />
+            <input type="date" min={todayIso} value={followUpDate} onChange={(event) => setFollowUpDate(event.target.value)} />
           </label>
           <label>
             Priority
@@ -4094,10 +4113,10 @@ function App() {
                                 {row.customerPhone && row.customerPhone !== '—' && (
                                   <div style={{ display: 'flex', gap: '8px', paddingLeft: '4px' }}>
                                     <a href={`tel:${row.customerPhone}`} title="Call" style={{ display: 'flex', alignItems: 'center', color: 'var(--accent)', textDecoration: 'none' }}>
-                                      <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                                      <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
                                     </a>
                                     <a href={`https://wa.me/91${row.customerPhone.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" title="WhatsApp" style={{ display: 'flex', alignItems: 'center', color: '#25D366', textDecoration: 'none' }}>
-                                      <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/></svg>
+                                      <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" /></svg>
                                     </a>
                                   </div>
                                 )}
@@ -4174,6 +4193,7 @@ function App() {
                                       Due date
                                       <input
                                         type="date"
+                                        min={todayIso}
                                         value={editingFollowUp.dueDate}
                                         onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
                                       />
@@ -4336,10 +4356,10 @@ function App() {
                                 {row.customerPhone && row.customerPhone !== '—' && (
                                   <div style={{ display: 'flex', gap: '8px', paddingLeft: '4px' }}>
                                     <a href={`tel:${row.customerPhone}`} title="Call" style={{ display: 'flex', alignItems: 'center', color: 'var(--accent)', textDecoration: 'none' }}>
-                                      <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                                      <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
                                     </a>
                                     <a href={`https://wa.me/91${row.customerPhone.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" title="WhatsApp" style={{ display: 'flex', alignItems: 'center', color: '#25D366', textDecoration: 'none' }}>
-                                      <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/></svg>
+                                      <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" /></svg>
                                     </a>
                                   </div>
                                 )}
@@ -4428,6 +4448,7 @@ function App() {
                                       Due date
                                       <input
                                         type="date"
+                                        min={todayIso}
                                         value={editingFollowUp.dueDate}
                                         onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
                                       />
@@ -4708,10 +4729,10 @@ function App() {
                               {customerPhone && customerPhone !== '—' && (
                                 <div style={{ display: 'flex', gap: '8px', paddingLeft: '4px' }}>
                                   <a href={`tel:${customerPhone}`} title="Call" style={{ display: 'flex', alignItems: 'center', color: 'var(--accent)', textDecoration: 'none' }}>
-                                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
                                   </a>
                                   <a href={`https://wa.me/91${customerPhone.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" title="WhatsApp" style={{ display: 'flex', alignItems: 'center', color: '#25D366', textDecoration: 'none' }}>
-                                    <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/></svg>
+                                    <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" /></svg>
                                   </a>
                                 </div>
                               )}
@@ -4805,6 +4826,7 @@ function App() {
                                         Due date
                                         <input
                                           type="date"
+                                          min={todayIso}
                                           value={editingFollowUp.dueDate}
                                           onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
                                         />
@@ -5217,7 +5239,7 @@ function App() {
                           }
                           const text = encodeURIComponent(`Your new password for WhiteRock Field Salesman has been reset.\n\nEmail: ${resetPasswordModal.email}\nNew Password: ${resetSavedPassword}`)
                           const waUrl = waNum ? `https://wa.me/${waNum}?text=${text}` : `https://wa.me/?text=${text}`
-                          
+
                           return (
                             <a href={waUrl} target="_blank" rel="noopener noreferrer" className="secondary resetWhatsAppBtn">
                               📱 Send via WhatsApp
@@ -5499,10 +5521,10 @@ function App() {
                                 {customerPhone && customerPhone !== '—' && (
                                   <div style={{ display: 'flex', gap: '8px', paddingLeft: '4px' }}>
                                     <a href={`tel:${customerPhone}`} title="Call" style={{ display: 'flex', alignItems: 'center', color: 'var(--accent)', textDecoration: 'none' }}>
-                                      <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                                      <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
                                     </a>
                                     <a href={`https://wa.me/91${customerPhone.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" title="WhatsApp" style={{ display: 'flex', alignItems: 'center', color: '#25D366', textDecoration: 'none' }}>
-                                      <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/></svg>
+                                      <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" /></svg>
                                     </a>
                                   </div>
                                 )}
@@ -5580,6 +5602,7 @@ function App() {
                                       Due date
                                       <input
                                         type="date"
+                                        min={todayIso}
                                         value={editingFollowUp.dueDate}
                                         onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
                                       />
@@ -6074,6 +6097,12 @@ function App() {
             </article>
           </section>
         )
+      case 'followup_history':
+        return (
+          <Suspense fallback={<div className="panel"><p className="muted">Loading Followup Visit History…</p></div>}>
+            <FollowupVisitHistory />
+          </Suspense>
+        )
       default:
         return null
     }
@@ -6315,7 +6344,7 @@ function App() {
                   <input
                     type="date"
                     required
-                    min={new Date().toISOString().slice(0, 10)}
+                    min={todayIso}
                     value={newLeadForm.dueDate}
                     onChange={(e) => setNewLeadForm(prev => ({ ...prev, dueDate: e.target.value }))}
                   />
