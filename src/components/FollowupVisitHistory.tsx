@@ -177,7 +177,7 @@ export function FollowupVisitHistory() {
       <div className="cdHeader" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h2>Followup Visit History</h2>
+            <h2>Back office Follow-up History</h2>
           </div>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
             Customer follow-ups fetched directly from the B2Bsales</p>
@@ -436,7 +436,7 @@ export function FollowupVisitHistory() {
                     <th style={{ width: '220px', maxWidth: '240px' }}>Customer Details</th>
                     <th style={{ width: '140px' }}>Salesman / SC</th>
                     <th style={{ width: '120px' }}>Next Follow-up</th>
-                    <th style={{ width: '280px', maxWidth: '320px' }}>Remarks / Details</th>
+                    <th style={{ width: '280px', maxWidth: '320px' }}>Next Action</th>
                     <th style={{ width: '140px' }}>Timestamp</th>
                     <th style={{ width: '110px', textAlign: 'center' }}>Actions</th>
                   </tr>
@@ -796,7 +796,7 @@ export function FollowupVisitHistory() {
                                             color: 'var(--text-muted)',
                                           }}
                                         >
-                                          CHANGE / REMARK
+                                          NEXT ACTION
                                         </th>
                                       </tr>
                                     </thead>
