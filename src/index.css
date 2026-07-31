@@ -1324,13 +1324,24 @@ button:focus-visible {
   min-width: 980px;
 }
 
-.visitHistoryNotesCell {
-  min-width: 16rem;
-  max-width: 22rem;
+.visitHistoryNotesCell,
+.visitHistoryNextActionCell {
+  width: 10.5rem;
+  min-width: 8rem;
+  max-width: 11.5rem;
   white-space: normal;
   word-break: break-word;
   overflow-wrap: anywhere;
-  line-height: 1.45;
+  line-height: 1.4;
+  vertical-align: top;
+}
+
+.visitHistoryNotesCell div,
+.visitHistoryNextActionCell div {
+  max-width: 11.5rem;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .customersNameCell {
@@ -2604,9 +2615,10 @@ a:hover {
     font-size: 0.7rem;
   }
 
-  .visitHistoryNotesCell {
-    min-width: 12rem;
-    max-width: 16rem;
+  .visitHistoryNotesCell,
+  .visitHistoryNextActionCell {
+    min-width: 7.5rem;
+    max-width: 10rem;
   }
 
   .customerActions {

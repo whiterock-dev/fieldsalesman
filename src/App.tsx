@@ -187,7 +187,7 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
   { id: 'admin_cities', label: 'City Management', section: 'Admin', show: (r) => r === 'owner' || r === 'super_salesman' },
   { id: 'settings', label: 'Settings', section: 'Account', show: () => true },
   { id: 'visits', label: 'Visit History', section: 'Overview', show: () => true },
-  { id: 'followup_history', label: 'Followup Visit History', section: 'Overview', show: () => true },
+  { id: 'followup_history', label: 'Back office Follow-up History', section: 'Overview', show: () => true },
 ]
 
 function isNavId(id: string): id is NavId {
@@ -579,6 +579,7 @@ function App() {
 
   const [teamProfiles, setTeamProfiles] = useState<TeamProfile[]>([])
   const [invitedUsers, setInvitedUsers] = useState<InvitedUser[]>([])
+  const [isExportingVisits, setIsExportingVisits] = useState(false)
 
   useEffect(() => {
     localStorage.removeItem('fs_offline_demo')
@@ -652,7 +653,8 @@ function App() {
   const [resetMessageIsError, setResetMessageIsError] = useState(false)
   const [resetSuccess, setResetSuccess] = useState(false)
   const [resetSavedPassword, setResetSavedPassword] = useState('')
-  const [visitHistoryDateFilter, setVisitHistoryDateFilter] = useState('')
+  const [visitHistoryDateFrom, setVisitHistoryDateFrom] = useState('')
+  const [visitHistoryDateTo, setVisitHistoryDateTo] = useState('')
   const [visitHistorySalesmanFilter, setVisitHistorySalesmanFilter] = useState('all')
   const [visitHistoryPriorityFilter, setVisitHistoryPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
   const [visitHistoryClientFilter, setVisitHistoryClientFilter] = useState('')
@@ -723,9 +725,15 @@ function App() {
   const salesmen = useMemo(
     () =>
       teamProfiles
-        .filter((p) => p.role === 'salesman' || p.role === 'super_salesman')
+        .filter((p) => {
+          if (p.role !== 'salesman' && p.role !== 'super_salesman') return false
+          if (invitedUsers.length > 0 && (!p.email || !findInviteForEmail(invitedUsers, p.email))) {
+            return false
+          }
+          return true
+        })
         .map((p) => ({ id: p.id, name: p.fullName })),
-    [teamProfiles],
+    [teamProfiles, invitedUsers],
   )
 
 
@@ -1807,7 +1815,8 @@ function App() {
       const clientQ = visitHistoryClientFilterDebounced.trim().toLowerCase()
       const matchesSearch = !clientQ || client.includes(clientQ) || clientPhone.includes(clientQ)
       return (
-        (!visitHistoryDateFilter || d === visitHistoryDateFilter) &&
+        (!visitHistoryDateFrom || d >= visitHistoryDateFrom) &&
+        (!visitHistoryDateTo || d <= visitHistoryDateTo) &&
         (visitHistorySalesmanFilter === 'all' || v.salesmanId === visitHistorySalesmanFilter) &&
         matchesSearch &&
         (!visitHistoryCityFilter || cityId === visitHistoryCityFilter) &&
@@ -1816,7 +1825,7 @@ function App() {
       )
     })
     return filtered;
-  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFilter, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter])
+  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFrom, visitHistoryDateTo, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter])
   const selectedVisitClientVisits = useMemo(() => {
     if (!selectedVisitClientId) return []
     return visitHistoryRows
@@ -1834,12 +1843,13 @@ function App() {
         })
         : meetingResponses
     const seen = new Set<string>()
+    const activeNames = new Set(salesmen.map((s) => s.name.trim().toLowerCase()))
     for (const m of scopedRows) {
       const n = m.salesmanName.trim()
-      if (n) seen.add(n)
+      if (n && (invitedUsers.length === 0 || activeNames.has(n.toLowerCase()))) seen.add(n)
     }
     return [...seen.values()].sort((a, b) => a.localeCompare(b))
-  }, [role, meetingResponses, visitById, myCustomerIds, myCustomerNames])
+  }, [role, meetingResponses, visitById, myCustomerIds, myCustomerNames, salesmen, invitedUsers.length])
   const filteredMeetingResponses = useMemo(
     () => {
       const roleScopedRows =
@@ -1876,39 +1886,114 @@ function App() {
       meetingSearchFilterDebounced,
     ],
   )
-  const exportVisitHistoryCsv = () => {
-    const exportDynamicFields = formFields
-      .filter((field) => field.active && !field.isDeleted)
-      .sort((a, b) => a.order - b.order)
-    const headers = [
-      'Arrived',
-      'Ended',
-      'Salesman',
-      'Customer',
-      'City',
-      'Type',
-      'GPS',
-      'Status',
-      ...exportDynamicFields.map((field) => field.label),
-    ]
-    const rows = visitHistoryRows.map((visit) => {
-      const customerDynamicFields = customerById.get(visit.customerId)?.dynamicFields ?? {}
-      const dynamicValues = exportDynamicFields.map(
-        (field) => visit.dynamicFields?.[field.key] || customerDynamicFields[field.key] || '—',
-      )
-      return [
-        visit.visitStartedAt ? formatDateTime(visit.visitStartedAt) : '—',
-        formatDateTime(visit.capturedAt),
-        visit.salesmanName,
-        visit.customerName,
-        customerById.get(visit.customerId)?.city ?? '—',
-        visit.visitType,
-        `${visit.lat.toFixed(4)}, ${visit.lng.toFixed(4)} (±${Math.round(visit.accuracy)}m)`,
-        visit.status,
-        ...dynamicValues,
+  const exportVisitHistoryCsv = async () => {
+    if (isExportingVisits || !supabase) return
+    setIsExportingVisits(true)
+    try {
+      const exportDynamicFields = formFields
+        .filter((field) => field.active && !field.isDeleted)
+        .sort((a, b) => a.order - b.order)
+      const headers = [
+        'Arrived',
+        'Ended',
+        'Salesman',
+        'Customer',
+        'City',
+        'Type',
+        'GPS',
+        'Status',
+        'Notes',
+        'Next Action',
+        ...exportDynamicFields.map((field) => field.label),
       ]
-    })
-    exportToCsv(`visit_history_${new Date().toISOString().slice(0, 10)}`, headers, rows)
+      let allVisitRows: unknown[] = []
+      let from = 0
+      const step = 1000
+      while (true) {
+        const { data, error } = await supabase
+          .from('visits')
+          .select('*')
+          .is('is_deleted', false)
+          .order('captured_at', { ascending: false })
+          .range(from, from + step - 1)
+        if (error || !data || data.length === 0) break
+        allVisitRows.push(...data)
+        if (data.length < step) break
+        from += step
+      }
+      const allVisitsMapped: VisitRecord[] = allVisitRows.map((r) => {
+        const row = r as Record<string, unknown>
+        const started = row.visit_started_at
+        return {
+          id: row.id as string,
+          customerId: row.customer_id as string,
+          customerName: customerById.get(row.customer_id as string)?.name ?? 'Customer',
+          salesmanId: row.salesman_id as string,
+          salesmanName: profileNameById.get(row.salesman_id as string) ?? 'Salesman',
+          lat: Number(row.lat),
+          lng: Number(row.lng),
+          accuracy: Number(row.accuracy_meters),
+          capturedAt: row.captured_at as string,
+          photoDataUrl: (row.photo_path as string) ?? '',
+          visitType: row.visit_type as VisitType,
+          notes: row.notes as string,
+          nextAction: (row.next_action as string) ?? '',
+          followUpDate: (row.follow_up_date as string) ?? undefined,
+          status: 'synced' as const,
+          visitStartedAt: typeof started === 'string' && started ? started : undefined,
+          priority: row.priority as 'low' | 'medium' | 'high' | undefined,
+          dynamicFields: toDynamicFieldsObject(row.dynamic_fields),
+        }
+      })
+      const rowsToFilter = role === 'salesman' ? allVisitsMapped.filter((v) => v.salesmanId === activeSalesman.id) : allVisitsMapped
+      const seen = new Set<string>()
+      const out: VisitRecord[] = []
+      for (const v of rowsToFilter) {
+        if (seen.has(v.id)) continue
+        seen.add(v.id)
+        out.push(v)
+      }
+      const filteredVisits = out.filter((v) => {
+        const d = v.capturedAt.slice(0, 10)
+        const customer = customerById.get(v.customerId)
+        const cityId = customer?.cityId ?? ''
+        const client = v.customerName.toLowerCase()
+        const clientPhone = (customer?.phone || customer?.whatsapp || '').toLowerCase()
+        const clientQ = visitHistoryClientFilterDebounced.trim().toLowerCase()
+        const matchesSearch = !clientQ || client.includes(clientQ) || clientPhone.includes(clientQ)
+        return (
+          (!visitHistoryDateFrom || d >= visitHistoryDateFrom) &&
+          (!visitHistoryDateTo || d <= visitHistoryDateTo) &&
+          (visitHistorySalesmanFilter === 'all' || v.salesmanId === visitHistorySalesmanFilter) &&
+          matchesSearch &&
+          (!visitHistoryCityFilter || cityId === visitHistoryCityFilter) &&
+          (visitHistoryPriorityFilter === 'all' || v.priority === visitHistoryPriorityFilter) &&
+          (visitHistoryCategoryFilter === 'all' || customer?.category === visitHistoryCategoryFilter)
+        )
+      })
+      const rows = filteredVisits.map((visit) => {
+        const customerDynamicFields = customerById.get(visit.customerId)?.dynamicFields ?? {}
+        const dynamicValues = exportDynamicFields.map(
+          (field) => visit.dynamicFields?.[field.key] || customerDynamicFields[field.key] || '—',
+        )
+        return [
+          visit.visitStartedAt ? formatDateTime(visit.visitStartedAt) : '—',
+          formatDateTime(visit.capturedAt),
+          visit.salesmanName,
+          visit.customerName,
+          customerById.get(visit.customerId)?.city ?? '—',
+          visit.visitType,
+          `${visit.lat.toFixed(4)}, ${visit.lng.toFixed(4)} (±${Math.round(visit.accuracy)}m)`,
+          visit.status,
+          visit.notes || '—',
+          visit.nextAction || '—',
+          ...dynamicValues,
+        ]
+      })
+      exportToCsv(`visit_history_${new Date().toISOString().slice(0, 10)}`, headers, rows)
+    } finally {
+      setIsExportingVisits(false)
+    }
   }
 
   useEffect(() => {
@@ -2342,22 +2427,39 @@ function App() {
     let newCustomer: Customer | undefined
 
     if (isNew) {
-      targetCustomerId = `c-${Date.now()}`
-      newCustomer = {
-        id: targetCustomerId,
-        name: newLeadForm.name.trim(),
-        phone: newLeadForm.phone.trim(),
-        whatsapp: newLeadForm.phone.trim(),
-        address: '',
-        city: cities.find(c => c.id === newLeadForm.cityId)?.name || '',
-        cityId: newLeadForm.cityId,
-        tags: ['New Lead'],
-        dynamicFields: newLeadForm.dynamicData,
-        assignedSalesmanId: activeSalesman.id,
-        lat: 0,
-        lng: 0,
+      const cleanPhone = newLeadForm.phone.trim().replace(/\D/g, '').slice(-10)
+      const existingByPhone = cleanPhone
+        ? customers.find((c) => String(c.phone || '').replace(/\D/g, '').slice(-10) === cleanPhone)
+        : undefined
+
+      if (existingByPhone) {
+        targetCustomerId = existingByPhone.id
+        const mergedDynamicFields = { ...(existingByPhone.dynamicFields || {}), ...newLeadForm.dynamicData }
+        setCustomers((prev) =>
+          prev.map((c) =>
+            c.id === existingByPhone.id
+              ? { ...c, dynamicFields: mergedDynamicFields }
+              : c
+          )
+        )
+      } else {
+        targetCustomerId = `c-${Date.now()}`
+        newCustomer = {
+          id: targetCustomerId,
+          name: newLeadForm.name.trim(),
+          phone: newLeadForm.phone.trim(),
+          whatsapp: newLeadForm.phone.trim(),
+          address: '',
+          city: cities.find(c => c.id === newLeadForm.cityId)?.name || '',
+          cityId: newLeadForm.cityId,
+          tags: ['New Lead'],
+          dynamicFields: newLeadForm.dynamicData,
+          assignedSalesmanId: activeSalesman.id,
+          lat: 0,
+          lng: 0,
+        }
+        setCustomers((prev) => [newCustomer!, ...prev])
       }
-      setCustomers((prev) => [newCustomer!, ...prev])
     } else {
       const existing = customers.find(c => c.id === targetCustomerId)
       if (existing) {
@@ -3243,40 +3345,63 @@ function App() {
 
       if (session.selectedCustomerId === 'new') {
         const ql = session.quickLead
-        const newCustomer: Customer = {
-          id: `c-${Date.now()}`,
-          name: ql.name,
-          phone: ql.phone,
-          whatsapp: ql.phone,
-          address: ql.address,
-          city: ql.city.trim() || 'Unknown',
-          cityId: ql.cityId || null,
-          tags: [],
-          dynamicFields: dynamicData,
-          assignedSalesmanId: activeSalesman.id,
-          lat: leaveGeo.lat,
-          lng: leaveGeo.lng,
-        }
-        customerName = newCustomer.name
-        customerId = newCustomer.id
-        selectedCustomer = newCustomer
-        setCustomers((previous) => [newCustomer, ...previous])
-        if (supabase && online) {
-          const { error } = await supabase.from('customers').upsert({
-            id: newCustomer.id,
-            name: newCustomer.name,
-            phone: newCustomer.phone,
-            whatsapp: newCustomer.whatsapp,
-            address: newCustomer.address,
-            city: newCustomer.city,
-            city_id: newCustomer.cityId,
-            tags: newCustomer.tags,
-            dynamic_fields: dynamicData,
-            assigned_salesman_id: newCustomer.assignedSalesmanId,
-            lat: newCustomer.lat,
-            lng: newCustomer.lng,
-          })
-          if (error) return failVisitSave(`Customer save failed: ${error.message}`)
+        const cleanPhone = String(ql.phone || '').trim().replace(/\D/g, '').slice(-10)
+        const existingByPhone = cleanPhone
+          ? customers.find((item) => String(item.phone || '').replace(/\D/g, '').slice(-10) === cleanPhone)
+          : undefined
+
+        if (existingByPhone) {
+          selectedCustomer = existingByPhone
+          customerName = existingByPhone.name
+          customerId = existingByPhone.id
+          if (supabase && online) {
+            const mergedDF = { ...(existingByPhone.dynamicFields || {}), ...dynamicData }
+            const { error: updErr } = await supabase
+              .from('customers')
+              .update({
+                dynamic_fields: mergedDF,
+                lat: existingByPhone.lat ? existingByPhone.lat : leaveGeo.lat,
+                lng: existingByPhone.lng ? existingByPhone.lng : leaveGeo.lng,
+              })
+              .eq('id', existingByPhone.id)
+            if (updErr) console.warn('sync existing customer dynamic_fields on visit:', updErr.message)
+          }
+        } else {
+          const newCustomer: Customer = {
+            id: `c-${Date.now()}`,
+            name: ql.name,
+            phone: ql.phone,
+            whatsapp: ql.phone,
+            address: ql.address,
+            city: ql.city.trim() || 'Unknown',
+            cityId: ql.cityId || null,
+            tags: [],
+            dynamicFields: dynamicData,
+            assignedSalesmanId: activeSalesman.id,
+            lat: leaveGeo.lat,
+            lng: leaveGeo.lng,
+          }
+          customerName = newCustomer.name
+          customerId = newCustomer.id
+          selectedCustomer = newCustomer
+          setCustomers((previous) => [newCustomer, ...previous])
+          if (supabase && online) {
+            const { error } = await supabase.from('customers').upsert({
+              id: newCustomer.id,
+              name: newCustomer.name,
+              phone: newCustomer.phone,
+              whatsapp: newCustomer.whatsapp,
+              address: newCustomer.address,
+              city: newCustomer.city,
+              city_id: newCustomer.cityId,
+              tags: newCustomer.tags,
+              dynamic_fields: dynamicData,
+              assigned_salesman_id: newCustomer.assignedSalesmanId,
+              lat: newCustomer.lat,
+              lng: newCustomer.lng,
+            })
+            if (error) return failVisitSave(`Customer save failed: ${error.message}`)
+          }
         }
       } else {
         selectedCustomer = customers.find((item) => item.id === session.selectedCustomerId)
@@ -3634,7 +3759,7 @@ function App() {
           </label>
 
           <label>
-            Next action / remarks
+            Next Action
             <textarea value={nextAction} onChange={(event) => setNextAction(event.target.value)} />
           </label>
 
@@ -4073,8 +4198,8 @@ function App() {
                       <th className="overdueCompactCell">Due date</th>
                       <th className="overdueCompactCell">Priority</th>
                       <th className="overdueCompactCell">Status</th>
-                      <th className="overdueLongCell">Remarks</th>
-                      <th className="overdueLongCell">Notes / Response</th>
+                      <th className="overdueLongCell">Next Action</th>
+                      <th className="overdueLongCell">Notes</th>
                       {activeDynamicFields.map((f) => (
                         <th key={f.id} className="dynamicFieldCol" title={f.label}>
                           {f.label}
@@ -4185,7 +4310,7 @@ function App() {
                                   <div className="followupEditHeader">
                                     <div>
                                       <strong>Edit follow-up</strong>
-                                      <p className="muted">Update the due date, status, priority, and remarks in one place.</p>
+                                      <p className="muted">Update the due date, status, priority, and next action in one place.</p>
                                     </div>
                                   </div>
                                   <div className="followupEditGrid">
@@ -4225,7 +4350,7 @@ function App() {
                                       </select>
                                     </label>
                                     <label>
-                                      Remarks
+                                      Next Action
                                       <textarea
                                         value={editingFollowUp.remarks}
                                         onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
@@ -4324,8 +4449,8 @@ function App() {
                       <th className="overdueCompactCell">Due date</th>
                       <th className="overdueCompactCell">Priority</th>
                       <th className="overdueCompactCell">Status</th>
-                      <th className="overdueLongCell">Remarks</th>
-                      <th className="overdueLongCell">Notes / Response</th>
+                      <th className="overdueLongCell">Next Action</th>
+                      <th className="overdueLongCell">Notes</th>
                       {activeDynamicFields.map((f) => (
                         <th key={f.id} className="dynamicFieldCol" title={f.label}>
                           {f.label}
@@ -4440,7 +4565,7 @@ function App() {
                                   <div className="followupEditHeader">
                                     <div>
                                       <strong>Edit follow-up</strong>
-                                      <p className="muted">Update the due date, status, priority, and remarks in one place.</p>
+                                      <p className="muted">Update the due date, status, priority, and next action in one place.</p>
                                     </div>
                                   </div>
                                   <div className="followupEditGrid">
@@ -4480,7 +4605,7 @@ function App() {
                                       </select>
                                     </label>
                                     <label>
-                                      Remarks
+                                      Next Action
                                       <textarea
                                         value={editingFollowUp.remarks}
                                         onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
@@ -4663,7 +4788,7 @@ function App() {
                     type="button"
                     className="secondary"
                     onClick={() => {
-                      const headers = ['Time', 'Salesman', 'Customer', 'Phone', 'Response', 'Next action', ...activeDynamicFields.map((f) => f.label)];
+                      const headers = ['Time', 'Salesman', 'Customer', 'Phone', 'Notes', 'Next Action', ...activeDynamicFields.map((f) => f.label)];
                       const rows = meetingRowsDetailed.map(({ item, linkedVisit, customerPhone, dynamicValues }) => {
                         return [
                           formatDateTime(item.createdAt),
@@ -4696,8 +4821,8 @@ function App() {
                       <th className="meetingCompactCell">Due date</th>
                       <th className="meetingCompactCell">Priority</th>
                       <th className="meetingCompactCell">Status</th>
-                      <th className="meetingLongCell">Notes / Response</th>
-                      <th className="meetingLongCell">Next action</th>
+                      <th className="meetingLongCell">Notes</th>
+                      <th className="meetingLongCell">Next Action</th>
                       {activeDynamicFields.map((field) => (
                         <th key={field.id} className="dynamicFieldCol" title={field.label}>
                           {field.label}
@@ -5460,11 +5585,12 @@ function App() {
                       {role !== 'salesman' ? <th>Salesman</th> : null}
                       <th>City</th>
                       <th>Phone</th>
+                      <th>Last visit date</th>
                       <th>Due date</th>
                       <th>Priority</th>
                       <th>Status</th>
-                      <th className="followupRemarksCell">Remarks</th>
-                      <th className="followupRemarksCell">Notes / Response</th>
+                      <th className="followupRemarksCell">Next Action</th>
+                      <th className="followupRemarksCell">Notes</th>
                       {activeDynamicFields.map((f) => <th key={f.id} className='dynamicFieldCol'>{f.label}</th>)}
                       <th>Actions</th>
                     </tr>
@@ -5472,7 +5598,7 @@ function App() {
                   <tbody>
                     {filteredFollowUpsForSalesman.length === 0 ? (
                       <tr>
-                        <td colSpan={(role !== 'salesman' ? 10 : 9) + activeDynamicFields.length} className="muted">
+                        <td colSpan={(role !== 'salesman' ? 11 : 10) + activeDynamicFields.length} className="muted">
                           No follow-ups match the selected filters.
                         </td>
                       </tr>
@@ -5530,6 +5656,11 @@ function App() {
                                 )}
                               </div>
                             </td>
+                            <td className="followupDateCell followupCompactCell">
+                              {latestVisitByCustomerId.get(item.customerId)?.capturedAt
+                                ? formatDate(latestVisitByCustomerId.get(item.customerId)!.capturedAt)
+                                : '—'}
+                            </td>
                             <td className="followupDateCell followupCompactCell">{formatDate(item.dueDate)}</td>
                             <td className="followupCompactCell">
                               <span className={`followupPill followupPill--${item.priority}`}>
@@ -5542,7 +5673,7 @@ function App() {
                               </span>
                             </td>
                             <td className="followupRemarksCell">
-                              <div className="followupRemarks">{item.remarks || 'No remarks added'}</div>
+                              <div className="followupRemarks">{item.remarks || 'No next action added'}</div>
                             </td>
                             <td className="followupRemarksCell">
                               <details className="followupNotesDetails">
@@ -5594,7 +5725,7 @@ function App() {
                                   <div className="followupEditHeader">
                                     <div>
                                       <strong>Edit follow-up</strong>
-                                      <p className="muted">Update the due date, status, priority, and remarks in one place.</p>
+                                      <p className="muted">Update the due date, status, priority, and next action in one place.</p>
                                     </div>
                                   </div>
                                   <div className="followupEditGrid">
@@ -5634,7 +5765,7 @@ function App() {
                                       </select>
                                     </label>
                                     <label>
-                                      Remarks
+                                      Next Action
                                       <textarea
                                         value={editingFollowUp.remarks}
                                         onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
@@ -5825,22 +5956,35 @@ function App() {
             <article className="card">
               <div className="rowBetween" style={{ alignItems: 'center' }}>
                 <h3>Visit History</h3>
-                {role === 'owner' ? (
+                {role !== 'salesman' ? (
                   <button
                     type="button"
                     className="secondary"
                     onClick={() => void exportVisitHistoryCsv()}
+                    disabled={isExportingVisits}
                     style={{ display: 'flex', alignItems: 'center' }}
                   >
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: '6px' }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                    Export Data
+                    {isExportingVisits ? 'Exporting all visits…' : 'Export Data'}
                   </button>
                 ) : null}
               </div>
               <div className="inlineFilters">
                 <label>
-                  Date
-                  <input type="date" value={visitHistoryDateFilter} onChange={(event) => setVisitHistoryDateFilter(event.target.value)} />
+                  Date from
+                  <input
+                    type="date"
+                    value={visitHistoryDateFrom}
+                    onChange={(event) => setVisitHistoryDateFrom(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Date to
+                  <input
+                    type="date"
+                    value={visitHistoryDateTo}
+                    onChange={(event) => setVisitHistoryDateTo(event.target.value)}
+                  />
                 </label>
                 {role !== 'salesman' ? (
                   <label>
@@ -6026,8 +6170,8 @@ function App() {
                                       <th>Priority</th>
                                       <th>GPS</th>
                                       <th>Status</th>
-                                      <th>Notes</th>
-                                      <th>Next Action</th>
+                                      <th className="visitHistoryNotesCell">Notes</th>
+                                      <th className="visitHistoryNextActionCell">Next Action</th>
                                       <th>Follow-up</th>
                                       {activeDynamicFields.map((f) => <th key={`nested-head-${f.id}`} className="dynamicFieldCol">{f.label}</th>)}
                                       <th>Photo</th>
@@ -6063,7 +6207,7 @@ function App() {
                                         </td>
                                         <td>{clientVisit.status}</td>
                                         <td className="visitHistoryNotesCell">{clientVisit.notes || '—'}</td>
-                                        <td>{clientVisit.nextAction || '—'}</td>
+                                        <td className="visitHistoryNextActionCell">{clientVisit.nextAction || '—'}</td>
                                         <td>{clientVisit.followUpDate ? formatDate(clientVisit.followUpDate) : '—'}</td>
                                         {activeDynamicFields.map((field) => {
                                           const customerValue = selectedVisitClient?.dynamicFields?.[field.key]
@@ -6099,7 +6243,7 @@ function App() {
         )
       case 'followup_history':
         return (
-          <Suspense fallback={<div className="panel"><p className="muted">Loading Followup Visit History…</p></div>}>
+          <Suspense fallback={<div className="panel"><p className="muted">Loading Back office Follow-up History…</p></div>}>
             <FollowupVisitHistory />
           </Suspense>
         )
@@ -6331,7 +6475,7 @@ function App() {
                   />
                 </label>
                 <label>
-                  Next action / remarks
+                  Next Action
                   <textarea
                     rows={3}
                     value={newLeadForm.remarks}

@@ -9,6 +9,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { exportToCsv } from '../lib/exportUtils'
 import { formatDateTime } from '../lib/dateUtils'
+import { googleMapsSearchUrl } from '../lib/maps'
 import type { Role } from '../lib/roles'
 import { SearchableCityDropdown } from './SearchableCityDropdown'
 import type { CityMaster } from '../App'
@@ -404,7 +405,7 @@ export function CustomerDatabase({
           const city = row['City']
           if (!phone || !name || !city) continue // Skip invalid rows
 
-          const existing = customers.find(c => c.phone === phone)
+          const existing = customers.find(c => String(c.phone || '').replace(/\D/g, '').slice(-10) === phone)
           const dynamicFieldsData: Record<string, string> = {}
           let rowInvalid = false
           for (const f of activeDynamicFields) {
@@ -854,7 +855,20 @@ export function CustomerDatabase({
                       </td>
                     ))}
                     <td className="cdCompactCell cdDateCell">{c.updatedAt ? formatDateTime(c.updatedAt) : '—'}</td>
-                    <td style={{ display: 'flex', gap: '0.5rem' }}>
+                    <td style={{ display: 'flex', gap: '0.5rem', flexWrap: 'nowrap' }}>
+                      <a
+                        className="cdEditBtn"
+                        href={googleMapsSearchUrl(c.lat, c.lng)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        Google Maps
+                      </a>
                       <button type="button" className="cdEditBtn" onClick={() => openEdit(c)}>
                         <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                           <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
