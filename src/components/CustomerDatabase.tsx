@@ -13,6 +13,8 @@ import { googleMapsSearchUrl } from '../lib/maps'
 import type { Role } from '../lib/roles'
 import { SearchableCityDropdown } from './SearchableCityDropdown'
 import type { CityMaster } from '../App'
+import { OrderHistoryDialog } from './orders/OrderHistoryDialog'
+import { getProductMasterList } from './orders/ordersApi'
 
 /* ───────────── Local types (mirrors App.tsx – avoids circular imports) ───────────── */
 
@@ -31,6 +33,8 @@ type CustomerRecord = {
   dynamicFields?: Record<string, string>
   updatedAt?: string
   category?: 'A' | 'B' | 'C' | 'D' | 'E' | null
+  totalPurchaseValue?: number
+  lastOrderDate?: string | null
 }
 
 type DynamicField = {
@@ -194,6 +198,16 @@ export function CustomerDatabase({
   const [auditLogCustomer, setAuditLogCustomer] = useState<CustomerRecord | null>(null)
   const [auditLogs, setAuditLogs] = useState<any[]>([])
   const [loadingAudit, setLoadingAudit] = useState(false)
+
+  /* ── order history state ── */
+  const [orderHistoryCustomer, setOrderHistoryCustomer] = useState<CustomerRecord | null>(null)
+  const [productMasterList, setProductMasterList] = useState<string[]>(['Gypsum Tile', 'T-Grid', 'Soffit Panel', 'Fluted Panel'])
+
+  useEffect(() => {
+    getProductMasterList().then(list => {
+      if (list && list.length > 0) setProductMasterList(list)
+    }).catch(() => {})
+  }, [])
 
   /* ── csv upload state ── */
   const [csvUploadOpen, setCsvUploadOpen] = useState(false)
@@ -801,6 +815,7 @@ export function CustomerDatabase({
                   <th>Address</th>
                   {showSalesmanFilter && <th>Salesman</th>}
                   {activeDynamicFields.map(f => <th key={f.id}>{f.label}</th>)}
+                  <th>Total Orders</th>
                   <th>Updated</th>
                   <th>Actions</th>
                 </tr>
@@ -854,6 +869,21 @@ export function CustomerDatabase({
                         {dynamicVal(c, f.key) || '—'}
                       </td>
                     ))}
+                    <td className="cdCompactCell">
+                      <button
+                        type="button"
+                        className="cdEditBtn"
+                        onClick={() => setOrderHistoryCustomer(c)}
+                        style={{
+                          fontWeight: 600,
+                          color: (c.totalPurchaseValue && c.totalPurchaseValue > 0) ? '#0f766e' : '#94a3b8',
+                          whiteSpace: 'nowrap',
+                        }}
+                        title={c.totalPurchaseValue && c.totalPurchaseValue > 0 ? `Last: ${c.lastOrderDate || 'N/A'}` : 'No orders yet'}
+                      >
+                        ₹{(c.totalPurchaseValue || 0) > 0 ? (c.totalPurchaseValue || 0).toLocaleString('en-IN') : '0'}
+                      </button>
+                    </td>
                     <td className="cdCompactCell cdDateCell">{c.updatedAt ? formatDateTime(c.updatedAt) : '—'}</td>
                     <td style={{ display: 'flex', gap: '0.5rem', flexWrap: 'nowrap' }}>
                       <a
@@ -1181,6 +1211,26 @@ export function CustomerDatabase({
           </div>
         </div>
       )}
+
+      {/* ── Order History Dialog ── */}
+      <OrderHistoryDialog
+        isOpen={orderHistoryCustomer !== null}
+        onClose={() => setOrderHistoryCustomer(null)}
+        customerId={orderHistoryCustomer?.id || null}
+        customerName={orderHistoryCustomer?.name || ''}
+        role={role}
+        customers={customers.map(c => ({
+          id: c.id,
+          name: c.name,
+          phone: c.phone,
+          city: c.city,
+          assignedSalesmanId: c.assignedSalesmanId,
+        }))}
+        salesmen={salesmen}
+        currentUserId={currentUserId}
+        productMasterList={productMasterList}
+        onDataChanged={onDataChanged}
+      />
     </section>
   )
 }

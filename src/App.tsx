@@ -26,6 +26,10 @@ const FollowupVisitHistory = lazy(async () => {
   const module = await import('./components/FollowupVisitHistory')
   return { default: module.FollowupVisitHistory }
 })
+const CustomerOrdersPage = lazy(async () => {
+  const module = await import('./components/orders')
+  return { default: module.CustomerOrdersPage }
+})
 const OFFLINE_VISIT_QUEUE_KEY = 'fs_offline_queued_visits'
 
 async function resolveVisitPhotoSrc(client: SupabaseClient, stored: string): Promise<string | null> {
@@ -61,6 +65,8 @@ type Customer = {
   dynamicFields?: Record<string, string>
   updatedAt?: string
   category?: 'A' | 'B' | 'C' | 'D' | 'E' | null
+  totalPurchaseValue?: number
+  lastOrderDate?: string | null
 }
 export type CityMaster = {
   id: string
@@ -166,6 +172,7 @@ type NavId =
   | 'visits'
   | 'followup_history'
   | 'salesman_overdue'
+  | 'admin_orders'
 
 const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) => boolean }[] = [
   { id: 'dashboard', label: 'Dashboard', section: 'Overview', show: (r) => r !== 'salesman' },
@@ -184,6 +191,7 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
   { id: 'admin_meetings', label: 'Meeting Responses', section: 'Admin', show: () => true },
   { id: 'admin_kpi', label: 'KPI Table', section: 'Admin', show: (r) => r !== 'salesman' },
   { id: 'admin_customers', label: 'Customer Database', section: 'Admin', show: (r) => r === 'owner' || r === 'sub_admin' || r === 'super_salesman' },
+  { id: 'admin_orders', label: 'Customer Orders', section: 'Admin', show: (r) => r === 'owner' || r === 'sub_admin' || r === 'super_salesman' },
   { id: 'admin_cities', label: 'City Management', section: 'Admin', show: (r) => r === 'owner' || r === 'super_salesman' },
   { id: 'settings', label: 'Settings', section: 'Account', show: () => true },
   { id: 'visits', label: 'Visit History', section: 'Overview', show: () => true },
@@ -244,6 +252,8 @@ const INITIAL_CUSTOMERS: Customer[] = [
     assignedSalesmanId: 's1',
     lat: 26.9165,
     lng: 75.8243,
+    totalPurchaseValue: 125000,
+    lastOrderDate: '2026-07-28',
   },
   {
     id: 'c2',
@@ -257,6 +267,8 @@ const INITIAL_CUSTOMERS: Customer[] = [
     assignedSalesmanId: 's2',
     lat: 23.0322,
     lng: 72.5452,
+    totalPurchaseValue: 48000,
+    lastOrderDate: '2026-08-01',
   },
 ]
 
@@ -1200,6 +1212,8 @@ function App() {
         dynamicFields: toDynamicFieldsObject(r.dynamic_fields),
         updatedAt: ((r as Record<string, unknown>).updated_at as string) ?? undefined,
         category: (r.category as 'A' | 'B' | 'C' | 'D' | 'E' | null) ?? null,
+        totalPurchaseValue: Number((r as any).total_purchase_value ?? 0),
+        lastOrderDate: ((r as any).last_order_date as string) ?? null,
       }))
       setCustomers(customersMapped)
 
@@ -5850,6 +5864,19 @@ function App() {
               profileNameById={profileNameById}
               role={role}
               activeSalesmanId={activeSalesmanId}
+              currentUserId={authSession?.user?.id ?? ''}
+              onDataChanged={() => scheduleWorkspaceReloadRef.current?.()}
+            />
+          </Suspense>
+        )
+      case 'admin_orders':
+        return (
+          <Suspense fallback={<section className="panel"><p>Loading customer orders…</p></section>}>
+            <CustomerOrdersPage
+              customers={dedupedCustomers}
+              salesmen={salesmen}
+              cities={cities}
+              role={role}
               currentUserId={authSession?.user?.id ?? ''}
               onDataChanged={() => scheduleWorkspaceReloadRef.current?.()}
             />
