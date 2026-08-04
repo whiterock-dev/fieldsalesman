@@ -114,21 +114,72 @@ export function OrderHistoryDialog({
 
   return (
     <>
-      <div className="modalOverlay" role="dialog" aria-modal="true" onClick={onClose}>
+      <div
+        className="modalOverlay"
+        role="dialog"
+        aria-modal="true"
+        onClick={onClose}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000,
+          padding: '16px',
+        }}
+      >
         <div
           className="modalCard"
-          style={{ maxWidth: '840px', width: '96%', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}
+          style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '16px',
+            maxWidth: '800px',
+            width: '94%',
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.04)',
+            overflow: 'hidden',
+            fontFamily: "'Inter', 'Segoe UI', sans-serif",
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="modalHeader" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '18px 24px',
+              borderBottom: '1px solid #e2e8f0',
+              backgroundColor: '#f8fafc',
+            }}
+          >
             <div>
-              <h2 style={{ margin: 0 }}>Order History — {customerName}</h2>
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#0f172a' }}>
+                Order History — {customerName}
+              </h2>
               <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748b' }}>
                 View past purchase orders, lifetime spend, and add new orders.
               </p>
             </div>
-            <button type="button" className="closeBtn" onClick={onClose} aria-label="Close">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '20px',
+                color: '#64748b',
+                cursor: 'pointer',
+                lineHeight: 1,
+                padding: '4px',
+              }}
+            >
               ✕
             </button>
           </div>
@@ -136,8 +187,8 @@ export function OrderHistoryDialog({
           {/* Summary & Add Order bar */}
           <div
             style={{
-              padding: '12px 20px',
-              backgroundColor: '#f8fafc',
+              padding: '16px 24px',
+              backgroundColor: '#ffffff',
               borderBottom: '1px solid #e2e8f0',
               display: 'flex',
               flexWrap: 'wrap',
@@ -146,25 +197,52 @@ export function OrderHistoryDialog({
               justifyContent: 'space-between',
             }}
           >
-            <div style={{ display: 'flex', gap: '24px' }}>
+            <div style={{ display: 'flex', gap: '28px', flexWrap: 'wrap' }}>
               <div>
-                <span style={{ fontSize: '12px', color: '#64748b', display: 'block', textTransform: 'uppercase' }}>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    color: '#64748b',
+                    display: 'block',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    marginBottom: '4px',
+                  }}
+                >
                   Total Orders
                 </span>
-                <span style={{ fontSize: '20px', fontWeight: 'bold', color: '#0f172a' }}>
+                <span style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a' }}>
                   {filteredOrders.length}
                 </span>
               </div>
               <div>
-                <span style={{ fontSize: '12px', color: '#64748b', display: 'block', textTransform: 'uppercase' }}>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    color: '#64748b',
+                    display: 'block',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    marginBottom: '4px',
+                  }}
+                >
                   Purchase Value
                 </span>
-                <span style={{ fontSize: '20px', fontWeight: 'bold', color: '#0f766e' }}>
+                <span style={{ fontSize: '20px', fontWeight: 700, color: '#166534' }}>
                   ₹{totalValue.toLocaleString('en-IN')}
                 </span>
               </div>
               <div>
-                <span style={{ fontSize: '12px', color: '#64748b', display: 'block', textTransform: 'uppercase' }}>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    color: '#64748b',
+                    display: 'block',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    marginBottom: '4px',
+                  }}
+                >
                   Last Purchase
                 </span>
                 <span style={{ fontSize: '15px', fontWeight: 600, color: '#334155' }}>
@@ -180,16 +258,19 @@ export function OrderHistoryDialog({
                   setIsAddOpen(true)
                 }}
                 style={{
-                  backgroundColor: '#0f766e',
-                  color: '#fff',
+                  height: '38px',
+                  padding: '0 16px',
+                  borderRadius: '8px',
                   border: 'none',
-                  padding: '8px 16px',
-                  borderRadius: '6px',
+                  backgroundColor: '#0f172a',
+                  color: '#ffffff',
+                  fontSize: '13px',
                   fontWeight: 600,
                   cursor: 'pointer',
-                  display: 'flex',
+                  display: 'inline-flex',
                   alignItems: 'center',
                   gap: '6px',
+                  boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
                 }}
               >
                 + Add Order
@@ -200,9 +281,9 @@ export function OrderHistoryDialog({
           {/* Reference UI Date Filter Bar */}
           <div
             style={{
-              padding: '12px 20px',
+              padding: '14px 24px',
               borderBottom: '1px solid #e2e8f0',
-              backgroundColor: '#fff',
+              backgroundColor: '#f8fafc',
               display: 'flex',
               flexDirection: 'column',
               gap: '10px',
@@ -216,15 +297,17 @@ export function OrderHistoryDialog({
                 type="button"
                 onClick={() => setDateFilter('all')}
                 style={{
-                  padding: '5px 12px',
+                  height: '34px',
+                  padding: '0 14px',
                   borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: 600,
                   border: '1px solid',
-                  borderColor: dateFilter === 'all' ? '#0f766e' : '#cbd5e1',
-                  backgroundColor: dateFilter === 'all' ? '#0f766e' : '#fff',
+                  borderColor: dateFilter === 'all' ? '#0f172a' : '#cbd5e1',
+                  backgroundColor: dateFilter === 'all' ? '#0f172a' : '#ffffff',
                   color: dateFilter === 'all' ? '#fff' : '#334155',
                   cursor: 'pointer',
+                  transition: 'all 0.15s ease',
                 }}
               >
                 All Time
@@ -233,15 +316,17 @@ export function OrderHistoryDialog({
                 type="button"
                 onClick={() => setDateFilter('7days')}
                 style={{
-                  padding: '5px 12px',
+                  height: '34px',
+                  padding: '0 14px',
                   borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: 600,
                   border: '1px solid',
-                  borderColor: dateFilter === '7days' ? '#0f766e' : '#cbd5e1',
-                  backgroundColor: dateFilter === '7days' ? '#0f766e' : '#fff',
+                  borderColor: dateFilter === '7days' ? '#0f172a' : '#cbd5e1',
+                  backgroundColor: dateFilter === '7days' ? '#0f172a' : '#ffffff',
                   color: dateFilter === '7days' ? '#fff' : '#334155',
                   cursor: 'pointer',
+                  transition: 'all 0.15s ease',
                 }}
               >
                 Last 7 Days
@@ -250,15 +335,17 @@ export function OrderHistoryDialog({
                 type="button"
                 onClick={() => setDateFilter('30days')}
                 style={{
-                  padding: '5px 12px',
+                  height: '34px',
+                  padding: '0 14px',
                   borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: 600,
                   border: '1px solid',
-                  borderColor: dateFilter === '30days' ? '#0f766e' : '#cbd5e1',
-                  backgroundColor: dateFilter === '30days' ? '#0f766e' : '#fff',
+                  borderColor: dateFilter === '30days' ? '#0f172a' : '#cbd5e1',
+                  backgroundColor: dateFilter === '30days' ? '#0f172a' : '#ffffff',
                   color: dateFilter === '30days' ? '#fff' : '#334155',
                   cursor: 'pointer',
+                  transition: 'all 0.15s ease',
                 }}
               >
                 Last 30 Days
@@ -267,15 +354,17 @@ export function OrderHistoryDialog({
                 type="button"
                 onClick={() => setDateFilter('custom')}
                 style={{
-                  padding: '5px 12px',
+                  height: '34px',
+                  padding: '0 14px',
                   borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: 600,
                   border: '1px solid',
-                  borderColor: dateFilter === 'custom' ? '#0f766e' : '#cbd5e1',
-                  backgroundColor: dateFilter === 'custom' ? '#0f766e' : '#fff',
+                  borderColor: dateFilter === 'custom' ? '#0f172a' : '#cbd5e1',
+                  backgroundColor: dateFilter === 'custom' ? '#0f172a' : '#ffffff',
                   color: dateFilter === 'custom' ? '#fff' : '#334155',
                   cursor: 'pointer',
+                  transition: 'all 0.15s ease',
                 }}
               >
                 Custom Range
@@ -290,28 +379,32 @@ export function OrderHistoryDialog({
 
             {dateFilter === 'custom' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingTop: '4px' }}>
-                <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 500 }}>From:</span>
+                <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>From:</span>
                 <input
                   type="date"
                   value={customFrom}
                   onChange={(e) => setCustomFrom(e.target.value)}
                   style={{
-                    padding: '4px 8px',
+                    height: '34px',
+                    padding: '0 10px',
                     borderRadius: '6px',
                     border: '1px solid #cbd5e1',
-                    fontSize: '12px',
+                    fontSize: '13px',
+                    color: '#1e293b',
                   }}
                 />
-                <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 500 }}>To:</span>
+                <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>To:</span>
                 <input
                   type="date"
                   value={customTo}
                   onChange={(e) => setCustomTo(e.target.value)}
                   style={{
-                    padding: '4px 8px',
+                    height: '34px',
+                    padding: '0 10px',
                     borderRadius: '6px',
                     border: '1px solid #cbd5e1',
-                    fontSize: '12px',
+                    fontSize: '13px',
+                    color: '#1e293b',
                   }}
                 />
                 {(customFrom || customTo) && (
@@ -324,8 +417,9 @@ export function OrderHistoryDialog({
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: '#64748b',
+                      color: '#2563eb',
                       fontSize: '12px',
+                      fontWeight: 600,
                       cursor: 'pointer',
                       textDecoration: 'underline',
                     }}
@@ -338,90 +432,120 @@ export function OrderHistoryDialog({
           </div>
 
           {/* Modal Body / Table matching Reference UI */}
-          <div className="modalBody" style={{ overflowY: 'auto', padding: '16px 20px', flex: 1 }}>
+          <div style={{ overflowY: 'auto', padding: '20px 24px', flex: 1 }}>
             {isLoading ? (
-              <p style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
+              <p style={{ textAlign: 'center', padding: '36px', color: '#64748b', fontSize: '14px' }}>
                 Loading purchase history...
               </p>
             ) : filteredOrders.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
-                <p style={{ fontSize: '15px', fontWeight: 500 }}>
+              <div style={{ textAlign: 'center', padding: '48px 20px', color: '#64748b' }}>
+                <p style={{ fontSize: '14px', fontWeight: 500, margin: 0 }}>
                   {orders.length === 0
                     ? 'No purchase history found for this customer.'
                     : 'No orders found in the selected date range.'}
                 </p>
               </div>
             ) : (
-              <table className="dataTable" style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#f1f5f9', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>
-                    <th style={{ padding: '10px 14px', width: '120px' }}>Order Date</th>
-                    <th style={{ padding: '10px 14px', textAlign: 'right', width: '140px' }}>Order Value</th>
-                    <th style={{ padding: '10px 14px', width: '150px' }}>Closed By</th>
-                    <th style={{ padding: '10px 14px', textAlign: 'center', width: '140px' }}>Days Since Order</th>
-                    <th style={{ padding: '10px 14px', textAlign: 'center', width: '100px' }}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredOrders.map((o) => (
-                    <tr key={o.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '12px 14px', fontWeight: 600, whiteSpace: 'nowrap', color: '#0f172a' }}>
-                        {formatDDMMYYYY(o.orderDate)}
-                      </td>
-                      <td
+              <div
+                style={{
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '10px',
+                  overflow: 'hidden',
+                  backgroundColor: '#ffffff',
+                }}
+              >
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr
+                      style={{
+                        backgroundColor: '#f8fafc',
+                        textAlign: 'left',
+                        borderBottom: '1px solid #e2e8f0',
+                        color: '#64748b',
+                        fontWeight: 600,
+                        fontSize: '12px',
+                      }}
+                    >
+                      <th style={{ padding: '12px 16px', width: '130px' }}>Order Date</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'right', width: '140px' }}>Order Value</th>
+                      <th style={{ padding: '12px 16px', width: '160px' }}>Closed By</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'center', width: '140px' }}>
+                        Days Since Order
+                      </th>
+                      <th style={{ padding: '12px 16px', textAlign: 'center', width: '100px' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredOrders.map((o, idx) => (
+                      <tr
+                        key={o.id}
                         style={{
-                          padding: '12px 14px',
-                          textAlign: 'right',
-                          fontWeight: 'bold',
-                          color: '#0f766e',
-                          whiteSpace: 'nowrap',
+                          borderBottom: idx < filteredOrders.length - 1 ? '1px solid #f1f5f9' : 'none',
                         }}
                       >
-                        ₹{(o.orderValue || 0).toLocaleString('en-IN')}
-                      </td>
-                      <td style={{ padding: '12px 14px', color: '#334155' }}>
-                        {o.salesmanName || '—'}
-                      </td>
-                      <td style={{ padding: '12px 14px', textAlign: 'center' }}>
-                        <span
-                          style={{
-                            padding: '3px 10px',
-                            borderRadius: '12px',
-                            backgroundColor: '#f1f5f9',
-                            color: '#475569',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            display: 'inline-block',
-                          }}
-                        >
-                          {daysSinceLabel(o.orderDate)}
-                        </span>
-                      </td>
-                      <td style={{ padding: '12px 14px', textAlign: 'center' }}>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedOrder(o)}
-                          style={{
-                            padding: '5px 12px',
-                            borderRadius: '6px',
-                            border: '1px solid #cbd5e1',
-                            backgroundColor: '#fff',
-                            color: '#334155',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                          }}
-                        >
-                          👁 View
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <td style={{ padding: '14px 16px', fontWeight: 600, whiteSpace: 'nowrap', color: '#0f172a' }}>
+                          {formatDDMMYYYY(o.orderDate)}
+                        </td>
+                        <td style={{ padding: '14px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              padding: '4px 10px',
+                              borderRadius: '16px',
+                              backgroundColor: '#dcfce7',
+                              color: '#166534',
+                              fontWeight: 700,
+                              fontSize: '13px',
+                            }}
+                          >
+                            ₹{(o.orderValue || 0).toLocaleString('en-IN')}
+                          </span>
+                        </td>
+                        <td style={{ padding: '14px 16px', color: '#334155' }}>
+                          {o.salesmanName || '—'}
+                        </td>
+                        <td style={{ padding: '14px 16px', textAlign: 'center' }}>
+                          <span
+                            style={{
+                              padding: '3px 10px',
+                              borderRadius: '12px',
+                              backgroundColor: '#f1f5f9',
+                              color: '#475569',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              display: 'inline-block',
+                            }}
+                          >
+                            {daysSinceLabel(o.orderDate)}
+                          </span>
+                        </td>
+                        <td style={{ padding: '14px 16px', textAlign: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOrder(o)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '5px 12px',
+                              borderRadius: '6px',
+                              border: '1px solid #e2e8f0',
+                              backgroundColor: '#ffffff',
+                              color: '#334155',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            👁 View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>

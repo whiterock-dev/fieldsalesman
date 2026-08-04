@@ -6,9 +6,10 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import type { EnrichedCustomerOrder, CustomerOrderFilters, OrderProduct } from './types'
+import type { EnrichedCustomerOrder, CustomerOrderFilters, OrderProduct, CustomerOrder } from './types'
 import {
-  getAllCustomerOrders,
+  getRawCustomerOrders,
+  enrichAndFilterOrders,
   // deleteCustomerOrder,
   getProductMasterList,
   bulkImportOrders,
@@ -37,7 +38,7 @@ export interface CustomerOrdersPageProps {
   onDataChanged: () => void
 }
 
-export function CustomerOrdersPage({
+export const CustomerOrdersPage = React.memo(function CustomerOrdersPage({
   customers,
   salesmen,
   cities,
@@ -45,7 +46,7 @@ export function CustomerOrdersPage({
   currentUserId,
   onDataChanged,
 }: CustomerOrdersPageProps) {
-  const [orders, setOrders] = useState<EnrichedCustomerOrder[]>([])
+  const [rawOrders, setRawOrders] = useState<CustomerOrder[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [filters, setFilters] = useState<CustomerOrderFilters>({})
   const [productMasterList, setProductMasterList] = useState<string[]>([])
@@ -68,26 +69,42 @@ export function CustomerOrdersPage({
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 20
 
-  const loadData = useCallback(async () => {
-    setIsLoading(true)
+  const dbFilterKey = useMemo(() => {
+    return JSON.stringify({
+      orderDateFrom: filters.orderDateFrom || '',
+      orderDateTo: filters.orderDateTo || '',
+      salesmanId: filters.salesmanId || '',
+      customerId: filters.customerId || '',
+    })
+  }, [filters.orderDateFrom, filters.orderDateTo, filters.salesmanId, filters.customerId])
+
+  const loadData = useCallback(async (showLoading = true) => {
+    if (showLoading) setIsLoading(true)
     try {
       const [list, pMaster] = await Promise.all([
-        getAllCustomerOrders(filters, customers),
+        getRawCustomerOrders(filters),
         getProductMasterList(),
       ])
-      setOrders(list)
+      setRawOrders(list)
       setProductMasterList(pMaster)
-      setCurrentPage(1)
     } catch (err) {
       console.warn('Error loading orders page:', err)
     } finally {
-      setIsLoading(false)
+      if (showLoading) setIsLoading(false)
     }
-  }, [filters, customers])
+  }, [dbFilterKey])
 
   useEffect(() => {
-    loadData()
+    loadData(true)
   }, [loadData])
+
+  const orders = useMemo(() => {
+    return enrichAndFilterOrders(rawOrders, customers, filters)
+  }, [rawOrders, customers, filters])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filters])
 
   const stats = useMemo(() => {
     const totalOrders = orders.length
@@ -150,9 +167,8 @@ export function CustomerOrdersPage({
   // ── Template download (no modal needed)
   function handleDownloadTemplate() {
     const templateCsv =
-      'customerMobile,orderDate,orderNumber,productName,sellingRate,orderValue,salesmanName,remark\r\n' +
-      '9990011122,01-08-2026,PO-1001,Gypsum Tile,50,50000,Rahul Sales,Sample bulk order\r\n' +
-      '9884411100,02-08-2026,PO-1002,T-Grid,25,12500,Rahul Sales,\r\n'
+      'customerMobile,orderDate,orderNumber,productName,sellingRate,orderValue,salesmanName,remark\r\n' 
+      '9884411100,02-08-2026,PO-1002,T-Grid,25,12500,Salesman,\r\n'
     const blob = new Blob(['﻿' + templateCsv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -272,7 +288,7 @@ export function CustomerOrdersPage({
           : 'error'
       setCsvResult({ type, importedCount: result.importedCount, errors: result.errors })
       if (result.importedCount > 0) {
-        loadData()
+        loadData(false)
         onDataChanged()
       }
     } catch (err) {
@@ -284,9 +300,65 @@ export function CustomerOrdersPage({
 
   const isReadOnly = role === 'salesman'
 
-  return (
-    <section className="panel" style={{ padding: '16px 20px' }}>
+  const formatLoggedAt = (isoString?: string) => {
+    if (!isoString) return '—'
+    try {
+      const date = new Date(isoString)
+      if (isNaN(date.getTime())) return isoString
+      return date.toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      })
+    } catch {
+      return isoString
+    }
+  }
 
+  const exportButtonNode = (
+    <button
+      type="button"
+      onClick={handleExportCsv}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '8px',
+        height: '38px',
+        padding: '0 16px',
+        borderRadius: '8px',
+        border: '1px solid #cbd5e1',
+        backgroundColor: '#ffffff',
+        color: '#1e293b',
+        fontSize: '13px',
+        fontWeight: 600,
+        cursor: 'pointer',
+        boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)',
+        transition: 'all 0.15s ease',
+      }}
+    >
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="7 10 12 15 17 10" />
+        <line x1="12" y1="15" x2="12" y2="3" />
+      </svg>
+      Export Report (CSV)
+    </button>
+  )
+
+  return (
+    <section className="panel" style={{ padding: '24px 28px', backgroundColor: '#f8fafc', minHeight: '100%' }}>
       {/* Hidden file input for CSV upload */}
       <input
         ref={fileInputRef}
@@ -296,107 +368,32 @@ export function CustomerOrdersPage({
         onChange={handleCsvFileUpload}
       />
 
-      {/* ── Header row ── */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '10px',
-          flexWrap: 'wrap',
-          gap: '10px',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <h1 style={{ fontSize: '18px', fontWeight: 700, margin: 0, color: '#0f172a' }}>
-            Customer Orders
-          </h1>
-          {!isLoading && (
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '2px 10px',
-                backgroundColor: '#e0f2fe',
-                color: '#0369a1',
-                borderRadius: '12px',
-                fontSize: '12px',
-                fontWeight: 700,
-              }}
-            >
-              {stats.totalOrders} orders
-            </span>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={handleExportCsv}
-            style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}
-          >
-            ↓ Export CSV
-          </button>
-
-          {!isReadOnly && (
-            <>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={handleDownloadTemplate}
-                style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}
-              >
-                ↓ Download Template
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={csvUploading}
-                onClick={() => fileInputRef.current?.click()}
-                style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}
-              >
-                {csvUploading ? 'Uploading…' : '↑ Upload CSV'}
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => { setEditingOrder(null); setIsAddOpen(true) }}
-                style={{
-                  backgroundColor: '#0f766e',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '6px 14px',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                }}
-              >
-                + Add Order
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
+      {/* ── Top Card: Advanced Analysis Filters ── */}
+      <OrdersFilterBar
+        filters={filters}
+        onChange={(f) => setFilters(f)}
+        salesmen={salesmen}
+        cities={cities}
+        onReset={() => setFilters({})}
+        exportButton={exportButtonNode}
+      />
 
       {/* ── CSV Upload result banner ── */}
       {csvResult && (
         <div
           style={{
-            marginBottom: '10px',
-            padding: '8px 12px',
-            borderRadius: '6px',
-            fontSize: '12px',
+            marginBottom: '20px',
+            padding: '12px 16px',
+            borderRadius: '10px',
+            fontSize: '13px',
             fontWeight: 500,
             backgroundColor: csvResult.type === 'success' ? '#f0fdf4' : csvResult.type === 'warning' ? '#fefce8' : '#fef2f2',
             border: `1px solid ${csvResult.type === 'success' ? '#bbf7d0' : csvResult.type === 'warning' ? '#fde68a' : '#fecaca'}`,
-            color: csvResult.type === 'success' ? '#15803d' : csvResult.type === 'warning' ? '#92400e' : '#991b1b',
+            color: csvResult.type === 'success' ? '#166534' : csvResult.type === 'warning' ? '#92400e' : '#991b1b',
+            boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
             <span>
               {csvResult.type === 'success' && `✓ Imported ${csvResult.importedCount} order(s) successfully.`}
               {csvResult.type === 'warning' && `⚠ Imported ${csvResult.importedCount} order(s) with ${csvResult.errors.length} skipped row(s).`}
@@ -405,167 +402,491 @@ export function CustomerOrdersPage({
             <button
               type="button"
               onClick={() => setCsvResult(null)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', lineHeight: 1, color: 'inherit', opacity: 0.6 }}
-            >✕</button>
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', lineHeight: 1, color: 'inherit', opacity: 0.6 }}
+            >
+              ✕
+            </button>
           </div>
           {csvResult.errors.length > 0 && (
-            <ul style={{ margin: '6px 0 0 16px', padding: 0, fontSize: '11px', lineHeight: '1.6' }}>
-              {csvResult.errors.slice(0, 10).map((err, i) => <li key={i}>{err}</li>)}
-              {csvResult.errors.length > 10 && <li style={{ opacity: 0.7 }}>... and {csvResult.errors.length - 10} more</li>}
+            <ul style={{ margin: '8px 0 0 20px', padding: 0, fontSize: '12px', lineHeight: '1.6' }}>
+              {csvResult.errors.slice(0, 10).map((err, i) => (
+                <li key={i}>{err}</li>
+              ))}
+              {csvResult.errors.length > 10 && (
+                <li style={{ opacity: 0.7 }}>... and {csvResult.errors.length - 10} more</li>
+              )}
             </ul>
           )}
         </div>
       )}
 
-      {/* Filter Bar */}
-      <OrdersFilterBar
-        filters={filters}
-        onChange={(f) => setFilters(f)}
-        salesmen={salesmen}
-        cities={cities}
-        onReset={() => setFilters({})}
-      />
+      {/* ── Section Header Row ── */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '16px',
+          marginBottom: '20px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <div
+            style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '50%',
+              backgroundColor: '#f1f5f9',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#475569',
+            }}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="9" cy="21" r="1" />
+              <circle cx="20" cy="21" r="1" />
+              <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+            </svg>
+          </div>
+          <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0, color: '#0f172a', letterSpacing: '-0.02em' }}>
+            Orders
+          </h1>
+          {!isLoading && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '2px 10px',
+                backgroundColor: '#f1f5f9',
+                color: '#475569',
+                borderRadius: '12px',
+                fontSize: '13px',
+                fontWeight: 700,
+              }}
+            >
+              {stats.totalOrders}
+            </span>
+          )}
+        </div>
 
-      {/* Orders Table */}
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative', width: '260px' }}>
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{
+                position: 'absolute',
+                left: '12px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: '#94a3b8',
+                pointerEvents: 'none',
+              }}
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search by Name, Firm, or Mobi..."
+              value={filters.search || ''}
+              onChange={(e) => setFilters({ ...filters, search: e.target.value || undefined })}
+              style={{
+                height: '38px',
+                width: '100%',
+                paddingLeft: '34px',
+                paddingRight: '12px',
+                borderRadius: '8px',
+                border: '1px solid #cbd5e1',
+                backgroundColor: '#ffffff',
+                color: '#1e293b',
+                fontSize: '13px',
+                fontWeight: 500,
+                outline: 'none',
+                boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)',
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          {!isReadOnly && (
+            <>
+              <button
+                type="button"
+                onClick={handleDownloadTemplate}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  height: '38px',
+                  padding: '0 14px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: '#ffffff',
+                  color: '#334155',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)',
+                }}
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Download Template
+              </button>
+
+              <button
+                type="button"
+                disabled={csvUploading}
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  height: '38px',
+                  padding: '0 14px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: '#ffffff',
+                  color: '#334155',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: csvUploading ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)',
+                }}
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                {csvUploading ? 'Uploading…' : 'Import Orders (CSV)'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingOrder(null)
+                  setIsAddOpen(true)
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  height: '38px',
+                  padding: '0 16px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  backgroundColor: '#0f172a',
+                  color: '#ffffff',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  boxShadow: '0 1px 2px 0 rgba(0,0,0,0.05)',
+                }}
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                Add Order
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Orders Table Card ── */}
       <div
         style={{
           backgroundColor: '#ffffff',
-          borderRadius: '10px',
+          borderRadius: '12px',
           border: '1px solid #e2e8f0',
-          overflowX: 'auto',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+          boxShadow: '0 1px 3px 0 rgba(0,0,0,0.04)',
+          overflow: 'hidden',
         }}
       >
-        <table className="dataTable" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#f8fafc', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>
-              <th style={{ padding: '8px 10px', width: '40px' }}>#</th>
-              <th style={{ padding: '8px 10px' }}>Customer Details</th>
-              <th style={{ padding: '8px 10px' }}>Order Date</th>
-              <th style={{ padding: '8px 10px', textAlign: 'right' }}>Order Value</th>
-              <th style={{ padding: '8px 10px' }}>Salesman</th>
-              <th style={{ padding: '8px 10px' }}>Remarks</th>
-              <th style={{ padding: '8px 10px', textAlign: 'center', width: '100px' }}>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              <tr>
-                <td colSpan={9} style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
-                  Loading customer orders...
-                </td>
+        <div style={{ overflowX: 'auto' }}>
+          <table
+            className="dataTable"
+            style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}
+          >
+            <thead>
+              <tr
+                style={{
+                  backgroundColor: '#f8fafc',
+                  textAlign: 'left',
+                  borderBottom: '1px solid #e2e8f0',
+                }}
+              >
+                <th style={{ padding: '14px 16px', width: '48px', color: '#64748b', fontWeight: 600, fontSize: '12px' }}>
+                  #
+                </th>
+                <th style={{ padding: '14px 16px', color: '#64748b', fontWeight: 600, fontSize: '12px' }}>
+                  Customer Details
+                </th>
+                <th style={{ padding: '14px 16px', color: '#64748b', fontWeight: 600, fontSize: '12px' }}>
+                  Order Date
+                </th>
+                <th style={{ padding: '14px 16px', color: '#64748b', fontWeight: 600, fontSize: '12px' }}>
+                  Order Value
+                </th>
+                <th style={{ padding: '14px 16px', color: '#64748b', fontWeight: 600, fontSize: '12px' }}>
+                  Salesman
+                </th>
+                <th style={{ padding: '14px 16px', color: '#64748b', fontWeight: 600, fontSize: '12px' }}>
+                  Remarks
+                </th>
+                <th style={{ padding: '14px 16px', color: '#64748b', fontWeight: 600, fontSize: '12px' }}>
+                  Logged At
+                </th>
+                <th
+                  style={{
+                    padding: '14px 16px',
+                    textAlign: 'center',
+                    width: '100px',
+                    color: '#64748b',
+                    fontWeight: 600,
+                    fontSize: '12px',
+                  }}
+                >
+                  Action
+                </th>
               </tr>
-            ) : orders.length === 0 ? (
-              <tr>
-                <td colSpan={9} style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
-                  No customer orders found matching current filters.
-                </td>
-              </tr>
-            ) : (
-              paginatedOrders.map((o, idx) => (
-                <tr key={o.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                  <td style={{ padding: '8px 10px', color: '#64748b', fontWeight: 500 }}>
-                    {(currentPage - 1) * 20 + idx + 1}
-                  </td>
-                  <td style={{ padding: '8px 10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span style={{ fontWeight: 600, color: '#0f172a' }}>{o.customerName}</span>
-                      {o.customerCategory && (
-                        <span
-                          style={{
-                            padding: '1px 5px',
-                            borderRadius: '4px',
-                            backgroundColor: '#f1f5f9',
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            color: '#475569',
-                          }}
-                        >
-                          {o.customerCategory}
-                        </span>
-                      )}
-                    </div>
-                    {o.customerMobile && (
-                      <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '1px' }}>
-                        {o.customerMobile} {o.customerCity ? `• ${o.customerCity}` : ''}
-                      </div>
-                    )}
-                  </td>
-                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap', fontWeight: 500 }}>
-                    {formatDDMMYYYY(o.orderDate)}
-                  </td>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr>
                   <td
+                    colSpan={8}
+                    style={{ textAlign: 'center', padding: '48px 16px', color: '#64748b', fontSize: '14px' }}
+                  >
+                    Loading customer orders...
+                  </td>
+                </tr>
+              ) : orders.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={8}
+                    style={{ textAlign: 'center', padding: '48px 16px', color: '#64748b', fontSize: '14px' }}
+                  >
+                    No customer orders found matching current filters.
+                  </td>
+                </tr>
+              ) : (
+                paginatedOrders.map((o, idx) => (
+                  <tr
+                    key={o.id}
                     style={{
-                      padding: '8px 10px',
-                      textAlign: 'right',
-                      fontWeight: 700,
-                      color: '#0f766e',
-                      whiteSpace: 'nowrap',
+                      borderBottom: '1px solid #f1f5f9',
+                      transition: 'background-color 0.15s ease',
                     }}
                   >
-                    ₹{(o.orderValue || 0).toLocaleString('en-IN')}
-                  </td>
-                  <td style={{ padding: '8px 10px' }}>
-                    {o.salesmanName ? (
+                    <td style={{ padding: '16px 16px', color: '#64748b', fontWeight: 500 }}>
+                      {(currentPage - 1) * pageSize + idx + 1}
+                    </td>
+                    <td style={{ padding: '16px 16px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 600, color: '#0f172a', fontSize: '14px' }}>
+                            {o.customerName}
+                          </span>
+                          {o.customerCategory && (
+                            <span
+                              style={{
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                backgroundColor: '#f1f5f9',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                color: '#475569',
+                              }}
+                            >
+                              {o.customerCategory}
+                            </span>
+                          )}
+                        </div>
+                        {o.customerMobile && (
+                          <div style={{ fontSize: '12px', color: '#64748b', fontWeight: 500 }}>
+                            {o.customerMobile} {o.customerCity ? `• ${o.customerCity}` : ''}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td style={{ padding: '16px 16px', whiteSpace: 'nowrap', fontWeight: 500, color: '#1e293b' }}>
+                      {formatDDMMYYYY(o.orderDate)}
+                    </td>
+                    <td style={{ padding: '16px 16px', whiteSpace: 'nowrap' }}>
                       <span
                         style={{
-                          padding: '2px 8px',
-                          borderRadius: '10px',
-                          backgroundColor: '#e0f2fe',
-                          color: '#0369a1',
-                          fontSize: '11px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '4px 10px',
+                          borderRadius: '16px',
+                          backgroundColor: '#dcfce7',
+                          color: '#166534',
+                          fontWeight: 700,
+                          fontSize: '13px',
+                        }}
+                      >
+                        ₹{(o.orderValue || 0).toLocaleString('en-IN')}
+                      </span>
+                    </td>
+                    <td style={{ padding: '16px 16px' }}>
+                      {o.salesmanName ? (
+                        <span
+                          style={{
+                            padding: '3px 10px',
+                            borderRadius: '16px',
+                            backgroundColor: '#f1f5f9',
+                            color: '#334155',
+                            fontSize: '12px',
+                            fontWeight: 500,
+                            display: 'inline-block',
+                          }}
+                        >
+                          {o.salesmanName}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#94a3b8' }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '16px 16px', color: '#475569', maxWidth: '200px', fontSize: '13px' }}>
+                      {o.remark || '—'}
+                    </td>
+                    <td style={{ padding: '16px 16px', whiteSpace: 'nowrap' }}>
+                      <div
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          color: '#64748b',
+                          fontSize: '12px',
                           fontWeight: 500,
                         }}
                       >
-                        {o.salesmanName}
-                      </span>
-                    ) : (
-                      <span style={{ color: '#94a3b8' }}>—</span>
-                    )}
-                  </td>
-                  <td style={{ padding: '8px 10px', color: '#475569', maxWidth: '180px', fontSize: '11px' }}>
-                    {o.remark || '—'}
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedOrder(o)}
-                      style={{
-                        padding: '5px 12px',
-                        borderRadius: '6px',
-                        border: '1px solid #cbd5e1',
-                        backgroundColor: '#fff',
-                        color: '#334155',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                      }}
-                    >
-                      👁 View
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <circle cx="12" cy="12" r="10" />
+                          <polyline points="12 6 12 12 16 14" />
+                        </svg>
+                        {formatLoggedAt(o.createdAt)}
+                      </div>
+                    </td>
+                    <td style={{ padding: '16px 16px', textAlign: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedOrder(o)}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 14px',
+                          borderRadius: '6px',
+                          border: '1px solid #e2e8f0',
+                          backgroundColor: '#ffffff',
+                          color: '#334155',
+                          fontSize: '13px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)',
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* Pagination Controls */}
+      {/* ── Pagination Controls ── */}
       {totalPages > 1 && (
         <div
           style={{
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            marginTop: '16px',
-            padding: '10px 0',
+            marginTop: '20px',
+            padding: '12px 4px',
+            flexWrap: 'wrap',
+            gap: '12px',
           }}
         >
-          <span style={{ fontSize: '14px', color: '#64748b' }}>
+          <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 500 }}>
             Showing page {currentPage} of {totalPages} ({orders.length} total orders)
           </span>
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -574,10 +895,14 @@ export function CustomerOrdersPage({
               disabled={currentPage === 1}
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
               style={{
-                padding: '6px 14px',
-                borderRadius: '6px',
+                height: '36px',
+                padding: '0 14px',
+                borderRadius: '8px',
                 border: '1px solid #cbd5e1',
                 backgroundColor: currentPage === 1 ? '#f1f5f9' : '#fff',
+                color: currentPage === 1 ? '#94a3b8' : '#334155',
+                fontSize: '13px',
+                fontWeight: 600,
                 cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
               }}
             >
@@ -588,10 +913,14 @@ export function CustomerOrdersPage({
               disabled={currentPage === totalPages}
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
               style={{
-                padding: '6px 14px',
-                borderRadius: '6px',
+                height: '36px',
+                padding: '0 14px',
+                borderRadius: '8px',
                 border: '1px solid #cbd5e1',
                 backgroundColor: currentPage === totalPages ? '#f1f5f9' : '#fff',
+                color: currentPage === totalPages ? '#94a3b8' : '#334155',
+                fontSize: '13px',
+                fontWeight: 600,
                 cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
               }}
             >
@@ -605,7 +934,10 @@ export function CustomerOrdersPage({
       <AddOrderDialog
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}
-        onOrderSaved={() => { loadData(); onDataChanged() }}
+        onOrderSaved={() => {
+          loadData(false)
+          onDataChanged()
+        }}
         customers={customers}
         salesmen={salesmen}
         currentUserId={currentUserId}
@@ -621,4 +953,4 @@ export function CustomerOrdersPage({
       />
     </section>
   )
-}
+})
