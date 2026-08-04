@@ -14,7 +14,7 @@ import type { Role } from '../lib/roles'
 import { SearchableCityDropdown } from './SearchableCityDropdown'
 import type { CityMaster } from '../App'
 import { OrderHistoryDialog } from './orders/OrderHistoryDialog'
-import { getProductMasterList } from './orders/ordersApi'
+import { getProductMasterList, formatDDMMYYYY } from './orders/ordersApi'
 
 /* ───────────── Local types (mirrors App.tsx – avoids circular imports) ───────────── */
 
@@ -371,6 +371,8 @@ export function CustomerDatabase({
     const headers = [
       'Customer Name', 'Mobile Number', 'City', 'Address', 'Salesman',
       ...activeDynamicFields.map(f => f.label),
+      'Past Purchase History',
+      'Last Purchase Date',
       'Updated Date',
     ]
     const rows = filtered.map(c => [
@@ -380,6 +382,8 @@ export function CustomerDatabase({
       c.address,
       profileNameById.get(c.assignedSalesmanId) ?? 'Unassigned',
       ...activeDynamicFields.map(f => dynamicVal(c, f.key)),
+      c.totalPurchaseValue || 0,
+      c.lastOrderDate ? formatDDMMYYYY(c.lastOrderDate) : '—',
       c.updatedAt ? formatDateTime(c.updatedAt) : '—',
     ])
     exportToCsv('customer_database_export', headers, rows)
@@ -814,8 +818,9 @@ export function CustomerDatabase({
                   <th>City</th>
                   <th>Address</th>
                   {showSalesmanFilter && <th>Salesman</th>}
-                  {activeDynamicFields.map(f => <th key={f.id}>{f.label}</th>)}
-                  <th>Total Orders</th>
+                  {activeDynamicFields.map(f => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
+                  <th className="cdWrapHead">Past Purchase History</th>
+                  <th className="cdWrapHead">Last Purchase Date</th>
                   <th>Updated</th>
                   <th>Actions</th>
                 </tr>
@@ -870,19 +875,21 @@ export function CustomerDatabase({
                       </td>
                     ))}
                     <td className="cdCompactCell">
-                      <button
-                        type="button"
-                        className="cdEditBtn"
+                      <span
                         onClick={() => setOrderHistoryCustomer(c)}
                         style={{
-                          fontWeight: 600,
-                          color: (c.totalPurchaseValue && c.totalPurchaseValue > 0) ? '#0f766e' : '#94a3b8',
+                          fontWeight: 700,
+                          color: (c.totalPurchaseValue && c.totalPurchaseValue > 0) ? '#0f766e' : '#64748b',
+                          cursor: 'pointer',
                           whiteSpace: 'nowrap',
                         }}
                         title={c.totalPurchaseValue && c.totalPurchaseValue > 0 ? `Last: ${c.lastOrderDate || 'N/A'}` : 'No orders yet'}
                       >
                         ₹{(c.totalPurchaseValue || 0) > 0 ? (c.totalPurchaseValue || 0).toLocaleString('en-IN') : '0'}
-                      </button>
+                      </span>
+                    </td>
+                    <td className="cdCompactCell cdDateCell">
+                      {c.lastOrderDate ? formatDDMMYYYY(c.lastOrderDate) : '—'}
                     </td>
                     <td className="cdCompactCell cdDateCell">{c.updatedAt ? formatDateTime(c.updatedAt) : '—'}</td>
                     <td style={{ display: 'flex', gap: '0.5rem', flexWrap: 'nowrap' }}>

@@ -1092,8 +1092,10 @@ button:focus-visible {
 
 .followupTable .dynamicFieldCol,
 .customersTable .dynamicFieldCol,
-.visitsTable .dynamicFieldCol {
-  min-width: 8rem;
+.visitsTable .dynamicFieldCol,
+.cdTable .dynamicFieldCol,
+.cdTable .cdWrapHead {
+  min-width: 9rem;
   max-width: 10rem;
   white-space: normal;
   word-break: break-word;
@@ -2904,6 +2906,7 @@ a:hover {
   position: sticky;
   top: 0;
   z-index: 2;
+  vertical-align: top;
 }
 
 .cdTable tbody tr:hover {

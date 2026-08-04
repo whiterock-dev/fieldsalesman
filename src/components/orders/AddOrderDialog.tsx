@@ -33,24 +33,28 @@ interface LineItemForm {
   orderValue: string
 }
 
-const FS = '12px'     // base font size
-const INPUT_STYLE: React.CSSProperties = {
-  fontSize: FS,
-  padding: '6px 8px',
-  borderRadius: '5px',
-  border: '1px solid #cbd5e1',
-  background: '#fff',
-  color: '#0f172a',
+const inputStyle: React.CSSProperties = {
+  height: '38px',
   width: '100%',
+  padding: '0 12px',
+  borderRadius: '8px',
+  border: '1px solid #cbd5e1',
+  backgroundColor: '#ffffff',
+  color: '#1e293b',
+  fontSize: '13px',
+  fontWeight: 500,
+  outline: 'none',
+  boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.03)',
   boxSizing: 'border-box',
 }
-const LABEL_STYLE: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '3px',
-  fontSize: FS,
+
+const labelStyle: React.CSSProperties = {
+  display: 'block',
+  fontSize: '12px',
   fontWeight: 600,
   color: '#475569',
+  marginBottom: '6px',
+  letterSpacing: '0.01em',
 }
 
 export function AddOrderDialog({
@@ -164,7 +168,7 @@ export function AddOrderDialog({
 
   const handleCustomerSearchChange = (val: string) => {
     setCustomerSearch(val)
-    setSelectedCustomerId('')  // clear selection when user types again
+    setSelectedCustomerId('') // clear selection when user types again
     setShowDropdown(true)
   }
 
@@ -191,9 +195,18 @@ export function AddOrderDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setErrorMsg('')
-    if (!selectedCustomerId) { setErrorMsg('Please select a customer.'); return }
-    if (!orderDate) { setErrorMsg('Please select an order date.'); return }
-    if (totalOrderValue <= 0) { setErrorMsg('Total order value must be greater than 0.'); return }
+    if (!selectedCustomerId) {
+      setErrorMsg('Please select a customer.')
+      return
+    }
+    if (!orderDate) {
+      setErrorMsg('Please select an order date.')
+      return
+    }
+    if (totalOrderValue <= 0) {
+      setErrorMsg('Total order value must be greater than 0.')
+      return
+    }
 
     const salesman = salesmen.find((s) => s.id === selectedSalesmanId)
     const products: OrderProduct[] = lineItems.map((item) => ({
@@ -234,186 +247,308 @@ export function AddOrderDialog({
       role="dialog"
       aria-modal="true"
       onClick={onClose}
-      style={{ alignItems: 'center' }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(15, 23, 42, 0.65)',
+        backdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 10000,
+        padding: '16px',
+      }}
     >
       <div
         className="modalCard"
-        style={{ maxWidth: '860px', width: '96vw', maxHeight: '90vh' }}
+        style={{
+          backgroundColor: '#ffffff',
+          borderRadius: '16px',
+          width: '96%',
+          maxWidth: '720px',
+          maxHeight: '90vh',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.04)',
+          overflow: 'hidden',
+          fontFamily: "'Inter', 'Segoe UI', sans-serif",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="modalHeader">
-          <h2 style={{ fontSize: '15px', margin: 0 }}>
-            {orderToEdit ? 'Edit Order' : '+ New Order'}
-          </h2>
-          <button type="button" className="closeBtn" onClick={onClose} aria-label="Close">✕</button>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '18px 24px',
+            borderBottom: '1px solid #e2e8f0',
+            backgroundColor: '#f8fafc',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '17px', fontWeight: 700, color: '#0f172a' }}>
+              {orderToEdit ? 'Edit Order' : '+ New Order'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: '20px',
+              color: '#64748b',
+              cursor: 'pointer',
+              lineHeight: 1,
+              padding: '4px',
+            }}
+          >
+            ✕
+          </button>
         </div>
 
         {/* Body */}
         <form
           onSubmit={handleSubmit}
-          style={{ padding: '16px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '12px' }}
+          style={{
+            padding: '24px',
+            overflowY: 'auto',
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px',
+          }}
         >
           {errorMsg && (
-            <div style={{ backgroundColor: '#fee2e2', color: '#991b1b', padding: '7px 10px', borderRadius: '5px', fontSize: FS }}>
+            <div
+              style={{
+                backgroundColor: '#fef2f2',
+                color: '#991b1b',
+                padding: '10px 14px',
+                borderRadius: '8px',
+                border: '1px solid #fecaca',
+                fontSize: '13px',
+                fontWeight: 500,
+              }}
+            >
               {errorMsg}
             </div>
           )}
 
-          {/* Row 1: Customer search + Date + PO */}
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px', alignItems: 'start' }}>
-
-            {/* Customer searchable combobox */}
-            <label style={LABEL_STYLE}>
-              Customer *
-              <div style={{ position: 'relative' }}>
-                <input
-                  ref={searchRef}
-                  type="text"
-                  placeholder="Search by name or mobile number..."
-                  value={customerSearch}
-                  autoComplete="off"
-                  onChange={(e) => handleCustomerSearchChange(e.target.value)}
-                  onFocus={() => !selectedCustomerId && setShowDropdown(true)}
-                  style={{
-                    ...INPUT_STYLE,
-                    paddingRight: selectedCustomerId ? '28px' : '8px',
-                    borderColor: selectedCustomerId ? '#0f766e' : '#cbd5e1',
-                    backgroundColor: selectedCustomerId ? '#f0fdf4' : '#fff',
+          {/* Customer Search Combobox (Full Width) */}
+          <div>
+            <label style={labelStyle}>Customer *</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                ref={searchRef}
+                type="text"
+                placeholder="Search by name, firm, or mobile number..."
+                value={customerSearch}
+                autoComplete="off"
+                onChange={(e) => handleCustomerSearchChange(e.target.value)}
+                onFocus={() => !selectedCustomerId && setShowDropdown(true)}
+                style={{
+                  ...inputStyle,
+                  paddingRight: selectedCustomerId ? '32px' : '12px',
+                  borderColor: selectedCustomerId ? '#10b981' : '#cbd5e1',
+                  backgroundColor: selectedCustomerId ? '#f0fdf4' : '#ffffff',
+                }}
+              />
+              {selectedCustomerId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCustomerId('')
+                    setCustomerSearch('')
+                    setShowDropdown(true)
+                    searchRef.current?.focus()
                   }}
-                />
-                {selectedCustomerId && (
-                  <button
-                    type="button"
-                    onClick={() => { setSelectedCustomerId(''); setCustomerSearch(''); setShowDropdown(true); searchRef.current?.focus() }}
-                    style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '13px', lineHeight: 1 }}
-                    title="Clear customer"
-                  >✕</button>
-                )}
-
-                {/* Dropdown */}
-                {showDropdown && !selectedCustomerId && (
-                  <div
-                    ref={dropdownRef}
-                    style={{
-                      position: 'absolute',
-                      top: '100%',
-                      left: 0,
-                      right: 0,
-                      zIndex: 9999,
-                      backgroundColor: '#fff',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-                      maxHeight: '220px',
-                      overflowY: 'auto',
-                      marginTop: '2px',
-                    }}
-                  >
-                    {filteredCustomers.length === 0 ? (
-                      <div style={{ padding: '10px 12px', fontSize: FS, color: '#94a3b8' }}>No customers found</div>
-                    ) : (
-                      filteredCustomers.map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onMouseDown={() => handleCustomerSelect(c.id)}
-                          style={{
-                            display: 'block',
-                            width: '100%',
-                            textAlign: 'left',
-                            padding: '8px 12px',
-                            border: 'none',
-                            background: 'none',
-                            cursor: 'pointer',
-                            borderBottom: '1px solid #f1f5f9',
-                            fontSize: FS,
-                          }}
-                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc')}
-                          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                        >
-                          <span style={{ fontWeight: 600, color: '#0f172a' }}>{c.name}</span>
-                          <span style={{ color: '#64748b', marginLeft: '6px' }}>{c.city}</span>
-                          <span style={{ color: '#94a3b8', marginLeft: '6px', fontFamily: 'monospace' }}>{c.phone}</span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-              {/* Show selected customer chip */}
-              {selectedCustomer && (
-                <span style={{ fontSize: '11px', color: '#0f766e', fontWeight: 500, marginTop: '2px' }}>
-                  ✓ {selectedCustomer.city} · {selectedCustomer.phone}
-                </span>
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#64748b',
+                    fontSize: '14px',
+                    lineHeight: 1,
+                    padding: '4px',
+                  }}
+                  title="Clear customer"
+                >
+                  ✕
+                </button>
               )}
-            </label>
 
-            <label style={LABEL_STYLE}>
-              Order Date *
+              {/* Dropdown */}
+              {showDropdown && !selectedCustomerId && (
+                <div
+                  ref={dropdownRef}
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    zIndex: 9999,
+                    backgroundColor: '#fff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px',
+                    boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1)',
+                    maxHeight: '220px',
+                    overflowY: 'auto',
+                    marginTop: '4px',
+                  }}
+                >
+                  {filteredCustomers.length === 0 ? (
+                    <div style={{ padding: '12px 14px', fontSize: '13px', color: '#94a3b8' }}>
+                      No customers found
+                    </div>
+                  ) : (
+                    filteredCustomers.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onMouseDown={() => handleCustomerSelect(c.id)}
+                        style={{
+                          display: 'block',
+                          width: '100%',
+                          textAlign: 'left',
+                          padding: '10px 14px',
+                          border: 'none',
+                          background: 'none',
+                          cursor: 'pointer',
+                          borderBottom: '1px solid #f1f5f9',
+                          fontSize: '13px',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc')}
+                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                      >
+                        <span style={{ fontWeight: 600, color: '#0f172a' }}>{c.name}</span>
+                        <span style={{ color: '#64748b', marginLeft: '8px' }}>{c.city}</span>
+                        <span
+                          style={{
+                            color: '#94a3b8',
+                            marginLeft: '8px',
+                            fontFamily: 'monospace',
+                            fontSize: '12px',
+                          }}
+                        >
+                          {c.phone}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            {selectedCustomer && (
+              <span style={{ fontSize: '12px', color: '#166534', fontWeight: 600, marginTop: '4px', display: 'block' }}>
+                ✓ {selectedCustomer.city} · {selectedCustomer.phone}
+              </span>
+            )}
+          </div>
+
+          {/* 3-Column Grid: Date, PO #, Salesman */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+              gap: '16px',
+            }}
+          >
+            <div>
+              <label style={labelStyle}>Order Date *</label>
               <input
                 type="date"
                 value={orderDate}
                 onChange={(e) => setOrderDate(e.target.value)}
                 required
-                style={INPUT_STYLE}
+                style={inputStyle}
               />
-            </label>
+            </div>
 
-            <label style={LABEL_STYLE}>
-              PO / Invoice #
+            <div>
+              <label style={labelStyle}>PO / Invoice #</label>
               <input
                 type="text"
                 placeholder="e.g. PO-2026-001"
                 value={orderNumber}
                 onChange={(e) => setOrderNumber(e.target.value)}
-                style={INPUT_STYLE}
+                style={inputStyle}
               />
-            </label>
+            </div>
+
+            <div>
+              <label style={labelStyle}>Salesman</label>
+              <select
+                value={selectedSalesmanId}
+                onChange={(e) => setSelectedSalesmanId(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">— Unassigned —</option>
+                {salesmen.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          {/* Row 2: Salesman */}
-          <label style={{ ...LABEL_STYLE, maxWidth: '300px' }}>
-            Salesman
-            <select
-              value={selectedSalesmanId}
-              onChange={(e) => setSelectedSalesmanId(e.target.value)}
-              style={INPUT_STYLE}
-            >
-              <option value="">— None / Unassigned —</option>
-              {salesmen.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-          </label>
-
-          {/* Products section */}
+          {/* Products / Line Items Section */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <span style={{ fontSize: FS, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Products / Line Items *
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '10px',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  color: '#0f172a',
+                  letterSpacing: '0.01em',
+                }}
+              >
+                Products & Line Items *
               </span>
               <button
                 type="button"
                 onClick={addLineItem}
-                style={{ padding: '4px 10px', backgroundColor: '#0f766e', color: '#fff', border: 'none', borderRadius: '5px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}
+                style={{
+                  height: '34px',
+                  padding: '0 14px',
+                  backgroundColor: '#0f172a',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                }}
               >
                 + Add Item
               </button>
             </div>
 
-            {/* Column headers */}
+            {/* Column Headers */}
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '2.5fr 1fr 1fr 28px',
-                gap: '6px',
-                padding: '4px 8px',
-                fontSize: '10px',
-                fontWeight: 700,
-                color: '#94a3b8',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
+                gridTemplateColumns: '3fr 1.5fr 1.5fr 36px',
+                gap: '12px',
+                padding: '0 8px 6px',
+                fontSize: '12px',
+                fontWeight: 600,
+                color: '#64748b',
               }}
             >
               <span>Product</span>
@@ -422,29 +557,33 @@ export function AddOrderDialog({
               <span />
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {/* Line Item Rows */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {lineItems.map((item, idx) => (
                 <div
                   key={idx}
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '2.5fr 1fr 1fr 28px',
-                    gap: '6px',
+                    gridTemplateColumns: '3fr 1.5fr 1.5fr 36px',
+                    gap: '12px',
                     alignItems: 'center',
                     backgroundColor: '#f8fafc',
-                    padding: '7px 8px',
-                    borderRadius: '6px',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
                     border: '1px solid #e2e8f0',
                   }}
                 >
                   <select
                     value={item.productName}
                     onChange={(e) => handleLineItemChange(idx, 'productName', e.target.value)}
-                    style={{ ...INPUT_STYLE, backgroundColor: '#fff' }}
+                    style={{ ...inputStyle, backgroundColor: '#fff' }}
                   >
-                    {productMasterList.map((p) => <option key={p} value={p}>{p}</option>)}
+                    {productMasterList.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
                   </select>
-
                   <input
                     type="number"
                     placeholder="Rate"
@@ -452,65 +591,139 @@ export function AddOrderDialog({
                     step="any"
                     value={item.sellingRate}
                     onChange={(e) => handleLineItemChange(idx, 'sellingRate', e.target.value)}
-                    style={INPUT_STYLE}
+                    style={inputStyle}
                   />
 
                   <input
                     type="number"
-                    placeholder="Order Value"
+                    placeholder="Value"
                     min="0"
                     value={item.orderValue}
                     onChange={(e) => handleLineItemChange(idx, 'orderValue', e.target.value)}
-                    style={{ ...INPUT_STYLE, fontWeight: 700, color: '#0f766e' }}
+                    style={{ ...inputStyle, fontWeight: 700, color: '#166534', backgroundColor: '#ffffff' }}
                   />
 
                   {lineItems.length > 1 ? (
                     <button
                       type="button"
                       onClick={() => removeLineItem(idx)}
-                      style={{ background: 'none', border: 'none', color: '#ef4444', fontWeight: 700, cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: 0 }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#ef4444',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        lineHeight: 1,
+                        padding: 0,
+                        textAlign: 'center',
+                      }}
                       title="Remove"
-                    >✕</button>
-                  ) : <span />}
+                    >
+                      ✕
+                    </button>
+                  ) : (
+                    <span />
+                  )}
                 </div>
               ))}
             </div>
 
-            {/* Total */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginTop: '8px', padding: '6px 10px', backgroundColor: '#f1f5f9', borderRadius: '6px' }}>
-              <span style={{ fontSize: FS, color: '#475569' }}>Total Order Value:</span>
-              <span style={{ fontSize: '15px', fontWeight: 700, color: '#0f766e' }}>
+            {/* Total Order Value Banner */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginTop: '12px',
+                padding: '12px 18px',
+                backgroundColor: '#f0fdf4',
+                border: '1px solid #bbf7d0',
+                borderRadius: '8px',
+              }}
+            >
+              <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+                Total Order Value
+              </span>
+              <span style={{ fontSize: '16px', fontWeight: 700, color: '#166534' }}>
                 ₹{totalOrderValue.toLocaleString('en-IN')}
               </span>
             </div>
           </div>
 
           {/* Remarks */}
-          <label style={LABEL_STYLE}>
-            Remarks / Notes
+          <div>
+            <label style={labelStyle}>Remarks / Notes</label>
             <textarea
-              rows={2}
+              rows={3}
               placeholder="Any special remarks or delivery instructions..."
               value={remark}
               onChange={(e) => setRemark(e.target.value)}
-              style={{ ...INPUT_STYLE, resize: 'vertical' }}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                border: '1px solid #cbd5e1',
+                backgroundColor: '#ffffff',
+                color: '#1e293b',
+                fontSize: '13px',
+                outline: 'none',
+                resize: 'vertical',
+                boxSizing: 'border-box',
+              }}
             />
-          </label>
-
-          {/* Footer buttons */}
-          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', paddingTop: '4px' }}>
-            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={isSubmitting} style={{ fontSize: FS }}>
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              style={{ backgroundColor: '#0f766e', color: '#fff', padding: '6px 18px', borderRadius: '5px', border: 'none', fontWeight: 600, fontSize: FS, cursor: 'pointer' }}
-            >
-              {isSubmitting ? 'Saving…' : 'Save Order'}
-            </button>
           </div>
         </form>
+
+        {/* Footer */}
+        <div
+          style={{
+            display: 'flex',
+            gap: '10px',
+            justifyContent: 'flex-end',
+            padding: '16px 24px',
+            backgroundColor: '#f8fafc',
+            borderTop: '1px solid #e2e8f0',
+          }}
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            style={{
+              height: '38px',
+              padding: '0 16px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              backgroundColor: '#ffffff',
+              color: '#334155',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            onClick={handleSubmit}
+            disabled={isSubmitting}
+            style={{
+              height: '38px',
+              padding: '0 20px',
+              borderRadius: '8px',
+              border: 'none',
+              backgroundColor: '#0f172a',
+              color: '#ffffff',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: isSubmitting ? 'not-allowed' : 'pointer',
+              boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+            }}
+          >
+            {isSubmitting ? 'Saving…' : 'Save Order'}
+          </button>
+        </div>
       </div>
     </div>
   )

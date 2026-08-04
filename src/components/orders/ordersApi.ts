@@ -132,17 +132,9 @@ export async function getCustomerOrders(customerId: string): Promise<CustomerOrd
   }))
 }
 
-export async function getAllCustomerOrders(
-  filters?: CustomerOrderFilters,
-  customersList?: Array<{
-    id: string
-    name: string
-    city: string
-    phone: string
-    assignedSalesmanId: string
-    category?: 'A' | 'B' | 'C' | 'D' | 'E' | null
-  }>
-): Promise<EnrichedCustomerOrder[]> {
+export async function getRawCustomerOrders(
+  filters?: CustomerOrderFilters
+): Promise<CustomerOrder[]> {
   let orders: CustomerOrder[] = []
 
   if (!supabaseEnabled || !supabase) {
@@ -190,11 +182,28 @@ export async function getAllCustomerOrders(
     }))
   }
 
+  return orders
+}
+
+export function enrichAndFilterOrders(
+  orders: CustomerOrder[],
+  customersList?: Array<{
+    id: string
+    name: string
+    city: string
+    phone: string
+    assignedSalesmanId: string
+    category?: 'A' | 'B' | 'C' | 'D' | 'E' | null
+  }>,
+  filters?: CustomerOrderFilters
+): EnrichedCustomerOrder[] {
+  let filteredOrders = orders
+
   if (filters?.minOrderValue != null) {
-    orders = orders.filter((o) => o.orderValue >= filters.minOrderValue!)
+    filteredOrders = filteredOrders.filter((o) => o.orderValue >= filters.minOrderValue!)
   }
   if (filters?.maxOrderValue != null) {
-    orders = orders.filter((o) => o.orderValue <= filters.maxOrderValue!)
+    filteredOrders = filteredOrders.filter((o) => o.orderValue <= filters.maxOrderValue!)
   }
 
   const customerMap = new Map(
@@ -210,7 +219,7 @@ export async function getAllCustomerOrders(
     ])
   )
 
-  let enriched: EnrichedCustomerOrder[] = orders.map((o) => {
+  let enriched: EnrichedCustomerOrder[] = filteredOrders.map((o) => {
     const cust = customerMap.get(o.customerId)
     return {
       ...o,
@@ -270,6 +279,21 @@ export async function getAllCustomerOrders(
   }
 
   return enriched
+}
+
+export async function getAllCustomerOrders(
+  filters?: CustomerOrderFilters,
+  customersList?: Array<{
+    id: string
+    name: string
+    city: string
+    phone: string
+    assignedSalesmanId: string
+    category?: 'A' | 'B' | 'C' | 'D' | 'E' | null
+  }>
+): Promise<EnrichedCustomerOrder[]> {
+  const rawOrders = await getRawCustomerOrders(filters)
+  return enrichAndFilterOrders(rawOrders, customersList || [], filters)
 }
 
 export async function addCustomerOrder(data: {
