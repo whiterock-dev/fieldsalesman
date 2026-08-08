@@ -96,15 +96,16 @@ export function LeadsFilterBar({ filters, onChange, salesmen, cities }: LeadsFil
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>Created Date:</span>
           <select
             value={filters.createdDateRange || 'all'}
             onChange={(e) => onChange({ ...filters, createdDateRange: e.target.value })}
             style={{ height: '40px', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '0 12px', fontSize: '13px', color: '#475569', backgroundColor: '#fff', minWidth: '130px', outline: 'none', cursor: 'pointer' }}
           >
-            <option value="all">Created: All Time</option>
-            <option value="7days">Created: Last 7 Days</option>
-            <option value="30days">Created: Last 30 Days</option>
-            <option value="custom">Created: Custom Range</option>
+            <option value="all">All Time</option>
+            <option value="7days">Last 7 Days</option>
+            <option value="30days">Last 30 Days</option>
+            <option value="custom">Custom Range</option>
           </select>
           {filters.createdDateRange === 'custom' && (
             <>
@@ -125,16 +126,17 @@ export function LeadsFilterBar({ filters, onChange, salesmen, cities }: LeadsFil
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginLeft: '12px' }}>
+          <span style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>Next Follow-up Date:</span>
           <select
             value={filters.nextFollowupDateRange || 'all'}
             onChange={(e) => onChange({ ...filters, nextFollowupDateRange: e.target.value })}
             style={{ height: '40px', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '0 12px', fontSize: '13px', color: '#475569', backgroundColor: '#fff', minWidth: '130px', outline: 'none', cursor: 'pointer' }}
           >
-            <option value="all">Next Fup: All Time</option>
-            <option value="7days">Next Fup: Last 7 Days</option>
-            <option value="30days">Next Fup: Last 30 Days</option>
-            <option value="custom">Next Fup: Custom Range</option>
+            <option value="all">All Time</option>
+            <option value="7days">Last 7 Days</option>
+            <option value="30days">Last 30 Days</option>
+            <option value="custom">Custom Range</option>
           </select>
           {filters.nextFollowupDateRange === 'custom' && (
             <>
@@ -154,6 +156,16 @@ export function LeadsFilterBar({ filters, onChange, salesmen, cities }: LeadsFil
             </>
           )}
         </div>
+        
+        <button
+          onClick={() => onChange({})}
+          style={{ height: '40px', padding: '0 16px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc', color: '#475569', fontSize: '13px', fontWeight: 600, cursor: 'pointer', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', transition: 'background-color 0.2s' }}
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><polyline points="3 3 3 8 8 8"></polyline></svg>
+          Reset Filters
+        </button>
       </div>
     </div>
   )
