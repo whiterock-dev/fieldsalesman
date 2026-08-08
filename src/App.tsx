@@ -30,6 +30,14 @@ const CustomerOrdersPage = lazy(async () => {
   const module = await import('./components/orders')
   return { default: module.CustomerOrdersPage }
 })
+const LeadsPage = lazy(async () => {
+  const module = await import('./components/leads/LeadsPage')
+  return { default: module.LeadsPage }
+})
+const CustomerLeadsDialog = lazy(async () => {
+  const module = await import('./components/leads/CustomerLeadsDialog')
+  return { default: module.CustomerLeadsDialog }
+})
 const OFFLINE_VISIT_QUEUE_KEY = 'fs_offline_queued_visits'
 
 async function resolveVisitPhotoSrc(client: SupabaseClient, stored: string): Promise<string | null> {
@@ -173,6 +181,8 @@ type NavId =
   | 'followup_history'
   | 'salesman_overdue'
   | 'admin_orders'
+  | 'admin_leads'
+  | 'field_leads'
 
 const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) => boolean }[] = [
   { id: 'dashboard', label: 'Dashboard', section: 'Overview', show: (r) => r !== 'salesman' },
@@ -186,12 +196,14 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
   { id: 'field_followups', label: 'Pending Follow-ups', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
   { id: 'field_tracking', label: 'Live Tacking', section: 'Field', show: (r) => r === 'super_salesman' },
   { id: 'field_customers', label: 'My Customers', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
+  { id: 'field_leads', label: 'My Leads', section: 'Field', show: (r) => r === 'salesman' || r === 'super_salesman' },
   { id: 'salesman_overdue', label: 'Overdue Follow-ups', section: 'Field', show: (r) => r === 'salesman' },
   { id: 'admin_overdue', label: 'Overdue Follow-ups', section: 'Admin', show: (r) => r !== 'salesman' },
   { id: 'admin_meetings', label: 'Meeting Responses', section: 'Admin', show: () => true },
   { id: 'admin_kpi', label: 'KPI Table', section: 'Admin', show: (r) => r !== 'salesman' },
   { id: 'admin_customers', label: 'Customer Database', section: 'Admin', show: (r) => r === 'owner' || r === 'sub_admin' || r === 'super_salesman' },
   { id: 'admin_orders', label: 'Customer Orders', section: 'Admin', show: (r) => r === 'owner' || r === 'sub_admin' || r === 'super_salesman' },
+  { id: 'admin_leads', label: 'Lead Management', section: 'Admin', show: (r) => r === 'owner' || r === 'sub_admin' || r === 'super_salesman' },
   { id: 'admin_cities', label: 'City Management', section: 'Admin', show: (r) => r === 'owner' || r === 'super_salesman' },
   { id: 'settings', label: 'Settings', section: 'Account', show: () => true },
   { id: 'visits', label: 'Visit History', section: 'Overview', show: () => true },
@@ -711,6 +723,7 @@ function App() {
 
   const [showNewLeadModal, setShowNewLeadModal] = useState(false)
   const [savingNewLead, setSavingNewLead] = useState(false)
+  const [leadsDialogCustomer, setLeadsDialogCustomer] = useState<{ id: string, name: string } | null>(null)
   const [newLeadCustomerSearch, setNewLeadCustomerSearch] = useState('')
   const [newLeadForm, setNewLeadForm] = useState({
     customerId: 'new' as string,
@@ -3392,8 +3405,8 @@ function App() {
             tags: [],
             dynamicFields: dynamicData,
             assignedSalesmanId: activeSalesman.id,
-            lat: leaveGeo.lat,
-            lng: leaveGeo.lng,
+            lat: session.startGeo.lat,
+            lng: session.startGeo.lng,
           }
           customerName = newCustomer.name
           customerId = newCustomer.id
@@ -3433,9 +3446,9 @@ function App() {
       }
 
       if (isFirstVisit && selectedCustomer) {
-        setCustomers((prev) => prev.map((c) => (c.id === selectedCustomer.id ? { ...c, lat: leaveGeo.lat, lng: leaveGeo.lng } : c)))
+        setCustomers((prev) => prev.map((c) => (c.id === selectedCustomer.id ? { ...c, lat: session.startGeo.lat, lng: session.startGeo.lng } : c)))
         if (supabase && online) {
-          const { error: locError } = await supabase.from('customers').update({ lat: leaveGeo.lat, lng: leaveGeo.lng }).eq('id', selectedCustomer.id)
+          const { error: locError } = await supabase.from('customers').update({ lat: session.startGeo.lat, lng: session.startGeo.lng }).eq('id', selectedCustomer.id)
           if (locError) console.warn('failed to map first visit location:', locError.message)
         }
       }
@@ -3691,7 +3704,6 @@ function App() {
           </p>
         </>
       )}
-
       {locationLocking ? (
         <p className="muted visitLockHint">
           Requesting location (usually under 20s). If this never finishes, check site permissions on your secure app URL.
@@ -5882,6 +5894,21 @@ function App() {
             />
           </Suspense>
         )
+      case 'admin_leads':
+      case 'field_leads':
+        return (
+          <Suspense fallback={<section className="panel"><p>Loading leads module…</p></section>}>
+            <LeadsPage
+              customers={dedupedCustomers}
+              salesmen={salesmen}
+              cities={cities}
+              role={role}
+              currentUserId={authSession?.user?.id ?? ''}
+              activeSalesmanId={activeSalesmanId}
+              onDataChanged={() => scheduleWorkspaceReloadRef.current?.()}
+            />
+          </Suspense>
+        )
       case 'field_customers':
         return (
           <section className="panel">
@@ -5914,7 +5941,9 @@ function App() {
                       <th>Name</th>
                       <th>City</th>
                       <th>Phone</th>
-                      {/* <th>Tags</th> */}
+                      <th>Category</th>
+                      <th>Past Purchases</th>
+                      <th>Last Purchase</th>
                       {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
                       <th>Actions</th>
                     </tr>
@@ -5922,7 +5951,7 @@ function App() {
                   <tbody>
                     {filteredMyCustomers.length === 0 ? (
                       <tr>
-                        <td colSpan={4 + activeDynamicFields.length} className="muted">
+                        <td colSpan={7 + activeDynamicFields.length} className="muted">
                           No customers match this search.
                         </td>
                       </tr>
@@ -5932,19 +5961,32 @@ function App() {
                           <td className="customersNameCell"><strong>{item.name}</strong></td>
                           <td className="customersCompactCell">{item.city}</td>
                           <td className="customersCompactCell">{item.phone}</td>
-                          {/* <td className="customersTagsCell">
-                            {item.tags.length ? (
-                              <div className="customerTagChips">
-                                {item.tags.map((tag, index) => (
-                                  <span key={`${item.id}-${tag}-${index}`} className="customerTagChip">
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
+                          <td className="customersCompactCell">
+                            {item.category ? (
+                              <span style={{
+                                display: 'inline-block',
+                                padding: '2px 8px',
+                                borderRadius: '12px',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                backgroundColor: '#f1f5f9',
+                                color: '#475569'
+                              }}>
+                                {item.category}
+                              </span>
                             ) : (
                               <span className="customerEmptyChip">—</span>
                             )}
-                          </td> */}
+                          </td>
+                          <td className="customersCompactCell">
+                            {item.totalPurchaseValue != null
+                              ? <span style={{ fontWeight: 500, color: '#16a34a' }}>₹{item.totalPurchaseValue.toLocaleString()}</span>
+                              : <span className="customerEmptyChip">—</span>}
+                          </td>
+                          <td className="customersCompactCell">
+                            {item.lastOrderDate ? new Date(item.lastOrderDate).toLocaleDateString() : <span className="customerEmptyChip">—</span>}
+                          </td>
+
                           {activeDynamicFields.map((field) => {
                             const val = item.dynamicFields?.[field.key]
                             return (
@@ -5965,6 +6007,13 @@ function App() {
                               </a>
                               <button type="button" className="customerActionBtn" onClick={() => setActiveView('map')}>
                                 In-app map
+                              </button>
+                              <button
+                                type="button"
+                                className="customerActionBtn"
+                                onClick={() => setLeadsDialogCustomer({ id: item.id, name: item.name })}
+                              >
+                                Leads
                               </button>
                             </div>
                           </td>
@@ -6591,6 +6640,19 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      {leadsDialogCustomer && (
+        <Suspense fallback={null}>
+          <CustomerLeadsDialog
+            customerId={leadsDialogCustomer.id}
+            customerName={leadsDialogCustomer.name}
+            onClose={() => setLeadsDialogCustomer(null)}
+            currentUserId={authSession?.user?.id ?? ''}
+            role={role}
+            profileNameById={profileNameById}
+          />
+        </Suspense>
+      )}
     </div>
   )
 }
