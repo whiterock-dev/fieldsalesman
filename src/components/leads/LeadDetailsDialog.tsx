@@ -23,7 +23,7 @@ export function LeadDetailsDialog({ lead, onClose, onUpdate, currentUserId, role
   const [closingRemarks, setClosingRemarks] = useState(lead.closing_remarks || '')
   const [lostReason, setLostReason] = useState(lead.lost_reason || '')
   const [lostRemarks, setLostRemarks] = useState(lead.lost_remarks || '')
-  const [adminRemarks, setAdminRemarks] = useState(lead.admin_review_remarks || '')
+  const [adminRemarks, /* setAdminRemarks */] = useState(lead.admin_review_remarks || '')
   
   const [updating, setUpdating] = useState(false)
 
@@ -62,7 +62,7 @@ export function LeadDetailsDialog({ lead, onClose, onUpdate, currentUserId, role
       
       await updateLeadStatus(lead.id, status, updates)
       
-      if (isAdmin && adminRemarks !== lead.admin_review_remarks) {
+      if (isAdmin && adminRemarks && adminRemarks !== lead.admin_review_remarks) {
         await updateAdminReviewRemarks(lead.id, adminRemarks)
       }
       
@@ -289,14 +289,7 @@ export function LeadDetailsDialog({ lead, onClose, onUpdate, currentUserId, role
                   <textarea rows={2} value={lostRemarks} onChange={e => setLostRemarks(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', outline: 'none', resize: 'vertical' }} />
                 </div>
               )}
-
-              {isAdmin && status === 'lost' && (
-                <div style={{ padding: '16px', backgroundColor: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '8px', marginBottom: '16px' }}>
-                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: 600 }}>Admin Review Remarks</label>
-                  <textarea rows={2} value={adminRemarks} onChange={e => setAdminRemarks(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', outline: 'none', resize: 'vertical' }} placeholder="Add review notes here..." />
-                </div>
-              )}
-
+              
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button type="submit" disabled={updating} style={{ flex: 1, padding: '12px', backgroundColor: '#0f172a', color: '#fff', borderRadius: '8px', border: 'none', fontWeight: 600, fontSize: '14px', cursor: updating ? 'not-allowed' : 'pointer' }}>
                   {updating ? 'Saving...' : 'Save Status'}
