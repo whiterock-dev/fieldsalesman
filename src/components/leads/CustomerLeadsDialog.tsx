@@ -16,6 +16,7 @@ interface CustomerLeadsDialogProps {
 export function CustomerLeadsDialog({ customerId, customerName, onClose, currentUserId, role, profileNameById }: CustomerLeadsDialogProps) {
   const [leads, setLeads] = useState<LeadWithDetails[]>([])
   const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState<'open' | 'won' | 'lost' | 'all'>('open')
   const [selectedLead, setSelectedLead] = useState<LeadWithDetails | null>(null)
 
   const loadLeads = async () => {
@@ -109,7 +110,33 @@ export function CustomerLeadsDialog({ customerId, customerName, onClose, current
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {leads.map(lead => {
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>Status:</label>
+                <select 
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as any)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '13px',
+                    color: '#0f172a',
+                    backgroundColor: '#fff',
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="open">Open</option>
+                  <option value="won">Won</option>
+                  <option value="lost">Lost</option>
+                  <option value="all">All</option>
+                </select>
+              </div>
+              
+              {leads.filter(l => statusFilter === 'all' || l.status === statusFilter).length === 0 ? (
+                <p style={{ textAlign: 'center', color: '#64748b', margin: '20px 0' }}>No {statusFilter !== 'all' ? statusFilter : ''} leads found.</p>
+              ) : (
+                leads.filter(l => statusFilter === 'all' || l.status === statusFilter).map(lead => {
                 const isWon = lead.status === 'won';
                 const isLost = lead.status === 'lost';
                 const badgeBg = isWon ? '#dcfce7' : isLost ? '#fee2e2' : '#f1f5f9';
@@ -179,7 +206,8 @@ export function CustomerLeadsDialog({ customerId, customerName, onClose, current
                     </div>
                   </div>
                 )
-              })}
+              })
+            )}
             </div>
           )}
         </div>

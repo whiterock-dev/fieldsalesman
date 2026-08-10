@@ -36,7 +36,8 @@ create table if not exists customers (
   is_deleted boolean not null default false,
   category text check (category in ('A', 'B', 'C', 'D', 'E')),
   updated_at timestamptz not null default now(),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  achievement text
 );
 
 -- Follow-up task storage.

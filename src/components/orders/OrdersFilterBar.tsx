@@ -208,13 +208,13 @@ export function OrdersFilterBar({
       >
         {/* Sales Coordinator */}
         <div>
-          <label style={labelStyle}>Sales Coordinator</label>
+          <label style={labelStyle}>Salesman</label>
           <select
             value={filters.salesmanId || ''}
             onChange={(e) => handleChange('salesmanId', e.target.value || undefined)}
             style={inputStyle}
           >
-            <option value="">All SCs</option>
+            <option value="">All Salesman</option>
             {salesmen.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}

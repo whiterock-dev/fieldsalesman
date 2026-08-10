@@ -11,6 +11,7 @@ export type LeadRecord = {
   lost_reason?: string;
   lost_remarks?: string;
   admin_review_remarks?: string;
+  admin_review_read?: boolean;
   created_at: string;
   updated_at: string;
 };

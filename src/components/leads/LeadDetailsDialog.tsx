@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import type { LeadWithDetails, LeadStatus } from './types'
-import { updateLeadStatus, updateAdminReviewRemarks } from './leadsApi'
+import { updateLeadStatus, updateAdminReviewRemarks, markAdminReviewAsRead } from './leadsApi'
 import type { Role } from '../../lib/roles'
 
 interface LeadDetailsDialogProps {
@@ -23,7 +23,7 @@ export function LeadDetailsDialog({ lead, onClose, onUpdate, currentUserId, role
   const [closingRemarks, setClosingRemarks] = useState(lead.closing_remarks || '')
   const [lostReason, setLostReason] = useState(lead.lost_reason || '')
   const [lostRemarks, setLostRemarks] = useState(lead.lost_remarks || '')
-  const [adminRemarks, /* setAdminRemarks */] = useState(lead.admin_review_remarks || '')
+  const [adminRemarks, setAdminRemarks] = useState(lead.admin_review_remarks || '')
   
   const [updating, setUpdating] = useState(false)
 
@@ -76,6 +76,21 @@ export function LeadDetailsDialog({ lead, onClose, onUpdate, currentUserId, role
     }
   }
 
+  const handleSaveAdminRemarks = async () => {
+    if (!adminRemarks.trim()) return
+    setUpdating(true)
+    try {
+      await updateAdminReviewRemarks(lead.id, adminRemarks.trim())
+      onUpdate()
+      onClose()
+    } catch (err) {
+      console.error(err)
+      alert('Failed to save admin remarks')
+    } finally {
+      setUpdating(false)
+    }
+  }
+
   const handleAddFollowup = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!fupRemarks || !fupDate) return
@@ -103,6 +118,20 @@ export function LeadDetailsDialog({ lead, onClose, onUpdate, currentUserId, role
       alert('Failed to add follow-up')
     } finally {
       setFupAdding(false)
+    }
+  }
+
+  const handleMarkAsRead = async () => {
+    if (updating) return
+    setUpdating(true)
+    try {
+      await markAdminReviewAsRead(lead.id)
+      onUpdate()
+    } catch (e) {
+      console.error(e)
+      alert('Failed to mark as read')
+    } finally {
+      setUpdating(false)
     }
   }
 
@@ -155,7 +184,7 @@ export function LeadDetailsDialog({ lead, onClose, onUpdate, currentUserId, role
           
           <div style={{ display: 'flex', gap: '20px', fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>
             {lead.customer_firm && <div>Firm: <span style={{ fontWeight: 600, color: '#0f172a' }}>{lead.customer_firm}</span></div>}
-            <div>Assigned SC: <span style={{ fontWeight: 600, color: '#0f172a' }}>{lead.salesman_name}</span></div>
+            <div>Assigned Salesman: <span style={{ fontWeight: 600, color: '#0f172a' }}>{lead.salesman_name}</span></div>
             <div>Created: <span style={{ fontWeight: 600, color: '#0f172a' }}>{new Date(lead.created_at).toLocaleDateString('en-GB').replace(/\//g, '-')}</span></div>
           </div>
 
@@ -166,7 +195,7 @@ export function LeadDetailsDialog({ lead, onClose, onUpdate, currentUserId, role
         </div>
 
         <div style={{ display: 'flex', gap: '24px', padding: '0 24px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#fff' }}>
-          {['history', 'add-followup', 'mark-won', 'mark-lost'].map(tab => {
+          {(lead.status === 'won' || lead.status === 'lost' ? ['history'] : ['history', 'add-followup', 'mark-won', 'mark-lost']).map(tab => {
             const labels: any = { 'history': 'History & Reviews', 'add-followup': 'Add Follow-up', 'mark-won': 'Mark Won', 'mark-lost': 'Mark Lost' }
             const isActive = activeTab === tab
             return (
@@ -197,6 +226,57 @@ export function LeadDetailsDialog({ lead, onClose, onUpdate, currentUserId, role
         <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
           {activeTab === 'history' && (
             <div>
+              {lead.status === 'won' && (
+                <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
+                  <h4 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#166534' }}>Won Lead Details</h4>
+                  <div style={{ fontSize: '13px', color: '#14532d', marginBottom: '8px' }}><strong>Order Value:</strong> ₹{(lead.order_value || 0).toLocaleString('en-IN')}</div>
+                  {lead.closing_remarks && <div style={{ fontSize: '13px', color: '#14532d', marginBottom: '16px' }}><strong>Closing Remarks:</strong> {lead.closing_remarks}</div>}
+                </div>
+              )}
+              {lead.status === 'lost' && (
+                <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
+                  <h4 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#991b1b' }}>Lost Lead Details</h4>
+                  <div style={{ fontSize: '13px', color: '#7f1d1d', marginBottom: '8px' }}><strong>Reason:</strong> {lead.lost_reason}</div>
+                  {lead.lost_remarks && <div style={{ fontSize: '13px', color: '#7f1d1d', marginBottom: '16px' }}><strong>Remarks:</strong> {lead.lost_remarks}</div>}
+                  
+                  {lead.admin_review_remarks ? (
+                    <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #fca5a5' }}>
+                      <strong style={{ fontSize: '13px', color: '#991b1b' }}>Admin Review:</strong>
+                      <div style={{ fontSize: '13px', color: '#7f1d1d', marginTop: '4px' }}>{lead.admin_review_remarks}</div>
+                      {!isAdmin && !lead.admin_review_read && (
+                        <button 
+                          onClick={handleMarkAsRead}
+                          disabled={updating}
+                          style={{ marginTop: '12px', padding: '6px 12px', backgroundColor: '#991b1b', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', fontWeight: 600, cursor: updating ? 'not-allowed' : 'pointer', opacity: updating ? 0.7 : 1 }}
+                        >
+                          {updating ? 'Marking...' : 'Mark as Read'}
+                        </button>
+                      )}
+                    </div>
+                  ) : isAdmin ? (
+                    <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #fca5a5' }}>
+                      <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: 600, color: '#991b1b' }}>Add Admin Review (Can only be added once)</label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <input 
+                          type="text"
+                          value={adminRemarks}
+                          onChange={e => setAdminRemarks(e.target.value)}
+                          placeholder="Enter your review remarks..."
+                          style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #fca5a5', outline: 'none', fontSize: '13px', backgroundColor: '#fff' }}
+                        />
+                        <button 
+                          type="button"
+                          onClick={handleSaveAdminRemarks}
+                          disabled={!adminRemarks.trim() || updating}
+                          style={{ padding: '8px 16px', backgroundColor: '#991b1b', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: (!adminRemarks.trim() || updating) ? 'not-allowed' : 'pointer', opacity: (!adminRemarks.trim() || updating) ? 0.7 : 1 }}
+                        >
+                          {updating ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
               <h4 style={{ margin: '0 0 16px 0', fontSize: '16px', color: '#0f172a' }}>Follow-up History</h4>
               
               {loadingFups ? <p style={{ fontSize: '13px', color: '#64748b' }}>Loading...</p> : followups.length === 0 ? <p style={{ fontSize: '13px', color: '#64748b' }}>No follow-ups recorded yet.</p> : (

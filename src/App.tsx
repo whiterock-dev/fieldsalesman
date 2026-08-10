@@ -75,6 +75,7 @@ type Customer = {
   category?: 'A' | 'B' | 'C' | 'D' | 'E' | null
   totalPurchaseValue?: number
   lastOrderDate?: string | null
+  achievement?: string
 }
 export type CityMaster = {
   id: string
@@ -616,6 +617,7 @@ function App() {
   const [formFields, setFormFields] = useState<FormField[]>([])
   const [livePoints, setLivePoints] = useState<LivePoint[]>([])
   const [cities, setCities] = useState<CityMaster[]>([])
+  const [lostLeadsActionCount, setLostLeadsActionCount] = useState(0)
 
   const scheduleWorkspaceReloadRef = useRef<(() => void) | null>(null)
   const [online, setOnline] = useState<boolean>(navigator.onLine)
@@ -1136,6 +1138,7 @@ function App() {
         formFieldResult,
         { data: liveRows, error: liveErr },
         { data: cityRows, error: citiesErr },
+        { data: leadsData, error: leadsErr },
       ] = await Promise.all([
         sb.from('app_invites').select('email, role, added_at').order('added_at', { ascending: true }),
         sb.from('profiles').select('id, full_name, role, email, phone'),
@@ -1146,6 +1149,7 @@ function App() {
         sb.from('form_fields').select('*').order('order', { ascending: true }).order('created_at', { ascending: true }),
         sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(2000),
         sb.from('city_master').select('*').order('name', { ascending: true }),
+        fetchAllQuery(() => sb.from('leads').select('status, salesman_id, admin_review_remarks, admin_review_read').eq('status', 'lost')),
       ])
       if (closed) return
       if (invitesErr) console.warn('app_invites:', invitesErr.message)
@@ -1157,6 +1161,20 @@ function App() {
       if (formFieldResult.error) console.warn('form_fields:', formFieldResult.error.message)
       if (liveErr) console.warn('live_locations:', liveErr.message)
       if (citiesErr) console.warn('city_master:', citiesErr.message)
+      if (leadsErr) console.warn('leads:', leadsErr.message)
+
+      let leadsCount = 0;
+      const safeLeads = leadsErr ? [] : (leadsData ?? []);
+      const currentRole = role;
+      const uid = authSession?.user?.email ? authSession.user.id : null;
+      for (const l of safeLeads) {
+        if (currentRole === 'owner' || currentRole === 'sub_admin' || currentRole === 'super_salesman') {
+          if (!l.admin_review_remarks) leadsCount++;
+        } else if (currentRole === 'salesman') {
+          if (l.admin_review_remarks && l.salesman_id === uid && !l.admin_review_read) leadsCount++;
+        }
+      }
+      setLostLeadsActionCount(leadsCount);
 
       const safeCityRows = citiesErr ? [] : (cityRows ?? [])
       setCities(
@@ -1252,6 +1270,7 @@ function App() {
         category: (r.category as 'A' | 'B' | 'C' | 'D' | 'E' | null) ?? null,
         totalPurchaseValue: Number((r as any).total_purchase_value ?? 0),
         lastOrderDate: ((r as any).last_order_date as string) ?? null,
+        achievement: (r.achievement as string) ?? '',
       }))
       setCustomers(customersMapped)
 
@@ -1370,6 +1389,7 @@ function App() {
       'visits',
       'meeting_responses',
       'form_fields',
+      'leads',
     ] as const
 
     const channel = sb.channel('fs-domain-sync')
@@ -5981,12 +6001,14 @@ function App() {
                   <thead>
                     <tr>
                       <th>Name</th>
-                      <th>City</th>
-                      <th>Phone</th>
                       <th>Category</th>
+                      <th>Phone</th>
+                      <th>City</th>
+                      <th>Address</th>
+                      {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
+                      <th>Achievement</th>
                       <th>Past Purchases</th>
                       <th>Last Purchase</th>
-                      {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -6001,8 +6023,6 @@ function App() {
                       filteredMyCustomers.map((item) => (
                         <tr key={item.id}>
                           <td className="customersNameCell"><strong>{item.name}</strong></td>
-                          <td className="customersCompactCell">{item.city}</td>
-                          <td className="customersCompactCell">{item.phone}</td>
                           <td className="customersCompactCell">
                             {item.category ? (
                               <span style={{
@@ -6020,6 +6040,24 @@ function App() {
                               <span className="customerEmptyChip">—</span>
                             )}
                           </td>
+                          <td className="customersCompactCell">{item.phone}</td>
+                          <td className="customersCompactCell">{item.city}</td>
+                          <td className="customersCompactCell" style={{ maxWidth: '200px', whiteSpace: 'normal' }}>
+                            {item.address || <span className="customerEmptyChip">—</span>}
+                          </td>
+                          
+                          {activeDynamicFields.map((field) => {
+                            const val = item.dynamicFields?.[field.key]
+                            return (
+                              <td key={field.id} className="customersTagsCell dynamicFieldCol">
+                                {val ? val : <span className="customerEmptyChip">—</span>}
+                              </td>
+                            )
+                          })}
+                          
+                          <td className="customersCompactCell" style={{ whiteSpace: 'pre-wrap' }}>
+                            {item.achievement || <span className="customerEmptyChip">—</span>}
+                          </td>
                           <td className="customersCompactCell">
                             {item.totalPurchaseValue != null
                               ? <span style={{ fontWeight: 500, color: '#16a34a' }}>₹{item.totalPurchaseValue.toLocaleString()}</span>
@@ -6029,14 +6067,6 @@ function App() {
                             {item.lastOrderDate ? new Date(item.lastOrderDate).toLocaleDateString() : <span className="customerEmptyChip">—</span>}
                           </td>
 
-                          {activeDynamicFields.map((field) => {
-                            const val = item.dynamicFields?.[field.key]
-                            return (
-                              <td key={field.id} className="customersTagsCell dynamicFieldCol">
-                                {val ? val : <span className="customerEmptyChip">—</span>}
-                              </td>
-                            )
-                          })}
                           <td>
                             <div className="customerActions">
                               <a
@@ -6450,6 +6480,11 @@ function App() {
                   }}
                 >
                   {item.label}
+                  {(item.id === 'admin_leads' || item.id === 'field_leads') && lostLeadsActionCount > 0 && (
+                    <span style={{ marginLeft: '8px', backgroundColor: '#ef4444', color: '#fff', fontSize: '11px', fontWeight: 700, padding: '2px 6px', borderRadius: '12px' }}>
+                      {lostLeadsActionCount}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
