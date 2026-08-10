@@ -687,6 +687,12 @@ function App() {
   const [visitHistoryCategoryFilter, setVisitHistoryCategoryFilter] = useState('all')
   const [meetingSearchFilter, setMeetingSearchFilter] = useState('')
   const [meetingSearchFilterDebounced, setMeetingSearchFilterDebounced] = useState('')
+  const [visitHistoryPage, setVisitHistoryPage] = useState(1)
+  const [visitHistoryPageSize, setVisitHistoryPageSize] = useState(100)
+  
+  useEffect(() => {
+    setVisitHistoryPage(1)
+  }, [visitHistoryDateFrom, visitHistoryDateTo, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter])
   const [selectedVisitClientId, setSelectedVisitClientId] = useState<string | null>(null)
   const [selectedVisitHistoryRowId, setSelectedVisitHistoryRowId] = useState<string | null>(null)
   const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
@@ -700,6 +706,12 @@ function App() {
   const [meetingSalesmanFilter, setMeetingSalesmanFilter] = useState('all')
   const [meetingCategoryFilter, setMeetingCategoryFilter] = useState('all')
   const [meetingPriorityFilter, setMeetingPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
+  const [meetingPage, setMeetingPage] = useState(1)
+  const [meetingPageSize, setMeetingPageSize] = useState(100)
+  
+  useEffect(() => {
+    setMeetingPage(1)
+  }, [meetingSearchFilterDebounced, meetingDateFilter, meetingSalesmanFilter, meetingCategoryFilter, meetingPriorityFilter])
   const [newFieldLabel, setNewFieldLabel] = useState('')
   const [newFieldType, setNewFieldType] = useState<FormField['type']>('text')
   const [newFieldRequired, setNewFieldRequired] = useState(false)
@@ -1101,6 +1113,19 @@ function App() {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
     const loadDomain = async () => {
+      const fetchAllQuery = async (queryFactory: () => any) => {
+        const allRows: any[] = []
+        let offset = 0
+        const limit = 1000
+        while (true) {
+          const { data, error, count } = await queryFactory().range(offset, offset + limit - 1)
+          if (error) return { error, count: offset === 0 ? count : undefined }
+          if (data) allRows.push(...data)
+          if (!data || data.length < limit) return { data: allRows, count: allRows?.length }
+          offset += limit
+        }
+      }
+
       const [
         { data: inviteRows, error: invitesErr },
         { data: profileRows, error: profilesErr },
@@ -1114,10 +1139,10 @@ function App() {
       ] = await Promise.all([
         sb.from('app_invites').select('email, role, added_at').order('added_at', { ascending: true }),
         sb.from('profiles').select('id, full_name, role, email, phone'),
-        sb.from('customers').select('*, city_master:city_id(name)', { count: 'exact' }).is('is_deleted', false).order('created_at', { ascending: false }),
-        sb.from('followups').select('*').is('is_deleted', false).order('due_date', { ascending: true }),
-        sb.from('visits').select('*', { count: 'exact' }).is('is_deleted', false).order('captured_at', { ascending: false }),
-        sb.from('meeting_responses').select('*').is('is_deleted', false).order('created_at', { ascending: false }),
+        fetchAllQuery(() => sb.from('customers').select('*, city_master:city_id(name)', { count: 'exact' }).is('is_deleted', false).order('created_at', { ascending: false })),
+        fetchAllQuery(() => sb.from('followups').select('*').is('is_deleted', false).order('due_date', { ascending: true })),
+        fetchAllQuery(() => sb.from('visits').select('*', { count: 'exact' }).is('is_deleted', false).order('captured_at', { ascending: false })),
+        fetchAllQuery(() => sb.from('meeting_responses').select('*').is('is_deleted', false).order('created_at', { ascending: false })),
         sb.from('form_fields').select('*').order('order', { ascending: true }).order('created_at', { ascending: true }),
         sb.from('live_locations').select('*').order('captured_at', { ascending: false }).limit(2000),
         sb.from('city_master').select('*').order('name', { ascending: true }),
@@ -4859,7 +4884,7 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {meetingRowsDetailed.flatMap(({ item, linkedVisit, linkedFollowUp, customerCategory, customerPhone, dynamicValues }) => {
+                    {meetingRowsDetailed.slice((meetingPage - 1) * meetingPageSize, meetingPage * meetingPageSize).flatMap(({ item, linkedVisit, linkedFollowUp, customerCategory, customerPhone, dynamicValues }) => {
                       const isEditing = editingMeetingResponse?.id === item.id
                       const linkedCustomerId = item.customerId
                       const rows = [
@@ -5052,6 +5077,23 @@ function App() {
                     })}
                   </tbody>
                 </table>
+              </div>
+              <div className="paginationControls" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', padding: '0 0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <span className="muted" style={{ fontSize: '0.9rem' }}>Rows per page:</span>
+                  <select value={meetingPageSize} onChange={(e) => { setMeetingPageSize(Number(e.target.value)); setMeetingPage(1) }}>
+                    <option value="100">100</option>
+                    <option value="250">250</option>
+                    <option value="500">500</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <span className="muted" style={{ fontSize: '0.9rem', marginRight: '1rem' }}>
+                    Showing {meetingRowsDetailed.length > 0 ? (meetingPage - 1) * meetingPageSize + 1 : 0} - {Math.min(meetingPage * meetingPageSize, meetingRowsDetailed.length)} of {meetingRowsDetailed.length}
+                  </span>
+                  <button type="button" className="secondary" disabled={meetingPage === 1} onClick={() => setMeetingPage(p => p - 1)}>Prev</button>
+                  <button type="button" className="secondary" disabled={meetingPage * meetingPageSize >= meetingRowsDetailed.length} onClick={() => setMeetingPage(p => p + 1)}>Next</button>
+                </div>
               </div>
             </article>
           </section>
@@ -6152,7 +6194,7 @@ function App() {
                         </td>
                       </tr>
                     ) : (
-                      visitHistoryRows.flatMap((visit) => {
+                      visitHistoryRows.slice((visitHistoryPage - 1) * visitHistoryPageSize, visitHistoryPage * visitHistoryPageSize).flatMap((visit) => {
                         const customer = customerById.get(visit.customerId)
                         const isExpanded = selectedVisitHistoryRowId === visit.id && selectedVisitClientId === visit.customerId
                         const parentRow = (
@@ -6313,6 +6355,23 @@ function App() {
                     )}
                   </tbody>
                 </table>
+              </div>
+              <div className="paginationControls" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', padding: '0 0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <span className="muted" style={{ fontSize: '0.9rem' }}>Rows per page:</span>
+                  <select value={visitHistoryPageSize} onChange={(e) => { setVisitHistoryPageSize(Number(e.target.value)); setVisitHistoryPage(1) }}>
+                    <option value="100">100</option>
+                    <option value="250">250</option>
+                    <option value="500">500</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <span className="muted" style={{ fontSize: '0.9rem', marginRight: '1rem' }}>
+                    Showing {visitHistoryRows.length > 0 ? (visitHistoryPage - 1) * visitHistoryPageSize + 1 : 0} - {Math.min(visitHistoryPage * visitHistoryPageSize, visitHistoryRows.length)} of {visitHistoryRows.length}
+                  </span>
+                  <button type="button" className="secondary" disabled={visitHistoryPage === 1} onClick={() => setVisitHistoryPage(p => p - 1)}>Prev</button>
+                  <button type="button" className="secondary" disabled={visitHistoryPage * visitHistoryPageSize >= visitHistoryRows.length} onClick={() => setVisitHistoryPage(p => p + 1)}>Next</button>
+                </div>
               </div>
             </article>
           </section>
