@@ -87,7 +87,7 @@ export function LeadsFilterBar({ filters, onChange, salesmen, cities }: LeadsFil
           onChange={(e) => onChange({ ...filters, salesmanId: e.target.value || undefined })}
           style={{ height: '40px', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '0 12px', fontSize: '13px', color: '#475569', backgroundColor: '#fff', minWidth: '140px', flex: '1 1 140px', outline: 'none', cursor: 'pointer' }}
         >
-          <option value="">All SCs</option>
+          <option value="">All Salesmen</option>
           {salesmen.map((s) => (
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}

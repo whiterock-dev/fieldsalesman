@@ -36,6 +36,7 @@ type CustomerRecord = {
   category?: 'A' | 'B' | 'C' | 'D' | 'E' | null
   totalPurchaseValue?: number
   lastOrderDate?: string | null
+  achievement?: string
 }
 
 type DynamicField = {
@@ -375,6 +376,7 @@ export function CustomerDatabase({
     const headers = [
       'Customer Name', 'Mobile Number', 'City', 'Address', 'Salesman',
       ...activeDynamicFields.map(f => f.label),
+      'Achievement',
       'Past Purchase History',
       'Last Purchase Date',
       'Updated Date',
@@ -386,6 +388,7 @@ export function CustomerDatabase({
       c.address,
       profileNameById.get(c.assignedSalesmanId) ?? 'Unassigned',
       ...activeDynamicFields.map(f => dynamicVal(c, f.key)),
+      c.achievement || '—',
       c.totalPurchaseValue || 0,
       c.lastOrderDate ? formatDDMMYYYY(c.lastOrderDate) : '—',
       c.updatedAt ? formatDateTime(c.updatedAt) : '—',
@@ -823,6 +826,7 @@ export function CustomerDatabase({
                   <th>Address</th>
                   {showSalesmanFilter && <th>Salesman</th>}
                   {activeDynamicFields.map(f => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
+                  <th className="cdWrapHead">Achievement</th>
                   <th className="cdWrapHead">Past Purchase History</th>
                   <th className="cdWrapHead">Last Purchase Date</th>
                   <th>Updated</th>
@@ -878,6 +882,9 @@ export function CustomerDatabase({
                         {dynamicVal(c, f.key) || '—'}
                       </td>
                     ))}
+                    <td className="cdCompactCell" style={{ whiteSpace: 'pre-wrap', minWidth: '120px', fontSize: '0.8rem' }}>
+                      {c.achievement || '—'}
+                    </td>
                     <td className="cdCompactCell">
                       <span
                         onClick={() => setOrderHistoryCustomer(c)}

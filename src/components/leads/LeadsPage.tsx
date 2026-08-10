@@ -225,7 +225,7 @@ export const LeadsPage = React.memo(function LeadsPage({
               <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: 600 }}>Requirement</th>
               <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: 600 }}>Created Date</th>
               <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: 600 }}>Next Follow-up</th>
-              <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: 600 }}>Assigned SC</th>
+              <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: 600 }}>Assigned Salesman</th>
               <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: 600, textAlign: 'right' }}>Actions</th>
             </tr>
           </thead>
