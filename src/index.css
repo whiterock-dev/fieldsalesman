@@ -1037,6 +1037,7 @@ button:focus-visible {
   line-height: 1.45;
   color: var(--text-secondary);
   word-break: break-word;
+  white-space: pre-wrap;
 }
 
 .followupRemarksCell {
@@ -1051,7 +1052,7 @@ button:focus-visible {
   line-clamp: unset;
   -webkit-box-orient: initial;
   -webkit-line-clamp: unset;
-  white-space: normal;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

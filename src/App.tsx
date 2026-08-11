@@ -82,6 +82,11 @@ export type CityMaster = {
   name: string
   isActive: boolean
 }
+export interface FollowUpRemark {
+  date: string
+  note: string
+}
+
 type FollowUp = {
   id: string
   customerId: string
@@ -89,9 +94,11 @@ type FollowUp = {
   priority: 'low' | 'medium' | 'high'
   status: FollowUpStatus
   archived: boolean
-  remarks: string
+  remarks: FollowUpRemark[]
+  closingRemark?: string
   salesmanId: string
   visitId?: string
+  createdAt?: string
 }
 type VisitRecord = {
   id: string
@@ -247,7 +254,7 @@ function syncNavToLocation(view: NavId) {
 }
 
 /** Max reported GPS uncertainty allowed for existing-customer visit flows. */
-const GPS_THRESHOLD_METERS = 300
+const GPS_THRESHOLD_METERS = 500
 /** New leads have no prior map pin — keep a slightly tighter GPS expectation. */
 const GPS_THRESHOLD_NEW_LEAD_METERS = 150
 /** Max distance from customer map pin for existing-customer visits. */
@@ -286,8 +293,8 @@ const INITIAL_CUSTOMERS: Customer[] = [
 ]
 
 const INITIAL_FOLLOWUPS: FollowUp[] = [
-  { id: 'f1', customerId: 'c1', dueDate: '2026-03-16', priority: 'high', status: 'pending', archived: false, remarks: 'Collection pending', salesmanId: 's1' },
-  { id: 'f2', customerId: 'c2', dueDate: '2026-03-20', priority: 'medium', status: 'pending', archived: false, remarks: 'Quotation follow-up', salesmanId: 's2' },
+  { id: 'f1', customerId: 'c1', dueDate: '2026-03-16', priority: 'high', status: 'pending', archived: false, remarks: [{ date: '2026-03-15T00:00:00.000Z', note: 'Collection pending' }], salesmanId: 's1' },
+  { id: 'f2', customerId: 'c2', dueDate: '2026-03-20', priority: 'medium', status: 'pending', archived: false, remarks: [{ date: '2026-03-15T00:00:00.000Z', note: 'Quotation follow-up' }], salesmanId: 's2' },
 ]
 
 
@@ -731,7 +738,10 @@ function App() {
   const [myCustomersNameFilter, setMyCustomersNameFilter] = useState('')
   const [myCustomersNameFilterDebounced, setMyCustomersNameFilterDebounced] = useState('')
   const [myCustomersCityFilter, setMyCustomersCityFilter] = useState('')
-  const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
+  const [editingFollowUp, setEditingFollowUp] = useState<(FollowUp & { newRemark?: string }) | null>(null)
+  const [extendingFollowUp, setExtendingFollowUp] = useState<(FollowUp & { newRemark?: string }) | null>(null)
+  const [completingFollowUp, setCompletingFollowUp] = useState<FollowUp | null>(null)
+  const [duplicateFollowUpWarning, setDuplicateFollowUpWarning] = useState<FollowUp | null>(null)
   const [editingMeetingResponse, setEditingMeetingResponse] = useState<EditingMeetingResponse | null>(null)
   const [archivingFollowUpId, setArchivingFollowUpId] = useState<string | null>(null)
 
@@ -1286,9 +1296,11 @@ function App() {
           archived: typeof (r as Record<string, unknown>).archived === 'boolean'
             ? Boolean((r as Record<string, unknown>).archived)
             : (r.status as FollowUpStatus) === 'closed',
-          remarks: (r.remarks as string) ?? '',
+          remarks: Array.isArray(r.remarks) ? (r.remarks as FollowUpRemark[]) : [],
+          closingRemark: ((r as Record<string, unknown>).closing_remark as string) ?? undefined,
           salesmanId: r.salesman_id as string,
           visitId: (r as Record<string, unknown>).visit_id as string | undefined,
+          createdAt: (r as Record<string, unknown>).created_at as string | undefined,
         })),
       )
 
@@ -2407,14 +2419,7 @@ function App() {
     setMessage('Visit cancelled.')
   }
 
-  const markFollowUpComplete = async (id: string) => {
-    setFollowUps((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'closed' as FollowUpStatus, archived: true } : f)))
-    if (supabase && online) {
-      const { error } = await supabase.from('followups').update({ status: 'closed', archived: true }).eq('id', id)
-      if (error) setMessage(`Could not mark complete: ${error.message}`)
-      else scheduleWorkspaceReloadRef.current?.()
-    }
-  }
+
 
   const toggleFollowUpArchived = async (id: string, archived: boolean) => {
     const original = followUps.find((f) => f.id === id)
@@ -2554,7 +2559,12 @@ function App() {
       priority: priorityVal,
       status: 'pending',
       archived: false,
-      remarks: newLeadForm.remarks.trim() || 'Follow-up from New Lead',
+      remarks: [
+        { 
+          date: new Date().toISOString(), 
+          note: newLeadForm.remarks.trim() || 'Follow-up from New Lead'
+        }
+      ],
       salesmanId: activeSalesman.id,
     }
 
@@ -2637,26 +2647,103 @@ function App() {
   }
 
 
-  const saveFollowUpEdit = async (updatedParam: FollowUp) => {
+  const saveFollowUpEdit = async (updatedParam: FollowUp & { newRemark?: string }) => {
     if (updatedParam.dueDate < todayIso) {
       return setMessage('Previous Follow-up date is not allowed. Please select today or a future date.')
     }
-    const updated = updatedParam.status === 'closed' ? { ...updatedParam, archived: true } : updatedParam
+    
+    const currentFollowUp = followUps.find(f => f.id === updatedParam.id)
+    const currentRemarks = currentFollowUp && Array.isArray(currentFollowUp.remarks) ? currentFollowUp.remarks : []
+    const finalRemarks = updatedParam.newRemark?.trim() 
+      ? [{ date: new Date().toISOString(), note: `[Edited]: ${updatedParam.newRemark}` }, ...currentRemarks] 
+      : currentRemarks
 
+    const updated = {
+      ...(updatedParam.status === 'closed' ? { ...updatedParam, archived: true } : updatedParam),
+      remarks: finalRemarks
+    }
     setFollowUps((prev) => prev.map((f) => (f.id === updated.id ? updated : f)))
     setEditingFollowUp(null)
+    setExtendingFollowUp(null)
+    setCompletingFollowUp(null)
     if (supabase && online) {
       const { error } = await supabase.from('followups').update({
         due_date: updated.dueDate,
         priority: updated.priority,
         status: updated.status,
         remarks: updated.remarks,
+        closing_remark: updated.closingRemark,
         archived: updated.archived,
       }).eq('id', updated.id)
       if (error) setMessage(`Could not save follow-up: ${error.message}`)
       else scheduleWorkspaceReloadRef.current?.()
     }
   }
+
+  const extendFollowUp = async (updatedParam: FollowUp & { newRemark?: string }) => {
+    if (updatedParam.dueDate < todayIso) {
+      return setMessage('Previous Follow-up date is not allowed. Please select today or a future date.')
+    }
+    if (!updatedParam.newRemark?.trim()) {
+      return setMessage('Interaction remark is required to extend.')
+    }
+    const currentFollowUp = followUps.find(f => f.id === updatedParam.id)
+    if (!currentFollowUp) return
+
+    if (currentFollowUp.dueDate === updatedParam.dueDate) {
+      return setMessage('Please select a future date to extend.')
+    }
+
+    const newRem = { date: new Date().toISOString(), note: `[Extended]: ${updatedParam.newRemark}` }
+    const currentRemarks = Array.isArray(currentFollowUp.remarks) ? currentFollowUp.remarks : []
+
+    const updated = {
+      ...currentFollowUp,
+      dueDate: updatedParam.dueDate,
+      priority: updatedParam.priority,
+      remarks: [newRem, ...currentRemarks],
+    }
+
+    setFollowUps((prev) => prev.map((f) => (f.id === updated.id ? updated : f)))
+    setEditingFollowUp(null)
+    setExtendingFollowUp(null)
+    setCompletingFollowUp(null)
+
+    if (supabase && online) {
+      const { error } = await supabase.from('followups').update({
+        due_date: updated.dueDate,
+        priority: updated.priority,
+        remarks: updated.remarks,
+      }).eq('id', updated.id)
+
+      if (error) setMessage(`Could not extend follow-up: ${error.message}`)
+      else scheduleWorkspaceReloadRef.current?.()
+    }
+  }
+
+  const completeFollowUp = async (updatedParam: FollowUp) => {
+    if (!updatedParam.closingRemark?.trim()) {
+      return setMessage('Closing remark is required to complete.')
+    }
+
+    const updated = { ...updatedParam, status: 'closed' as FollowUpStatus, archived: true }
+    setFollowUps((prev) => prev.map((f) => (f.id === updated.id ? updated : f)))
+    setEditingFollowUp(null)
+    setExtendingFollowUp(null)
+    setCompletingFollowUp(null)
+
+    if (supabase && online) {
+      const { error } = await supabase.from('followups').update({
+        status: updated.status,
+        closing_remark: updated.closingRemark,
+        archived: updated.archived,
+      }).eq('id', updated.id)
+      if (error) setMessage(`Could not complete follow-up: ${error.message}`)
+      else scheduleWorkspaceReloadRef.current?.()
+    }
+  }
+
+
   const saveMeetingResponseEdit = async (updated: EditingMeetingResponse) => {
     const response = updated.response.trim()
     if (!response) {
@@ -2704,6 +2791,11 @@ function App() {
     } else {
       const selectedCustomer = customers.find((item) => item.id === selectedCustomerId)
       if (!selectedCustomer) return setMessage('Customer not found.')
+      const openFollowUp = followUps.find((f) => f.customerId === selectedCustomerId && f.status !== 'closed' && !f.archived)
+      if (openFollowUp) {
+        setDuplicateFollowUpWarning(openFollowUp)
+        return
+      }
       const isFirstVisit = selectedCustomer.lat === 0 && selectedCustomer.lng === 0
       if (!isFirstVisit) {
         const radius = distanceMeters(geo.lat, geo.lng, selectedCustomer.lat, selectedCustomer.lng)
@@ -3557,7 +3649,7 @@ function App() {
           priority: visitPriority,
           status: 'pending',
           archived: false,
-          remarks: nextAction.trim() || 'Follow-up from visit',
+          remarks: [{ date: new Date().toISOString(), note: nextAction.trim() || 'Follow-up from visit' }],
           salesmanId: activeSalesman.id,
           visitId: visitId,
         }
@@ -3617,15 +3709,16 @@ function App() {
         }
 
         if (followUpDate) {
+          const newFollowupId = followUps.find(f => f.visitId === visitRowId || f.visitId === visitId)?.id || `f-${Date.now()}`
           const { error } = await supabase.from('followups').upsert({
-            id: `f-${Date.now()}`,
+            id: newFollowupId,
             customer_id: customerId,
             salesman_id: activeSalesman.id,
             due_date: followUpDate,
             priority: visitPriority,
             status: 'pending',
             archived: false,
-            remarks: nextAction.trim() || 'Follow-up from visit',
+            remarks: [{ date: new Date().toISOString(), note: nextAction.trim() || 'Follow-up from visit' }],
             visit_id: visitRowId,
           }, { onConflict: 'id' })
           if (error) setMessage(`Follow-up save warning: ${error.message}`)
@@ -4290,7 +4383,7 @@ function App() {
                     ) : (
                       filteredOverdueRowsDetailed.flatMap((row) => {
                         const followUp = followUps.find((item) => item.id === row.id)
-                        const isEditing = editingFollowUp?.id === row.id
+
                         const rows = [
                           <tr key={row.id}>
                             <td className="overdueCompactCell">{row.salesmanName}</td>
@@ -4321,7 +4414,26 @@ function App() {
                             <td className="overdueCompactCell">{formatDate(row.dueDate)}</td>
                             <td className="overdueCompactCell">{row.priority}</td>
                             <td className="overdueCompactCell">{row.status}</td>
-                            <td className="overdueLongCell">{row.remarks || '—'}</td>
+                            <td className="overdueLongCell">
+                              {(() => {
+                                const remarksArr = row.remarks || []
+                                if (remarksArr.length > 1) {
+                                  return (
+                                    <details className="followupNotesDetails">
+                                      <summary className="followupRemarks" style={{ color: 'var(--text-secondary)', fontWeight: 'normal', display: 'list-item' }}>
+                                        {remarksArr[0].note}
+                                      </summary>
+                                      <div className="followupNotesContent" style={{ marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                        {remarksArr.slice(1).map((r, i) => (
+                                          <div key={i}><strong>{formatDate(r.date.slice(0, 10))}:</strong> {r.note}</div>
+                                        ))}
+                                      </div>
+                                    </details>
+                                  )
+                                }
+                                return <div className="followupRemarks">{remarksArr.length > 0 ? remarksArr[0].note : '—'}</div>
+                              })()}
+                            </td>
                             <td className="overdueLongCell">
                               <details className="followupNotesDetails">
                                 <summary>View Notes</summary>
@@ -4345,27 +4457,20 @@ function App() {
                               {followUp ? (
                                 <div className="followupActions">
                                   {followUp.status !== 'closed' ? (
-                                    <button type="button" onClick={() => void markFollowUpComplete(followUp.id)}>
-                                      Complete
-                                    </button>
-                                  ) : null}
-                                  <button type="button" className="secondary" onClick={(event) => {
-                                    setEditingFollowUp({ ...followUp })
-                                    const tableWrap = event.currentTarget.closest('.overdueTableWrap')
-                                    requestAnimationFrame(() => {
-                                      requestAnimationFrame(() => {
-                                        const scopedEditRow =
-                                          tableWrap instanceof HTMLElement
-                                            ? tableWrap.querySelector('.followupEditRow')
-                                            : document.querySelector('.followupEditRow')
-                                        if (scopedEditRow instanceof HTMLElement) {
-                                          scopedEditRow.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
-                                        }
-                                      })
-                                    })
-                                  }}>
-                                    Edit
-                                  </button>
+                                    <>
+                                      <button type="button" onClick={() => setCompletingFollowUp({ ...followUp, closingRemark: '' })}>
+                                        Complete
+                                      </button>
+                                      <button type="button" onClick={() => setExtendingFollowUp({ ...followUp, newRemark: '', dueDate: '' })}>
+                                        Extend
+                                      </button>
+                                      <button type="button" className="secondary" onClick={() => {
+                                        setEditingFollowUp({ ...followUp })
+                                      }}>
+                                        Edit
+                                      </button>
+                                    </>
+                                  ) : '—'}
                                 </div>
                               ) : (
                                 '—'
@@ -4373,74 +4478,6 @@ function App() {
                             </td>
                           </tr>,
                         ]
-                        if (isEditing && editingFollowUp) {
-                          rows.push(
-                            <tr key={`${row.id}-edit`} className="followupEditRow">
-                              <td colSpan={11 + activeDynamicFields.length}>
-                                <div className="followupEditCard">
-                                  <div className="followupEditHeader">
-                                    <div>
-                                      <strong>Edit follow-up</strong>
-                                      <p className="muted">Update the due date, status, priority, and next action in one place.</p>
-                                    </div>
-                                  </div>
-                                  <div className="followupEditGrid">
-                                    <label>
-                                      Due date
-                                      <input
-                                        type="date"
-                                        min={todayIso}
-                                        value={editingFollowUp.dueDate}
-                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
-                                      />
-                                    </label>
-                                    <label>
-                                      Priority
-                                      <select
-                                        value={editingFollowUp.priority}
-                                        onChange={(e) =>
-                                          setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })
-                                        }
-                                      >
-                                        <option value="low">Low</option>
-                                        <option value="medium">Medium</option>
-                                        <option value="high">High</option>
-                                      </select>
-                                    </label>
-                                    <label>
-                                      Status
-                                      <select
-                                        value={editingFollowUp.status}
-                                        onChange={(e) =>
-                                          setEditingFollowUp({ ...editingFollowUp, status: e.target.value as FollowUpStatus })
-                                        }
-                                      >
-                                        <option value="pending">Pending</option>
-                                        <option value="in_progress">In progress</option>
-                                        <option value="closed">Closed</option>
-                                      </select>
-                                    </label>
-                                    <label>
-                                      Next Action
-                                      <textarea
-                                        value={editingFollowUp.remarks}
-                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
-                                      />
-                                    </label>
-                                  </div>
-                                  <div className="followupEditActions">
-                                    <button type="button" onClick={() => void saveFollowUpEdit(editingFollowUp)}>
-                                      Save
-                                    </button>
-                                    <button type="button" className="secondary" onClick={() => setEditingFollowUp(null)}>
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>,
-                          )
-                        }
                         return rows
                       })
                     )}
@@ -4541,7 +4578,7 @@ function App() {
                     ) : (
                       salesmanOverdueAndDueTodayRows.flatMap((row) => {
                         const followUp = followUps.find((item) => item.id === row.id)
-                        const isEditing = editingFollowUp?.id === row.id
+
                         const rows = [
                           <tr key={row.id}>
                             <td className="overdueCustomerCell">{row.customerName}</td>
@@ -4572,7 +4609,26 @@ function App() {
                               ) : '—'}
                             </td>
                             <td className="overdueCompactCell">{row.status}</td>
-                            <td className="overdueLongCell">{row.remarks || '—'}</td>
+                            <td className="overdueLongCell">
+                              {(() => {
+                                const remarksArr = row.remarks || []
+                                if (remarksArr.length > 1) {
+                                  return (
+                                    <details className="followupNotesDetails">
+                                      <summary className="followupRemarks" style={{ color: 'var(--text-secondary)', fontWeight: 'normal', display: 'list-item' }}>
+                                        {remarksArr[0].note}
+                                      </summary>
+                                      <div className="followupNotesContent" style={{ marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                        {remarksArr.slice(1).map((r, i) => (
+                                          <div key={i}><strong>{formatDate(r.date.slice(0, 10))}:</strong> {r.note}</div>
+                                        ))}
+                                      </div>
+                                    </details>
+                                  )
+                                }
+                                return <div className="followupRemarks">{remarksArr.length > 0 ? remarksArr[0].note : '—'}</div>
+                              })()}
+                            </td>
                             <td className="overdueLongCell">
                               <details className="followupNotesDetails">
                                 <summary>View Notes</summary>
@@ -4596,31 +4652,24 @@ function App() {
                               {followUp ? (
                                 <div className="followupActions">
                                   {followUp.status !== 'closed' ? (
-                                    <button type="button" onClick={() => void markFollowUpComplete(followUp.id)}>
-                                      Complete
-                                    </button>
-                                  ) : null}
-                                  <button
-                                    type="button"
-                                    className="secondary"
-                                    onClick={(event) => {
-                                      setEditingFollowUp({ ...followUp })
-                                      const tableWrap = event.currentTarget.closest('.overdueTableWrap')
-                                      requestAnimationFrame(() => {
-                                        requestAnimationFrame(() => {
-                                          const scopedEditRow =
-                                            tableWrap instanceof HTMLElement
-                                              ? tableWrap.querySelector('.followupEditRow')
-                                              : document.querySelector('.followupEditRow')
-                                          if (scopedEditRow instanceof HTMLElement) {
-                                            scopedEditRow.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
-                                          }
-                                        })
-                                      })
-                                    }}
-                                  >
-                                    Edit
-                                  </button>
+                                    <>
+                                      <button type="button" onClick={() => setCompletingFollowUp({ ...followUp, closingRemark: '' })}>
+                                        Complete
+                                      </button>
+                                      <button type="button" onClick={() => setExtendingFollowUp({ ...followUp, newRemark: '', dueDate: '' })}>
+                                        Extend
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="secondary"
+                                        onClick={() => {
+                                          setEditingFollowUp({ ...followUp })
+                                        }}
+                                      >
+                                        Edit
+                                      </button>
+                                    </>
+                                  ) : '—'}
                                 </div>
                               ) : (
                                 '—'
@@ -4628,74 +4677,6 @@ function App() {
                             </td>
                           </tr>,
                         ]
-                        if (isEditing && editingFollowUp) {
-                          rows.push(
-                            <tr key={`${row.id}-edit`} className="followupEditRow">
-                              <td colSpan={10 + activeDynamicFields.length}>
-                                <div className="followupEditCard">
-                                  <div className="followupEditHeader">
-                                    <div>
-                                      <strong>Edit follow-up</strong>
-                                      <p className="muted">Update the due date, status, priority, and next action in one place.</p>
-                                    </div>
-                                  </div>
-                                  <div className="followupEditGrid">
-                                    <label>
-                                      Due date
-                                      <input
-                                        type="date"
-                                        min={todayIso}
-                                        value={editingFollowUp.dueDate}
-                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
-                                      />
-                                    </label>
-                                    <label>
-                                      Priority
-                                      <select
-                                        value={editingFollowUp.priority}
-                                        onChange={(e) =>
-                                          setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })
-                                        }
-                                      >
-                                        <option value="low">Low</option>
-                                        <option value="medium">Medium</option>
-                                        <option value="high">High</option>
-                                      </select>
-                                    </label>
-                                    <label>
-                                      Status
-                                      <select
-                                        value={editingFollowUp.status}
-                                        onChange={(e) =>
-                                          setEditingFollowUp({ ...editingFollowUp, status: e.target.value as FollowUpStatus })
-                                        }
-                                      >
-                                        <option value="pending">Pending</option>
-                                        <option value="in_progress">In progress</option>
-                                        <option value="closed">Closed</option>
-                                      </select>
-                                    </label>
-                                    <label>
-                                      Next Action
-                                      <textarea
-                                        value={editingFollowUp.remarks}
-                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
-                                      />
-                                    </label>
-                                  </div>
-                                  <div className="followupEditActions">
-                                    <button type="button" onClick={() => void saveFollowUpEdit(editingFollowUp)}>
-                                      Save
-                                    </button>
-                                    <button type="button" className="secondary" onClick={() => setEditingFollowUp(null)}>
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>,
-                          )
-                        }
                         return rows
                       })
                     )}
@@ -4905,8 +4886,6 @@ function App() {
                   </thead>
                   <tbody>
                     {meetingRowsDetailed.slice((meetingPage - 1) * meetingPageSize, meetingPage * meetingPageSize).flatMap(({ item, linkedVisit, linkedFollowUp, customerCategory, customerPhone, dynamicValues }) => {
-                      const isEditing = editingMeetingResponse?.id === item.id
-                      const linkedCustomerId = item.customerId
                       const rows = [
                         <tr key={item.id}>
                           <td className="meetingCompactCell">{formatDateTime(item.createdAt)}</td>
@@ -4978,121 +4957,30 @@ function App() {
                           </td>
                           <td className="meetingCompactCell">
                             <div className="followupActions">
-                              <button
-                                type="button"
-                                className="secondary"
-                                onClick={(event) => {
-                                  setEditingMeetingResponse({ id: item.id, response: item.response })
-                                  if (linkedFollowUp) setEditingFollowUp({ ...linkedFollowUp })
-                                  const tableWrap = event.currentTarget.closest('.meetingResponsesTableWrap')
-                                  requestAnimationFrame(() => {
-                                    requestAnimationFrame(() => {
-                                      const scopedEditRow =
-                                        tableWrap instanceof HTMLElement
-                                          ? tableWrap.querySelector('.followupEditRow')
-                                          : document.querySelector('.followupEditRow')
-                                      if (scopedEditRow instanceof HTMLElement) {
-                                        scopedEditRow.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
-                                      }
-                                    })
-                                  })
-                                }}
-                              >
-                                Edit
-                              </button>
-                            </div>
-                          </td>
-                        </tr>,
-                      ]
-                      if (isEditing && editingMeetingResponse) {
-                        rows.push(
-                          <tr key={`${item.id}-edit`} className="followupEditRow">
-                            <td colSpan={(role !== 'salesman' ? 11 : 10) + activeDynamicFields.length}>
-                              <div className="followupEditCard">
-                                <div className="followupEditHeader">
-                                  <div>
-                                    <strong>Edit meeting response</strong>
-                                    <p className="muted">Update the response and linked follow-up details in one place.</p>
-                                  </div>
-                                </div>
-                                <div className="followupEditGrid meetingEditGrid">
-                                  {editingFollowUp && editingFollowUp.customerId === linkedCustomerId ? (
-                                    <>
-                                      <label>
-                                        Due date
-                                        <input
-                                          type="date"
-                                          min={todayIso}
-                                          value={editingFollowUp.dueDate}
-                                          onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
-                                        />
-                                      </label>
-                                      <label>
-                                        Priority
-                                        <select
-                                          value={editingFollowUp.priority}
-                                          onChange={(e) =>
-                                            setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })
-                                          }
-                                        >
-                                          <option value="low">Low</option>
-                                          <option value="medium">Medium</option>
-                                          <option value="high">High</option>
-                                        </select>
-                                      </label>
-                                      <label>
-                                        Status
-                                        <select
-                                          value={editingFollowUp.status}
-                                          onChange={(e) =>
-                                            setEditingFollowUp({ ...editingFollowUp, status: e.target.value as FollowUpStatus })
-                                          }
-                                        >
-                                          <option value="pending">Pending</option>
-                                          <option value="in_progress">In progress</option>
-                                          <option value="closed">Closed</option>
-                                        </select>
-                                      </label>
-                                    </>
-                                  ) : null}
-                                  <label className="meetingResponseLabel">
-                                    Response
-                                    <textarea
-                                      value={editingMeetingResponse.response}
-                                      onChange={(event) =>
-                                        setEditingMeetingResponse({ ...editingMeetingResponse, response: event.target.value })
-                                      }
-                                    />
-                                  </label>
-                                </div>
-                                <div className="followupEditActions">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      void saveMeetingResponseEdit(editingMeetingResponse)
-                                      if (editingFollowUp && editingFollowUp.customerId === linkedCustomerId) {
-                                        void saveFollowUpEdit(editingFollowUp)
-                                      }
-                                    }}
-                                  >
-                                    Save
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="secondary"
-                                    onClick={() => {
-                                      setEditingMeetingResponse(null)
-                                      setEditingFollowUp(null)
-                                    }}
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
+                                {linkedFollowUp && linkedFollowUp.status !== 'closed' ? (
+                                  <>
+                                    <button type="button" onClick={() => setCompletingFollowUp({ ...linkedFollowUp, closingRemark: '' })}>
+                                      Complete
+                                    </button>
+                                    <button type="button" onClick={() => setExtendingFollowUp({ ...linkedFollowUp, newRemark: '', dueDate: '' })}>
+                                      Extend
+                                    </button>
+                                  </>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="secondary"
+                                  onClick={() => {
+                                    setEditingMeetingResponse({ id: item.id, response: item.response })
+                                  }}
+                                >
+                                  Edit Response
+                                </button>
                               </div>
                             </td>
                           </tr>,
-                        )
-                      }
+                        ]
+
                       return rows
                     })}
                   </tbody>
@@ -5679,6 +5567,7 @@ function App() {
                       <th>Status</th>
                       <th className="followupRemarksCell">Next Action</th>
                       <th className="followupRemarksCell">Notes</th>
+                      {salesmanFollowUpArchiveFilter ? <th className="followupRemarksCell">Closing Remarks</th> : null}
                       {activeDynamicFields.map((f) => <th key={f.id} className='dynamicFieldCol'>{f.label}</th>)}
                       <th>Actions</th>
                     </tr>
@@ -5696,7 +5585,7 @@ function App() {
                         const salesmanName = salesmen.find((entry) => entry.id === item.salesmanId)?.name ?? 'Salesman'
                         const customerCity = customer?.city ?? 'Unknown city'
                         const customerPhone = customer?.phone ?? '—'
-                        const isEditing = editingFollowUp?.id === item.id
+
                         const rows = [
                           <tr key={item.id}>
                             <td className="followupCustomerCell">
@@ -5761,7 +5650,24 @@ function App() {
                               </span>
                             </td>
                             <td className="followupRemarksCell">
-                              <div className="followupRemarks">{item.remarks || 'No next action added'}</div>
+                              {(() => {
+                                const remarksArr = item.remarks || []
+                                if (remarksArr.length > 1) {
+                                  return (
+                                    <details className="followupNotesDetails">
+                                      <summary className="followupRemarks" style={{ color: 'var(--text-secondary)', fontWeight: 'normal', display: 'list-item' }}>
+                                        {remarksArr[0].note}
+                                      </summary>
+                                      <div className="followupNotesContent" style={{ marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                        {remarksArr.slice(1).map((r, i) => (
+                                          <div key={i}><strong>{formatDate(r.date.slice(0, 10))}:</strong> {r.note}</div>
+                                        ))}
+                                      </div>
+                                    </details>
+                                  )
+                                }
+                                return <div className="followupRemarks">{remarksArr.length > 0 ? remarksArr[0].note : 'No next action added'}</div>
+                              })()}
                             </td>
                             <td className="followupRemarksCell">
                               <details className="followupNotesDetails">
@@ -5771,6 +5677,11 @@ function App() {
                                 </div>
                               </details>
                             </td>
+                            {salesmanFollowUpArchiveFilter ? (
+                              <td className="followupRemarksCell">
+                                <div className="followupRemarks">{item.closingRemark || '—'}</div>
+                              </td>
+                            ) : null}
                             {activeDynamicFields.map((field) => {
                               const vFields = latestVisitByCustomerId.get(item.customerId)?.dynamicFields
                               const cFields = customer?.dynamicFields
@@ -5780,99 +5691,24 @@ function App() {
                             <td>
                               <div className="followupActions">
                                 {item.status !== 'closed' ? (
-                                  <button type="button" onClick={() => void markFollowUpComplete(item.id)}>
-                                    Complete
-                                  </button>
-                                ) : null}
-                                <button type="button" className="secondary" onClick={(event) => {
-                                  setEditingFollowUp({ ...item })
-                                  const tableWrap = event.currentTarget.closest('.followupTableWrap')
-                                  requestAnimationFrame(() => {
-                                    requestAnimationFrame(() => {
-                                      const scopedEditRow =
-                                        tableWrap instanceof HTMLElement
-                                          ? tableWrap.querySelector('.followupEditRow')
-                                          : document.querySelector('.followupEditRow')
-                                      if (scopedEditRow instanceof HTMLElement) {
-                                        scopedEditRow.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
-                                      }
-                                    })
-                                  })
-                                }}>
-                                  Edit
-                                </button>
+                                  <>
+                                    <button type="button" onClick={() => setCompletingFollowUp({ ...item, closingRemark: '' })}>
+                                      Complete
+                                    </button>
+                                    <button type="button" onClick={() => setExtendingFollowUp({ ...item, newRemark: '', dueDate: '' })}>
+                                      Extend
+                                    </button>
+                                    <button type="button" className="secondary" onClick={() => {
+                                      setEditingFollowUp({ ...item })
+                                    }}>
+                                      Edit
+                                    </button>
+                                  </>
+                                ) : '—'}
                               </div>
                             </td>
                           </tr>,
                         ]
-                        if (isEditing && editingFollowUp) {
-                          rows.push(
-                            <tr key={`${item.id}-edit`} className="followupEditRow">
-                              <td colSpan={(role !== 'salesman' ? 10 : 9) + activeDynamicFields.length}>
-                                <div className="followupEditCard">
-                                  <div className="followupEditHeader">
-                                    <div>
-                                      <strong>Edit follow-up</strong>
-                                      <p className="muted">Update the due date, status, priority, and next action in one place.</p>
-                                    </div>
-                                  </div>
-                                  <div className="followupEditGrid">
-                                    <label>
-                                      Due date
-                                      <input
-                                        type="date"
-                                        min={todayIso}
-                                        value={editingFollowUp.dueDate}
-                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })}
-                                      />
-                                    </label>
-                                    <label>
-                                      Priority
-                                      <select
-                                        value={editingFollowUp.priority}
-                                        onChange={(e) =>
-                                          setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })
-                                        }
-                                      >
-                                        <option value="low">Low</option>
-                                        <option value="medium">Medium</option>
-                                        <option value="high">High</option>
-                                      </select>
-                                    </label>
-                                    <label>
-                                      Status
-                                      <select
-                                        value={editingFollowUp.status}
-                                        onChange={(e) =>
-                                          setEditingFollowUp({ ...editingFollowUp, status: e.target.value as FollowUpStatus })
-                                        }
-                                      >
-                                        <option value="pending">Pending</option>
-                                        <option value="in_progress">In progress</option>
-                                        <option value="closed">Closed</option>
-                                      </select>
-                                    </label>
-                                    <label>
-                                      Next Action
-                                      <textarea
-                                        value={editingFollowUp.remarks}
-                                        onChange={(e) => setEditingFollowUp({ ...editingFollowUp, remarks: e.target.value })}
-                                      />
-                                    </label>
-                                  </div>
-                                  <div className="followupEditActions">
-                                    <button type="button" onClick={() => void saveFollowUpEdit(editingFollowUp)}>
-                                      Save
-                                    </button>
-                                    <button type="button" className="secondary" onClick={() => setEditingFollowUp(null)}>
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>,
-                          )
-                        }
                         return rows
                       })
                     )}
@@ -6560,6 +6396,235 @@ function App() {
           {mainContent}
         </div>
       </div>
+
+      {completingFollowUp && !editingMeetingResponse ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => setCompletingFollowUp(null)}>
+          <div className="modalCard" style={{ maxWidth: '500px', width: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '1rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-main)' }}>
+                <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                Complete Follow-up
+              </h2>
+              <p className="muted" style={{ margin: 0 }}>Provide a final closing remark to mark this as complete.</p>
+            </div>
+            
+            <div className="modalBody" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <label style={{ display: 'block' }}>
+                <span style={{ fontWeight: 500 }}>Closing Remark</span>
+                <textarea
+                  placeholder="Final outcome / reason for closing..."
+                  value={completingFollowUp.closingRemark || ''}
+                  onChange={(e) => setCompletingFollowUp({ ...completingFollowUp, closingRemark: e.target.value })}
+                  style={{ width: '100%', marginTop: '0.5rem', minHeight: '80px' }}
+                />
+              </label>
+            </div>
+            
+            <div className="modalActions" style={{ margin: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button type="button" className="secondary" onClick={() => setCompletingFollowUp(null)}>Cancel</button>
+              <button type="button" onClick={() => void completeFollowUp(completingFollowUp)} style={{ color: 'white' }}>Complete</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {extendingFollowUp && !editingMeetingResponse ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => setExtendingFollowUp(null)}>
+          <div className="modalCard" style={{ maxWidth: '600px', width: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '1rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-main)' }}>
+                <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                Extend Follow-up
+              </h2>
+              <p className="muted" style={{ margin: 0 }}>Update the date and append your new interaction notes.</p>
+            </div>
+            
+            <div className="modalBody" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <label>
+                  New Due Date
+                  <input type="date" min={todayIso} value={extendingFollowUp.dueDate} onChange={(e) => setExtendingFollowUp({ ...extendingFollowUp, dueDate: e.target.value })} style={{ width: '100%', marginTop: '0.5rem' }} />
+                </label>
+                <label>
+                  Priority
+                  <select value={extendingFollowUp.priority} onChange={(e) => setExtendingFollowUp({ ...extendingFollowUp, priority: e.target.value as FollowUp['priority'] })} style={{ width: '100%', marginTop: '0.5rem' }}>
+                    <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+                  </select>
+                </label>
+              </div>
+
+              {(() => {
+                const original = followUps.find(f => f.id === extendingFollowUp.id)
+                if (original && original.remarks && original.remarks.length > 0) {
+                  return (
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <span className="muted">Previous Remarks:</span>
+                      <div style={{ marginTop: '0.25rem', padding: '0.75rem', backgroundColor: 'var(--surface-hover)', borderRadius: '4px', fontSize: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {original.remarks.map((r, i) => (
+                          <div key={i}><strong>{formatDate(r.date.slice(0, 10))}:</strong> {r.note}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                }
+                return null
+              })()}
+
+              <label style={{ display: 'block' }}>
+                <span style={{ fontWeight: 500 }}>New Interaction Remark</span>
+                <textarea placeholder="Note what was discussed today..." value={extendingFollowUp.newRemark || ''} onChange={(e) => setExtendingFollowUp({ ...extendingFollowUp, newRemark: e.target.value })} style={{ width: '100%', marginTop: '0.5rem', minHeight: '80px' }} />
+              </label>
+            </div>
+            
+            <div className="modalActions" style={{ margin: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button type="button" className="secondary" onClick={() => setExtendingFollowUp(null)}>Cancel</button>
+              <button type="button" onClick={() => void extendFollowUp(extendingFollowUp)} style={{ color: 'white' }}>Extend</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editingFollowUp && !editingMeetingResponse ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => setEditingFollowUp(null)}>
+          <div className="modalCard" style={{ maxWidth: '600px', width: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '1rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-main)' }}>
+                <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                Edit Follow-up
+              </h2>
+              <p className="muted" style={{ margin: 0 }}>Update details without closing or extending.</p>
+            </div>
+            
+            <div className="modalBody" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <label>
+                  Due Date
+                  <input type="date" min={todayIso} value={editingFollowUp.dueDate} onChange={(e) => setEditingFollowUp({ ...editingFollowUp, dueDate: e.target.value })} style={{ width: '100%', marginTop: '0.5rem' }} />
+                </label>
+                <label>
+                  Priority
+                  <select value={editingFollowUp.priority} onChange={(e) => setEditingFollowUp({ ...editingFollowUp, priority: e.target.value as FollowUp['priority'] })} style={{ width: '100%', marginTop: '0.5rem' }}>
+                    <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+                  </select>
+                </label>
+              </div>
+              {(() => {
+                const original = followUps.find(f => f.id === editingFollowUp.id)
+                if (original && original.remarks && original.remarks.length > 0) {
+                  return (
+                    <div style={{ marginTop: '0.5rem', marginBottom: '1rem' }}>
+                      <span className="muted">Previous Remarks:</span>
+                      <div style={{ marginTop: '0.25rem', padding: '0.75rem', backgroundColor: 'var(--surface-hover)', borderRadius: '4px', fontSize: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {original.remarks.map((r, i) => (
+                          <div key={i}><strong>{formatDate(r.date.slice(0, 10))}:</strong> {r.note}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                }
+                return null
+              })()}
+
+              <label style={{ display: 'block' }}>
+                <span style={{ fontWeight: 500 }}>Add New Note</span>
+                <textarea placeholder="Update your notes..." value={editingFollowUp.newRemark || ''} onChange={(e) => setEditingFollowUp({ ...editingFollowUp, newRemark: e.target.value })} style={{ width: '100%', marginTop: '0.5rem', minHeight: '80px' }} />
+              </label>
+            </div>
+            
+            <div className="modalActions" style={{ margin: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button type="button" className="secondary" onClick={() => setEditingFollowUp(null)}>Cancel</button>
+              <button type="button" onClick={() => void saveFollowUpEdit(editingFollowUp)} style={{ backgroundColor: 'var(--text-main)', color: 'var(--text-main)' }}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editingMeetingResponse ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => setEditingMeetingResponse(null)}>
+          <div className="modalCard" style={{ maxWidth: '600px', width: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '1rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-main)' }}>
+                <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                Edit Meeting Response
+              </h2>
+              <p className="muted" style={{ margin: 0 }}>Update the meeting notes.</p>
+            </div>
+            <div className="modalBody" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <label style={{ display: 'block' }}>
+                <span style={{ fontWeight: 500 }}>Meeting Response</span>
+                <textarea
+                  value={editingMeetingResponse.response}
+                  onChange={(event) => setEditingMeetingResponse({ ...editingMeetingResponse, response: event.target.value })}
+                  style={{ width: '100%', marginTop: '0.5rem', minHeight: '100px' }}
+                />
+              </label>
+            </div>
+            <div className="modalActions" style={{ marginTop: '2rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button type="button" className="secondary" onClick={() => setEditingMeetingResponse(null)}>Cancel</button>
+              <button type="button" onClick={() => { void saveMeetingResponseEdit(editingMeetingResponse); setEditingMeetingResponse(null); }} style={{ backgroundColor: '#2563eb', color: 'white' }}>Save Response</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {duplicateFollowUpWarning ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => setDuplicateFollowUpWarning(null)}>
+          <div className="modalCard" style={{ maxWidth: '500px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '1rem', marginBottom: '1rem' }}>
+              <h2 style={{ color: 'var(--risk-critical)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+                Open Follow-up Found
+              </h2>
+            </div>
+            <div className="modalBody" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <p>This customer already has an open follow-up. Please update or complete the existing follow-up before creating a new visit/follow-up.</p>
+              <div style={{ backgroundColor: 'var(--surface)', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <span className="muted">Date Scheduled:</span>
+                  <strong>{duplicateFollowUpWarning.createdAt ? formatDate(duplicateFollowUpWarning.createdAt.slice(0, 10)) : '—'}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <span className="muted">Due Date:</span>
+                  <strong>{formatDate(duplicateFollowUpWarning.dueDate)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <span className="muted">Priority:</span>
+                  <span className={`followupPill followupPill--${duplicateFollowUpWarning.priority}`}>{duplicateFollowUpWarning.priority}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <span className="muted">Status:</span>
+                  <span className={`followupStatus followupStatus--${duplicateFollowUpWarning.status}`}>{duplicateFollowUpWarning.status.replace(/_/g, ' ')}</span>
+                </div>
+                <div style={{ marginTop: '1rem' }}>
+                  <span className="muted">Previous Follow-up Remarks:</span>
+                  <div style={{ marginTop: '0.25rem', padding: '0.5rem', backgroundColor: 'var(--surface-hover)', borderRadius: '4px', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {duplicateFollowUpWarning.remarks && duplicateFollowUpWarning.remarks.length > 0 ? (
+                      duplicateFollowUpWarning.remarks.map((r, i) => (
+                        <div key={i}><strong>{formatDate(r.date.slice(0, 10))}:</strong> {r.note}</div>
+                      ))
+                    ) : 'No remarks provided.'}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="modalActions" style={{ margin: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button type="button" className="secondary" onClick={() => setDuplicateFollowUpWarning(null)}>Cancel</button>
+              <button type="button" onClick={() => {
+                setDuplicateFollowUpWarning(null)
+                setCompletingFollowUp({ ...duplicateFollowUpWarning, closingRemark: '' })
+              }}>
+                Complete
+              </button>
+              <button type="button" onClick={() => {
+                setDuplicateFollowUpWarning(null)
+                setExtendingFollowUp({ ...duplicateFollowUpWarning, newRemark: '', dueDate: '' })
+              }}>
+                Extend
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {visitPhotoModal ? (
         <div
