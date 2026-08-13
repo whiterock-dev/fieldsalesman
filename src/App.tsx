@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lookup as pincodeLookup } from 'india-pincode-lookup'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { LoginScreen } from './components/LoginScreen'
@@ -63,7 +64,8 @@ type Customer = {
   name: string
   phone: string
   whatsapp: string
-  address: string
+  pincode: string
+  landmark: string
   city: string
   cityId: string | null
   tags: string[]
@@ -131,7 +133,8 @@ type VisitSession = {
   quickLead: {
     name: string
     phone: string
-    address: string
+    pincode: string
+    landmark: string
     city: string
     cityId?: string
   }
@@ -254,7 +257,7 @@ function syncNavToLocation(view: NavId) {
 }
 
 /** Max reported GPS uncertainty allowed for existing-customer visit flows. */
-const GPS_THRESHOLD_METERS = 500
+const GPS_THRESHOLD_METERS = 350;
 /** New leads have no prior map pin — keep a slightly tighter GPS expectation. */
 const GPS_THRESHOLD_NEW_LEAD_METERS = 150
 /** Max distance from customer map pin for existing-customer visits. */
@@ -265,7 +268,8 @@ const INITIAL_CUSTOMERS: Customer[] = [
     name: 'Madhav Traders',
     phone: '9990011122',
     whatsapp: '9990011122',
-    address: 'Shastri Nagar Market',
+    pincode: '400001',
+    landmark: 'Mock Landmark 1',
     city: 'Jaipur',
     cityId: null,
     tags: ['gypsum', 'soffit'],
@@ -280,7 +284,8 @@ const INITIAL_CUSTOMERS: Customer[] = [
     name: 'Shree Interiors',
     phone: '9884411100',
     whatsapp: '9884411100',
-    address: 'Navrangpura Main Rd',
+    pincode: '380009',
+    landmark: 'Navrangpura Main Rd',
     city: 'Ahmedabad',
     cityId: null,
     tags: ['t-grid'],
@@ -631,8 +636,10 @@ function App() {
   const [geo, setGeo] = useState<{ lat: number; lng: number; accuracy: number; capturedAt: string } | null>(null)
   const [selectedCustomerId, setSelectedCustomerId] = useState('new')
   const [quickLeadPhone, setQuickLeadPhone] = useState('')
-  const [quickLeadAddress, setQuickLeadAddress] = useState('')
+  const [quickLeadPincode, setQuickLeadPincode] = useState('')
+  const [quickLeadLandmark, setQuickLeadLandmark] = useState('')
   const [quickLeadCityId, setQuickLeadCityId] = useState('')
+  const [quickLeadCityName, setQuickLeadCityName] = useState('')
   const [visitCustomerSearch, setVisitCustomerSearch] = useState('')
   const [notes, setNotes] = useState('')
   const [nextAction, setNextAction] = useState('')
@@ -1046,6 +1053,35 @@ function App() {
   }, [authSession?.user, authSession?.user?.id, authSession?.user?.email, inviteSourceReady])
 
   useEffect(() => {
+    if (selectedCustomerId === 'new' && quickLeadPincode.trim().length === 6) {
+      const results = pincodeLookup(quickLeadPincode.trim())
+      if (results && results.length > 0) {
+        // Find the best match, fallback to districtName or taluk
+        const match = results[0]
+        const resolvedName = match.districtName || match.taluk || match.stateName
+        if (resolvedName) {
+          // Find if it exists in city master (case-insensitive)
+          const existingCity = cities.find(c => c.name.toLowerCase() === resolvedName.toLowerCase())
+          if (existingCity) {
+            setQuickLeadCityId(existingCity.id)
+            setQuickLeadCityName(existingCity.name)
+          } else {
+            // Unregistered city, just store the name
+            setQuickLeadCityId('')
+            setQuickLeadCityName(resolvedName)
+          }
+        }
+      } else {
+        setQuickLeadCityId('')
+        setQuickLeadCityName('')
+      }
+    } else if (selectedCustomerId === 'new' && quickLeadPincode.trim().length < 6) {
+      setQuickLeadCityId('')
+      setQuickLeadCityName('')
+    }
+  }, [quickLeadPincode, cities, selectedCustomerId])
+
+  useEffect(() => {
     if (!supabase || !authSession?.user) return
     const matched = findInviteForEmail(invitedUsers, authSession.user.email)
     if (!matched) return
@@ -1268,7 +1304,8 @@ function App() {
         name: r.name as string,
         phone: r.phone as string,
         whatsapp: (r.whatsapp as string) ?? '',
-        address: (r.address as string) ?? '',
+        pincode: (r.pincode as string) ?? '',
+        landmark: (r.landmark as string) ?? '',
         city: ((r as any).city_master?.name) || (r.city as string) || '',
         cityId: (r.city_id as string | null) ?? null,
         tags: (r.tags as string[]) ?? [],
@@ -1814,7 +1851,8 @@ function App() {
     if (!q) {
       setSelectedCustomerId('new')
       setQuickLeadPhone('')
-      setQuickLeadAddress('')
+      setQuickLeadPincode('')
+      setQuickLeadLandmark('')
 
       setNotes('')
       setNextAction('')
@@ -1829,7 +1867,8 @@ function App() {
       setSelectedCustomerId(matched.id)
       // Pre-fill customer phone and address
       setQuickLeadPhone(matched.phone)
-      setQuickLeadAddress(matched.address)
+      setQuickLeadPincode(matched.pincode || '')
+      setQuickLeadLandmark(matched.landmark || '')
 
 
       // Pre-fill notes and next action from last visit
@@ -1839,7 +1878,8 @@ function App() {
     } else {
       setSelectedCustomerId('new')
       setQuickLeadPhone('')
-      setQuickLeadAddress('')
+      setQuickLeadPincode('')
+      setQuickLeadLandmark('')
 
       setNotes('')
       setNextAction('')
@@ -2526,7 +2566,8 @@ function App() {
           name: newLeadForm.name.trim(),
           phone: newLeadForm.phone.trim(),
           whatsapp: newLeadForm.phone.trim(),
-          address: '',
+          pincode: '',
+          landmark: '',
           city: cities.find(c => c.id === newLeadForm.cityId)?.name || '',
           cityId: newLeadForm.cityId,
           tags: ['New Lead'],
@@ -2601,7 +2642,8 @@ function App() {
           name: newCustomer.name,
           phone: newCustomer.phone,
           whatsapp: newCustomer.whatsapp,
-          address: newCustomer.address,
+          pincode: newCustomer.pincode,
+          landmark: newCustomer.landmark,
           city: newCustomer.city,
           tags: newCustomer.tags,
           dynamic_fields: newCustomer.dynamicFields,
@@ -2777,11 +2819,14 @@ function App() {
       if (!visitCustomerSearch.trim() || !quickLeadPhone.trim()) {
         return setMessage('Enter customer name and phone before starting a new lead visit.')
       }
-      if (!quickLeadCityId) {
-        return setMessage('Please select a valid city from the dropdown.')
+      if (!quickLeadCityName) {
+        return setMessage('Pincode is invalid or city could not be determined.')
       }
-      if (!quickLeadAddress.trim()) {
-        return setMessage('Please enter an address.')
+      if (!quickLeadPincode.trim() || quickLeadPincode.trim().length !== 6) {
+        return setMessage('Please enter a valid 6-digit Pincode.')
+      }
+      if (!quickLeadLandmark.trim()) {
+        return setMessage('Please enter a landmark.')
       }
       const leadMobile = parseTenDigitMobile(quickLeadPhone)
       if (!leadMobile) {
@@ -2807,17 +2852,34 @@ function App() {
       }
     }
     const selectedVisitType: VisitType = selectedCustomerId === 'new' ? 'New lead' : 'Existing customer'
+    let visitQuickLead = {
+      name: visitCustomerSearch.trim(),
+      phone: leadPhoneForSession,
+      pincode: quickLeadPincode.trim(),
+      landmark: quickLeadLandmark.trim() || 'Landmark pending',
+      city: quickLeadCityName,
+      cityId: quickLeadCityId,
+    }
+    
+    if (selectedCustomerId !== 'new') {
+      const selectedCustomer = customers.find((item) => item.id === selectedCustomerId)
+      if (selectedCustomer) {
+        visitQuickLead = {
+          name: selectedCustomer.name,
+          phone: selectedCustomer.phone,
+          pincode: selectedCustomer.pincode || '',
+          landmark: selectedCustomer.landmark || 'Landmark pending',
+          city: selectedCustomer.city || '',
+          cityId: selectedCustomer.cityId || '',
+        }
+      }
+    }
+
     setVisitSession({
       startGeo: { ...geo },
       selectedCustomerId,
       visitType: selectedVisitType,
-      quickLead: {
-        name: visitCustomerSearch.trim(),
-        phone: leadPhoneForSession,
-        address: quickLeadAddress.trim() || 'Address pending',
-        city: cities.find(c => c.id === quickLeadCityId)?.name || '',
-        cityId: quickLeadCityId,
-      },
+      quickLead: visitQuickLead,
     })
     setGeo(null)
 
@@ -3531,14 +3593,31 @@ function App() {
             if (updErr) console.warn('sync existing customer dynamic_fields on visit:', updErr.message)
           }
         } else {
+          let finalCityId = ql.cityId || null
+          let finalCityName = ql.city.trim() || 'Unknown'
+
+          if (!finalCityId && finalCityName !== 'Unknown' && supabase && online) {
+            const { data: existingCity } = await supabase.from('city_master').select('id, name').ilike('name', finalCityName).maybeSingle()
+            if (existingCity) {
+              finalCityId = existingCity.id
+              finalCityName = existingCity.name
+            } else {
+              const { data: newCityRecord, error: newCityError } = await supabase.from('city_master').insert({ name: finalCityName, is_active: true }).select().single()
+              if (!newCityError && newCityRecord) {
+                finalCityId = newCityRecord.id
+              }
+            }
+          }
+
           const newCustomer: Customer = {
             id: `c-${Date.now()}`,
             name: ql.name,
             phone: ql.phone,
             whatsapp: ql.phone,
-            address: ql.address,
-            city: ql.city.trim() || 'Unknown',
-            cityId: ql.cityId || null,
+            pincode: ql.pincode,
+            landmark: ql.landmark,
+            city: finalCityName,
+            cityId: finalCityId,
             tags: [],
             dynamicFields: dynamicData,
             assignedSalesmanId: activeSalesman.id,
@@ -3555,7 +3634,8 @@ function App() {
               name: newCustomer.name,
               phone: newCustomer.phone,
               whatsapp: newCustomer.whatsapp,
-              address: newCustomer.address,
+              pincode: newCustomer.pincode,
+              landmark: newCustomer.landmark,
               city: newCustomer.city,
               city_id: newCustomer.cityId,
               tags: newCustomer.tags,
@@ -3729,7 +3809,8 @@ function App() {
       setGeo(null)
       setSelectedCustomerId('new')
       setQuickLeadPhone('')
-      setQuickLeadAddress('')
+      setQuickLeadPincode('')
+      setQuickLeadLandmark('')
 
       setVisitCustomerSearch('')
       setNotes('')
@@ -3884,19 +3965,25 @@ function App() {
                   title="10 digits; optional +91 is normalized automatically"
                 />
               </label>
-              <label style={{ position: 'relative', zIndex: 10 }}>
-                City
-                <div style={{ marginTop: '0.25rem' }}>
-                  <SearchableCityDropdown
-                    cities={cities}
-                    valueId={quickLeadCityId}
-                    onChange={(val) => setQuickLeadCityId(val)}
-                  />
-                </div>
+              <label>
+                Pincode
+                <input
+                  inputMode="numeric"
+                  placeholder="6 digits"
+                  value={quickLeadPincode}
+                  onChange={(event) => setQuickLeadPincode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                />
+                <span style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px', display: 'block' }}>
+                  {quickLeadCityName ? `City: ${quickLeadCityName}` : (quickLeadPincode.length === 6 ? 'City: Unknown' : 'Enter 6-digit pincode to fetch city')}
+                </span>
               </label>
               <label>
-                Address
-                <input value={quickLeadAddress} onChange={(event) => setQuickLeadAddress(event.target.value)} />
+                Landmark
+                <input 
+                  placeholder="e.g. Near Station"
+                  value={quickLeadLandmark} 
+                  onChange={(event) => setQuickLeadLandmark(event.target.value)} 
+                />
               </label>
             </>
           ) : null}
@@ -3912,7 +3999,9 @@ function App() {
               <br />
               <strong>Phone:</strong> {visitSession.quickLead.phone}
               <br />
-              <strong>Address:</strong> {visitSession.quickLead.address}
+              <strong>Pincode:</strong> {visitSession.quickLead.pincode}
+              <br />
+              <strong>Landmark:</strong> {visitSession.quickLead.landmark}
               <br />
               <strong>City:</strong> {visitSession.quickLead.city}
             </p>
@@ -4221,7 +4310,8 @@ function App() {
                   id: c.id,
                   name: c.name,
                   city: c.city,
-                  address: c.address,
+                  pincode: c.pincode,
+                  landmark: c.landmark,
                   phone: c.phone,
                   lat: c.lat,
                   lng: c.lng,
@@ -5840,7 +5930,7 @@ function App() {
                       <th>Category</th>
                       <th>Phone</th>
                       <th>City</th>
-                      <th>Address</th>
+                      <th>Pincode & Landmark</th>
                       {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
                       <th>Achievement</th>
                       <th>Past Purchases</th>
@@ -5879,7 +5969,7 @@ function App() {
                           <td className="customersCompactCell">{item.phone}</td>
                           <td className="customersCompactCell">{item.city}</td>
                           <td className="customersCompactCell" style={{ maxWidth: '200px', whiteSpace: 'normal' }}>
-                            {item.address || <span className="customerEmptyChip">—</span>}
+                            {item.landmark ? `${item.landmark}${item.pincode ? ` - ${item.pincode}` : ''}` : <span className="customerEmptyChip">—</span>}
                           </td>
                           
                           {activeDynamicFields.map((field) => {
@@ -6020,10 +6110,9 @@ function App() {
                     <option value="E">E</option>
                   </select>
                 </label>
-                {role !== 'salesman' ? (
                   <label>
                     City
-                    <div style={{ marginTop: '0.25rem' }}>
+                    <div>
                       <SearchableCityDropdown
                         cities={cities}
                         valueId={visitHistoryCityFilter}
@@ -6031,7 +6120,6 @@ function App() {
                       />
                     </div>
                   </label>
-                ) : null}
               </div>
               <div className="scrollArea visitsTableWrap">
                 <table className="visitsTable">

@@ -617,7 +617,7 @@ select {
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
-  padding: 0.48rem 0.6rem;
+  padding: 0.4rem 0.6rem;
   transition: border-color 0.12s ease;
 }
 
