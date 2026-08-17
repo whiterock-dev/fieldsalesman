@@ -24,7 +24,8 @@ type CustomerRecord = {
   name: string
   phone: string
   whatsapp: string
-  address: string
+  pincode: string
+  landmark: string
   city: string
   cityId: string | null
   tags: string[]
@@ -176,9 +177,9 @@ export function CustomerDatabase({
   /* ── edit modal state ── */
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null)
   const [editForm, setEditForm] = useState<{
-    name: string; phone: string; city: string; cityId: string; address: string; whatsapp: string
+    name: string; phone: string; city: string; cityId: string; pincode: string; landmark: string; whatsapp: string
     assignedSalesmanId: string; category: string; dynamicFields: Record<string, string>
-  }>({ name: '', phone: '', city: '', cityId: '', address: '', whatsapp: '', assignedSalesmanId: '', category: '', dynamicFields: {} })
+  }>({ name: '', phone: '', city: '', cityId: '', pincode: '', landmark: '', whatsapp: '', assignedSalesmanId: '', category: '', dynamicFields: {} })
   const [saving, setSaving] = useState(false)
   const [editMessage, setEditMessage] = useState('')
   const editFormRef = useRef<HTMLFormElement>(null)
@@ -265,7 +266,8 @@ export function CustomerDatabase({
       phone: c.phone,
       city: c.city,
       cityId: c.cityId || '',
-      address: c.address,
+      pincode: c.pincode,
+      landmark: c.landmark,
       whatsapp: c.whatsapp,
       assignedSalesmanId: c.assignedSalesmanId,
       category: c.category || '',
@@ -295,7 +297,8 @@ export function CustomerDatabase({
       if (editForm.name !== orig.name) changedFields['name'] = { old: orig.name, new: editForm.name }
       if (editForm.phone !== orig.phone) changedFields['phone'] = { old: orig.phone, new: editForm.phone }
       if (editForm.city !== orig.city) changedFields['city'] = { old: orig.city, new: editForm.city }
-      if (editForm.address !== orig.address) changedFields['address'] = { old: orig.address, new: editForm.address }
+      if (editForm.pincode !== orig.pincode) changedFields['pincode'] = { old: orig.pincode, new: editForm.pincode }
+      if (editForm.landmark !== orig.landmark) changedFields['landmark'] = { old: orig.landmark, new: editForm.landmark }
       if (editForm.whatsapp !== orig.whatsapp) changedFields['whatsapp'] = { old: orig.whatsapp, new: editForm.whatsapp }
       if (editForm.assignedSalesmanId !== orig.assignedSalesmanId) {
         changedFields['assigned_salesman_id'] = {
@@ -327,7 +330,8 @@ export function CustomerDatabase({
           phone: editForm.phone,
           city: editForm.city,
           city_id: editForm.cityId || null,
-          address: editForm.address,
+          pincode: editForm.pincode,
+          landmark: editForm.landmark,
           whatsapp: editForm.whatsapp,
           assigned_salesman_id: editForm.assignedSalesmanId,
           category: editForm.category || null,
@@ -374,7 +378,7 @@ export function CustomerDatabase({
   /* ── CSV export ── */
   const handleExportCsv = useCallback(() => {
     const headers = [
-      'Customer Name', 'Mobile Number', 'City', 'Address', 'Salesman',
+      'Customer Name', 'Mobile Number', 'City', 'Pincode', 'Landmark', 'Salesman',
       ...activeDynamicFields.map(f => f.label),
       'Achievement',
       'Past Purchase History',
@@ -385,7 +389,8 @@ export function CustomerDatabase({
       c.name,
       c.phone,
       c.city,
-      c.address,
+      c.pincode,
+      c.landmark,
       profileNameById.get(c.assignedSalesmanId) ?? 'Unassigned',
       ...activeDynamicFields.map(f => dynamicVal(c, f.key)),
       c.achievement || '—',
@@ -399,7 +404,7 @@ export function CustomerDatabase({
   /* ── CSV Template & Import ── */
   const handleDownloadTemplate = useCallback(() => {
     const headers = [
-      'Customer Name', 'Mobile Number', 'City', 'Address',
+      'Customer Name', 'Mobile Number', 'City', 'Pincode', 'Landmark',
       ...activeDynamicFields.map(f => f.label)
     ]
     exportToCsv('customer_import_template', headers, [])
@@ -455,7 +460,8 @@ export function CustomerDatabase({
           if (existing) {
             updateCount++
             const newCity = row['City'] || existing.city
-            const newAddress = row['Address'] || existing.address
+            const newPincode = row['Pincode'] || existing.pincode
+            const newLandmark = row['Landmark'] || existing.landmark
             const newWhatsapp = existing.whatsapp || phone
             const newDynamicFields = { ...(existing.dynamicFields || {}), ...dynamicFieldsData }
 
@@ -463,7 +469,8 @@ export function CustomerDatabase({
             const changedFields: Record<string, { old: any, new: any }> = {}
             if (name !== existing.name) changedFields['Customer Name'] = { old: existing.name, new: name }
             if (newCity !== existing.city) changedFields['City'] = { old: existing.city, new: newCity }
-            if (newAddress !== existing.address) changedFields['Address'] = { old: existing.address, new: newAddress }
+            if (newPincode !== existing.pincode) changedFields['Pincode'] = { old: existing.pincode, new: newPincode }
+            if (newLandmark !== existing.landmark) changedFields['Landmark'] = { old: existing.landmark, new: newLandmark }
             if (newWhatsapp !== existing.whatsapp) changedFields['WhatsApp'] = { old: existing.whatsapp, new: newWhatsapp }
 
             for (const f of activeDynamicFields) {
@@ -487,7 +494,8 @@ export function CustomerDatabase({
               name: name,
               phone: phone,
               city: newCity,
-              address: newAddress,
+              pincode: newPincode,
+              landmark: newLandmark,
               whatsapp: newWhatsapp,
               assigned_salesman_id: existing.assignedSalesmanId,
               lat: existing.lat,
@@ -502,7 +510,8 @@ export function CustomerDatabase({
               name: name,
               phone: phone,
               city: row['City'] || '',
-              address: row['Address'] || '',
+              pincode: row['Pincode'] || '',
+              landmark: row['Landmark'] || '',
               whatsapp: phone,
               assigned_salesman_id: activeSalesmanId || currentUserId,
               lat: 0,
@@ -823,7 +832,7 @@ export function CustomerDatabase({
                   <th className="cdStickyCol2">Category</th>
                   <th>Mobile</th>
                   <th>City</th>
-                  <th>Address</th>
+                  <th>Pincode & Landmark</th>
                   {showSalesmanFilter && <th>Salesman</th>}
                   {activeDynamicFields.map(f => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
                   <th className="cdWrapHead">Achievement</th>
@@ -869,7 +878,7 @@ export function CustomerDatabase({
                       </div>
                     </td>
                     <td className="cdCompactCell">{c.city || '—'}</td>
-                    <td className="cdCompactCell cdAddressCell">{c.address || '—'}</td>
+                    <td className="cdCompactCell cdAddressCell">{c.landmark ? `${c.landmark}${c.pincode ? ` - ${c.pincode}` : ''}` : '—'}</td>
                     {showSalesmanFilter && (
                       <td className="cdCompactCell">
                         <span className="cdSalesmanPill">
@@ -991,11 +1000,19 @@ export function CustomerDatabase({
                   </div>
                 </label>
                 <label>
-                  Address
+                  Pincode
                   <input
                     type="text"
-                    value={editForm.address}
-                    onChange={e => setEditForm(p => ({ ...p, address: e.target.value }))}
+                    value={editForm.pincode}
+                    onChange={e => setEditForm(p => ({ ...p, pincode: e.target.value }))}
+                  />
+                </label>
+                <label>
+                  Landmark
+                  <input
+                    type="text"
+                    value={editForm.landmark}
+                    onChange={e => setEditForm(p => ({ ...p, landmark: e.target.value }))}
                   />
                 </label>
                 <label>

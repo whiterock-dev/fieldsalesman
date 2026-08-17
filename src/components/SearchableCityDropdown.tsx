@@ -95,7 +95,7 @@ export function SearchableCityDropdown({
                   handleSelect(c)
                 }}
                 style={{ 
-                  padding: '8px 12px', 
+                  padding: '12px', 
                   cursor: 'pointer', 
                   backgroundColor: valueId === c.id ? '#2563eb' : 'transparent',
                   color: valueId === c.id ? '#ffffff' : '#0f172a',
