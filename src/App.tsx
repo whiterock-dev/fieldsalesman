@@ -2836,11 +2836,6 @@ function App() {
     } else {
       const selectedCustomer = customers.find((item) => item.id === selectedCustomerId)
       if (!selectedCustomer) return setMessage('Customer not found.')
-      const openFollowUp = followUps.find((f) => f.customerId === selectedCustomerId && f.status !== 'closed' && !f.archived)
-      if (openFollowUp) {
-        setDuplicateFollowUpWarning(openFollowUp)
-        return
-      }
       const isFirstVisit = selectedCustomer.lat === 0 && selectedCustomer.lng === 0
       if (!isFirstVisit) {
         const radius = distanceMeters(geo.lat, geo.lng, selectedCustomer.lat, selectedCustomer.lng)
@@ -2849,6 +2844,11 @@ function App() {
             `Outside ${RADIUS_THRESHOLD_METERS}m of the customer pin — move closer to start the visit. Current distance: ${Math.round(radius)}m`,
           )
         }
+      }
+      const openFollowUp = followUps.find((f) => f.customerId === selectedCustomerId && f.status !== 'closed' && !f.archived)
+      if (openFollowUp) {
+        setDuplicateFollowUpWarning(openFollowUp)
+        return
       }
     }
     const selectedVisitType: VisitType = selectedCustomerId === 'new' ? 'New lead' : 'Existing customer'
