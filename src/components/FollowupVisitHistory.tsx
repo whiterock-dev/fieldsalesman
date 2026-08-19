@@ -173,7 +173,7 @@ export function FollowupVisitHistory() {
   }
 
   return (
-    <section className="panel">
+    <section className="panel" style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
       <div className="cdHeader" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -219,8 +219,8 @@ export function FollowupVisitHistory() {
       )}
 
       {/* Filter bar */}
-      <article className="card cdFiltersCard" style={{ marginBottom: '1rem' }}>
-        <div className="cdFilterBar" style={{ alignItems: 'flex-end', flexWrap: 'wrap', gap: '0.75rem' }}>
+      <article className="card cdFiltersCard" style={{ flex: 'none', display: 'flex', flexDirection: 'column', marginBottom: '1rem', overflow: 'hidden', width: '100%' }}>
+        <div className="cdFilterBar" style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', alignContent: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
           <label className="cdFilterItem cdFilterSearch" style={{ flex: '1 1 220px' }}>
             <span className="cdFilterLabel">Search Customer</span>
             <input
@@ -391,7 +391,7 @@ export function FollowupVisitHistory() {
       </article>
 
       {/* Table Card */}
-      <article className="card" style={{ padding: 0 }}>
+      <article className="card" style={{ flex: 1, padding: 0, overflow: 'hidden', width: '100%', minWidth: 0 }}>
         {loading ? (
           <div className="cdEmptyState" style={{ padding: '3rem 1rem' }}>
             <div
@@ -427,9 +427,9 @@ export function FollowupVisitHistory() {
             </span>
           </div>
         ) : (
-          <div>
-            <div className="cdTableWrap">
-              <table className="cdTable" style={{ width: '100%', tableLayout: 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, overflow: 'hidden' }}>
+            <div className="cdTableWrap" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', width: '100%' }}>
+              <table className="cdTable" style={{ width: '100%', tableLayout: 'auto', minWidth: '1000px' }}>
                 <thead>
                   <tr>
                     <th style={{ width: '40px', textAlign: 'center' }}>#</th>
@@ -854,7 +854,7 @@ export function FollowupVisitHistory() {
                                             }}
                                           >
                                             {hItem.fieldChanged &&
-                                            hItem.fieldChanged !== 'updated' ? (
+                                              hItem.fieldChanged !== 'updated' ? (
                                               <div style={{ marginBottom: hItem.remark ? '4px' : 0 }}>
                                                 <strong>{hItem.fieldChanged}:</strong>{' '}
                                                 {hItem.oldValue || '(empty)'} →{' '}

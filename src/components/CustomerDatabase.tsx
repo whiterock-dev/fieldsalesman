@@ -16,6 +16,7 @@ import type { CityMaster } from '../App'
 import { OrderHistoryDialog } from './orders/OrderHistoryDialog'
 import { getProductMasterList, formatDDMMYYYY } from './orders/ordersApi'
 import { CustomerLeadsDialog } from './leads/CustomerLeadsDialog'
+import { lookup as pincodeLookup } from 'india-pincode-lookup'
 
 /* ───────────── Local types (mirrors App.tsx – avoids circular imports) ───────────── */
 
@@ -25,7 +26,8 @@ type CustomerRecord = {
   phone: string
   whatsapp: string
   pincode: string
-  landmark: string
+  area: string
+  state: string
   city: string
   cityId: string | null
   tags: string[]
@@ -177,9 +179,10 @@ export function CustomerDatabase({
   /* ── edit modal state ── */
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null)
   const [editForm, setEditForm] = useState<{
-    name: string; phone: string; city: string; cityId: string; pincode: string; landmark: string; whatsapp: string
+    name: string; phone: string; city: string; cityId: string; pincode: string; area: string; state: string; whatsapp: string
     assignedSalesmanId: string; category: string; dynamicFields: Record<string, string>
-  }>({ name: '', phone: '', city: '', cityId: '', pincode: '', landmark: '', whatsapp: '', assignedSalesmanId: '', category: '', dynamicFields: {} })
+  }>({ name: '', phone: '', city: '', cityId: '', pincode: '', area: '', state: '', whatsapp: '', assignedSalesmanId: '', category: '', dynamicFields: {} })
+  const [editAreaOptions, setEditAreaOptions] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [editMessage, setEditMessage] = useState('')
   const editFormRef = useRef<HTMLFormElement>(null)
@@ -267,13 +270,26 @@ export function CustomerDatabase({
       city: c.city,
       cityId: c.cityId || '',
       pincode: c.pincode,
-      landmark: c.landmark,
+      area: c.area,
+      state: c.state,
       whatsapp: c.whatsapp,
       assignedSalesmanId: c.assignedSalesmanId,
       category: c.category || '',
       dynamicFields: { ...(c.dynamicFields ?? {}) },
     })
     setEditMessage('')
+
+    if (c.pincode && c.pincode.length === 6) {
+      const results = pincodeLookup(c.pincode)
+      if (results && results.length > 0) {
+        const areas = Array.from(new Set(results.map((r: any) => r.officeName).filter(Boolean))) as string[]
+        setEditAreaOptions(areas)
+      } else {
+        setEditAreaOptions([])
+      }
+    } else {
+      setEditAreaOptions([])
+    }
   }, [])
 
   /* ── save edit ── */
@@ -298,7 +314,8 @@ export function CustomerDatabase({
       if (editForm.phone !== orig.phone) changedFields['phone'] = { old: orig.phone, new: editForm.phone }
       if (editForm.city !== orig.city) changedFields['city'] = { old: orig.city, new: editForm.city }
       if (editForm.pincode !== orig.pincode) changedFields['pincode'] = { old: orig.pincode, new: editForm.pincode }
-      if (editForm.landmark !== orig.landmark) changedFields['landmark'] = { old: orig.landmark, new: editForm.landmark }
+      if (editForm.area !== orig.area) changedFields['area'] = { old: orig.area, new: editForm.area }
+      if (editForm.state !== orig.state) changedFields['state'] = { old: orig.state, new: editForm.state }
       if (editForm.whatsapp !== orig.whatsapp) changedFields['whatsapp'] = { old: orig.whatsapp, new: editForm.whatsapp }
       if (editForm.assignedSalesmanId !== orig.assignedSalesmanId) {
         changedFields['assigned_salesman_id'] = {
@@ -331,7 +348,8 @@ export function CustomerDatabase({
           city: editForm.city,
           city_id: editForm.cityId || null,
           pincode: editForm.pincode,
-          landmark: editForm.landmark,
+          area: editForm.area,
+          state: editForm.state,
           whatsapp: editForm.whatsapp,
           assigned_salesman_id: editForm.assignedSalesmanId,
           category: editForm.category || null,
@@ -378,7 +396,7 @@ export function CustomerDatabase({
   /* ── CSV export ── */
   const handleExportCsv = useCallback(() => {
     const headers = [
-      'Customer Name', 'Mobile Number', 'City', 'Pincode', 'Landmark', 'Salesman',
+      'Customer Name', 'Mobile Number', 'City', 'Pincode', 'Area', 'State', 'Salesman',
       ...activeDynamicFields.map(f => f.label),
       'Achievement',
       'Past Purchase History',
@@ -390,7 +408,8 @@ export function CustomerDatabase({
       c.phone,
       c.city,
       c.pincode,
-      c.landmark,
+      c.area,
+      c.state,
       profileNameById.get(c.assignedSalesmanId) ?? 'Unassigned',
       ...activeDynamicFields.map(f => dynamicVal(c, f.key)),
       c.achievement || '—',
@@ -404,7 +423,7 @@ export function CustomerDatabase({
   /* ── CSV Template & Import ── */
   const handleDownloadTemplate = useCallback(() => {
     const headers = [
-      'Customer Name', 'Mobile Number', 'City', 'Pincode', 'Landmark',
+      'Customer Name', 'Mobile Number', 'City', 'Pincode', 'Area', 'State',
       ...activeDynamicFields.map(f => f.label)
     ]
     exportToCsv('customer_import_template', headers, [])
@@ -461,7 +480,8 @@ export function CustomerDatabase({
             updateCount++
             const newCity = row['City'] || existing.city
             const newPincode = row['Pincode'] || existing.pincode
-            const newLandmark = row['Landmark'] || existing.landmark
+            const newArea = row['Area'] || existing.area
+            const newState = row['State'] || existing.state
             const newWhatsapp = existing.whatsapp || phone
             const newDynamicFields = { ...(existing.dynamicFields || {}), ...dynamicFieldsData }
 
@@ -470,7 +490,8 @@ export function CustomerDatabase({
             if (name !== existing.name) changedFields['Customer Name'] = { old: existing.name, new: name }
             if (newCity !== existing.city) changedFields['City'] = { old: existing.city, new: newCity }
             if (newPincode !== existing.pincode) changedFields['Pincode'] = { old: existing.pincode, new: newPincode }
-            if (newLandmark !== existing.landmark) changedFields['Landmark'] = { old: existing.landmark, new: newLandmark }
+            if (newArea !== existing.area) changedFields['Area'] = { old: existing.area, new: newArea }
+            if (newState !== existing.state) changedFields['State'] = { old: existing.state, new: newState }
             if (newWhatsapp !== existing.whatsapp) changedFields['WhatsApp'] = { old: existing.whatsapp, new: newWhatsapp }
 
             for (const f of activeDynamicFields) {
@@ -495,7 +516,8 @@ export function CustomerDatabase({
               phone: phone,
               city: newCity,
               pincode: newPincode,
-              landmark: newLandmark,
+              area: newArea,
+              state: newState,
               whatsapp: newWhatsapp,
               assigned_salesman_id: existing.assignedSalesmanId,
               lat: existing.lat,
@@ -511,7 +533,8 @@ export function CustomerDatabase({
               phone: phone,
               city: row['City'] || '',
               pincode: row['Pincode'] || '',
-              landmark: row['Landmark'] || '',
+              area: row['Area'] || '',
+              state: row['State'] || '',
               whatsapp: phone,
               assigned_salesman_id: activeSalesmanId || currentUserId,
               lat: 0,
@@ -832,7 +855,7 @@ export function CustomerDatabase({
                   <th className="cdStickyCol2">Category</th>
                   <th>Mobile</th>
                   <th>City</th>
-                  <th>Pincode & Landmark</th>
+                  <th>Pincode & Area</th>
                   {showSalesmanFilter && <th>Salesman</th>}
                   {activeDynamicFields.map(f => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
                   <th className="cdWrapHead">Achievement</th>
@@ -878,7 +901,7 @@ export function CustomerDatabase({
                       </div>
                     </td>
                     <td className="cdCompactCell">{c.city || '—'}</td>
-                    <td className="cdCompactCell cdAddressCell">{c.landmark ? `${c.landmark}${c.pincode ? ` - ${c.pincode}` : ''}` : '—'}</td>
+                    <td className="cdCompactCell cdAddressCell">{c.area ? `${c.area}` : '—'}</td>
                     {showSalesmanFilter && (
                       <td className="cdCompactCell">
                         <span className="cdSalesmanPill">
@@ -1004,17 +1027,61 @@ export function CustomerDatabase({
                   <input
                     type="text"
                     value={editForm.pincode}
-                    onChange={e => setEditForm(p => ({ ...p, pincode: e.target.value }))}
+                    onChange={e => {
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 6)
+                      setEditForm(p => {
+                        const next = { ...p, pincode: val }
+                        if (val.length === 6) {
+                          const results = pincodeLookup(val)
+                          if (results && results.length > 0) {
+                            const areas = Array.from(new Set(results.map((r: any) => r.officeName).filter(Boolean))) as string[]
+                            setEditAreaOptions(areas)
+                            
+                            next.state = results[0].stateName || ''
+                            
+                            const match = results[0]
+                            const resolvedName = match.districtName || match.taluk || match.stateName
+                            if (resolvedName) {
+                              const existingCity = cities.find(c => c.name.toLowerCase() === resolvedName.toLowerCase())
+                              if (existingCity) {
+                                next.cityId = existingCity.id
+                                next.city = existingCity.name
+                              } else {
+                                next.cityId = ''
+                                next.city = resolvedName
+                              }
+                            }
+                            
+                            if (areas.length > 0 && !areas.includes(next.area)) {
+                              next.area = areas[0]
+                            }
+                          } else {
+                            setEditAreaOptions([])
+                          }
+                        } else if (val.length < 6) {
+                          setEditAreaOptions([])
+                        }
+                        return next
+                      })
+                    }}
                   />
                 </label>
                 <label>
-                  Landmark
-                  <input
-                    type="text"
-                    value={editForm.landmark}
-                    onChange={e => setEditForm(p => ({ ...p, landmark: e.target.value }))}
-                  />
+                  Area
+                  {editAreaOptions.length > 0 ? (
+                    <select value={editForm.area} onChange={(e) => setEditForm(p => ({ ...p, area: e.target.value }))}>
+                      <option value="">-- Select Area --</option>
+                      {editAreaOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={editForm.area}
+                      onChange={e => setEditForm(p => ({ ...p, area: e.target.value }))}
+                    />
+                  )}
                 </label>
+
                 <label>
                   WhatsApp
                   <input

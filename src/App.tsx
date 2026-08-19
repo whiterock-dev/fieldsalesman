@@ -65,7 +65,8 @@ type Customer = {
   phone: string
   whatsapp: string
   pincode: string
-  landmark: string
+  area: string
+  state: string
   city: string
   cityId: string | null
   tags: string[]
@@ -134,7 +135,8 @@ type VisitSession = {
     name: string
     phone: string
     pincode: string
-    landmark: string
+    area: string
+    state: string
     city: string
     cityId?: string
   }
@@ -269,7 +271,8 @@ const INITIAL_CUSTOMERS: Customer[] = [
     phone: '9990011122',
     whatsapp: '9990011122',
     pincode: '400001',
-    landmark: 'Mock Landmark 1',
+    area: 'Fort',
+    state: 'Maharashtra',
     city: 'Jaipur',
     cityId: null,
     tags: ['gypsum', 'soffit'],
@@ -285,7 +288,8 @@ const INITIAL_CUSTOMERS: Customer[] = [
     phone: '9884411100',
     whatsapp: '9884411100',
     pincode: '380009',
-    landmark: 'Navrangpura Main Rd',
+    area: 'Navrangpura',
+    state: 'Gujarat',
     city: 'Ahmedabad',
     cityId: null,
     tags: ['t-grid'],
@@ -637,7 +641,9 @@ function App() {
   const [selectedCustomerId, setSelectedCustomerId] = useState('new')
   const [quickLeadPhone, setQuickLeadPhone] = useState('')
   const [quickLeadPincode, setQuickLeadPincode] = useState('')
-  const [quickLeadLandmark, setQuickLeadLandmark] = useState('')
+  const [quickLeadArea, setQuickLeadArea] = useState('')
+  const [quickLeadState, setQuickLeadState] = useState('')
+  const [quickLeadAreaOptions, setQuickLeadAreaOptions] = useState<string[]>([])
   const [quickLeadCityId, setQuickLeadCityId] = useState('')
   const [quickLeadCityName, setQuickLeadCityName] = useState('')
   const [visitCustomerSearch, setVisitCustomerSearch] = useState('')
@@ -1056,6 +1062,12 @@ function App() {
     if (selectedCustomerId === 'new' && quickLeadPincode.trim().length === 6) {
       const results = pincodeLookup(quickLeadPincode.trim())
       if (results && results.length > 0) {
+        // Find areas (officeNames)
+        const areas = Array.from(new Set(results.map((r: any) => r.officeName).filter(Boolean))) as string[]
+        setQuickLeadAreaOptions(areas)
+        if (areas.length > 0 && !quickLeadArea) setQuickLeadArea(areas[0])
+        setQuickLeadState(results[0].stateName || '')
+
         // Find the best match, fallback to districtName or taluk
         const match = results[0]
         const resolvedName = match.districtName || match.taluk || match.stateName
@@ -1072,14 +1084,16 @@ function App() {
           }
         }
       } else {
+        setQuickLeadAreaOptions([])
         setQuickLeadCityId('')
         setQuickLeadCityName('')
       }
     } else if (selectedCustomerId === 'new' && quickLeadPincode.trim().length < 6) {
+      setQuickLeadAreaOptions([])
       setQuickLeadCityId('')
       setQuickLeadCityName('')
     }
-  }, [quickLeadPincode, cities, selectedCustomerId])
+  }, [quickLeadPincode, cities, selectedCustomerId, quickLeadArea])
 
   useEffect(() => {
     if (!supabase || !authSession?.user) return
@@ -1305,7 +1319,8 @@ function App() {
         phone: r.phone as string,
         whatsapp: (r.whatsapp as string) ?? '',
         pincode: (r.pincode as string) ?? '',
-        landmark: (r.landmark as string) ?? '',
+        area: (r.area as string) || ((r as any).landmark as string) || '',
+        state: (r.state as string) ?? '',
         city: ((r as any).city_master?.name) || (r.city as string) || '',
         cityId: (r.city_id as string | null) ?? null,
         tags: (r.tags as string[]) ?? [],
@@ -1852,7 +1867,8 @@ function App() {
       setSelectedCustomerId('new')
       setQuickLeadPhone('')
       setQuickLeadPincode('')
-      setQuickLeadLandmark('')
+      setQuickLeadArea('')
+      setQuickLeadState('')
 
       setNotes('')
       setNextAction('')
@@ -1868,7 +1884,8 @@ function App() {
       // Pre-fill customer phone and address
       setQuickLeadPhone(matched.phone)
       setQuickLeadPincode(matched.pincode || '')
-      setQuickLeadLandmark(matched.landmark || '')
+      setQuickLeadArea(matched.area || '')
+      setQuickLeadState(matched.state || '')
 
 
       // Pre-fill notes and next action from last visit
@@ -1879,7 +1896,8 @@ function App() {
       setSelectedCustomerId('new')
       setQuickLeadPhone('')
       setQuickLeadPincode('')
-      setQuickLeadLandmark('')
+      setQuickLeadArea('')
+      setQuickLeadState('')
 
       setNotes('')
       setNextAction('')
@@ -2567,7 +2585,8 @@ function App() {
           phone: newLeadForm.phone.trim(),
           whatsapp: newLeadForm.phone.trim(),
           pincode: '',
-          landmark: '',
+          area: '',
+          state: '',
           city: cities.find(c => c.id === newLeadForm.cityId)?.name || '',
           cityId: newLeadForm.cityId,
           tags: ['New Lead'],
@@ -2643,7 +2662,8 @@ function App() {
           phone: newCustomer.phone,
           whatsapp: newCustomer.whatsapp,
           pincode: newCustomer.pincode,
-          landmark: newCustomer.landmark,
+          area: newCustomer.area,
+          state: newCustomer.state,
           city: newCustomer.city,
           tags: newCustomer.tags,
           dynamic_fields: newCustomer.dynamicFields,
@@ -2825,8 +2845,11 @@ function App() {
       if (!quickLeadPincode.trim() || quickLeadPincode.trim().length !== 6) {
         return setMessage('Please enter a valid 6-digit Pincode.')
       }
-      if (!quickLeadLandmark.trim()) {
-        return setMessage('Please enter a landmark.')
+      if (!quickLeadArea.trim()) {
+        return setMessage('Please select or enter an area.')
+      }
+      if (!quickLeadState.trim()) {
+        return setMessage('State could not be determined.')
       }
       const leadMobile = parseTenDigitMobile(quickLeadPhone)
       if (!leadMobile) {
@@ -2856,7 +2879,8 @@ function App() {
       name: visitCustomerSearch.trim(),
       phone: leadPhoneForSession,
       pincode: quickLeadPincode.trim(),
-      landmark: quickLeadLandmark.trim() || 'Landmark pending',
+      area: quickLeadArea.trim() || '',
+      state: quickLeadState.trim() || '',
       city: quickLeadCityName,
       cityId: quickLeadCityId,
     }
@@ -2868,7 +2892,8 @@ function App() {
           name: selectedCustomer.name,
           phone: selectedCustomer.phone,
           pincode: selectedCustomer.pincode || '',
-          landmark: selectedCustomer.landmark || 'Landmark pending',
+          area: selectedCustomer.area || '',
+          state: selectedCustomer.state || '',
           city: selectedCustomer.city || '',
           cityId: selectedCustomer.cityId || '',
         }
@@ -3615,7 +3640,8 @@ function App() {
             phone: ql.phone,
             whatsapp: ql.phone,
             pincode: ql.pincode,
-            landmark: ql.landmark,
+            area: ql.area,
+            state: ql.state,
             city: finalCityName,
             cityId: finalCityId,
             tags: [],
@@ -3635,7 +3661,8 @@ function App() {
               phone: newCustomer.phone,
               whatsapp: newCustomer.whatsapp,
               pincode: newCustomer.pincode,
-              landmark: newCustomer.landmark,
+              area: newCustomer.area,
+              state: newCustomer.state,
               city: newCustomer.city,
               city_id: newCustomer.cityId,
               tags: newCustomer.tags,
@@ -3810,7 +3837,8 @@ function App() {
       setSelectedCustomerId('new')
       setQuickLeadPhone('')
       setQuickLeadPincode('')
-      setQuickLeadLandmark('')
+      setQuickLeadArea('')
+      setQuickLeadState('')
 
       setVisitCustomerSearch('')
       setNotes('')
@@ -3965,7 +3993,7 @@ function App() {
                   title="10 digits; optional +91 is normalized automatically"
                 />
               </label>
-              <label>
+              <label style={{ alignSelf: 'start' }}>
                 Pincode
                 <input
                   inputMode="numeric"
@@ -3974,17 +4002,25 @@ function App() {
                   onChange={(event) => setQuickLeadPincode(event.target.value.replace(/\D/g, '').slice(0, 6))}
                 />
                 <span style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px', display: 'block' }}>
-                  {quickLeadCityName ? `City: ${quickLeadCityName}` : (quickLeadPincode.length === 6 ? 'City: Unknown' : 'Enter 6-digit pincode to fetch city')}
+                  {quickLeadCityName ? `Location: ${quickLeadCityName.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}${quickLeadState ? `, ${quickLeadState.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}` : ''}` : (quickLeadPincode.length === 6 ? 'City: Unknown' : 'Enter 6-digit pincode to fetch city')}
                 </span>
               </label>
-              <label>
-                Landmark
-                <input 
-                  placeholder="e.g. Near Station"
-                  value={quickLeadLandmark} 
-                  onChange={(event) => setQuickLeadLandmark(event.target.value)} 
-                />
+              <label style={{ alignSelf: 'start' }}>
+                Area
+                {quickLeadAreaOptions.length > 0 ? (
+                  <select value={quickLeadArea} onChange={(event) => setQuickLeadArea(event.target.value)}>
+                    <option value="">-- Select Area --</option>
+                    {quickLeadAreaOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                ) : (
+                  <input 
+                    placeholder="e.g. Near Station"
+                    value={quickLeadArea} 
+                    onChange={(event) => setQuickLeadArea(event.target.value)} 
+                  />
+                )}
               </label>
+
             </>
           ) : null}
 
@@ -4001,7 +4037,9 @@ function App() {
               <br />
               <strong>Pincode:</strong> {visitSession.quickLead.pincode}
               <br />
-              <strong>Landmark:</strong> {visitSession.quickLead.landmark}
+              <strong>Area:</strong> {visitSession.quickLead.area}
+              <br />
+              <strong>State:</strong> {visitSession.quickLead.state}
               <br />
               <strong>City:</strong> {visitSession.quickLead.city}
             </p>
@@ -4311,7 +4349,8 @@ function App() {
                   name: c.name,
                   city: c.city,
                   pincode: c.pincode,
-                  landmark: c.landmark,
+                  area: c.area,
+                  state: c.state,
                   phone: c.phone,
                   lat: c.lat,
                   lng: c.lng,
@@ -5930,7 +5969,7 @@ function App() {
                       <th>Category</th>
                       <th>Phone</th>
                       <th>City</th>
-                      <th>Pincode & Landmark</th>
+                      <th>Pincode & Area</th>
                       {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
                       <th>Achievement</th>
                       <th>Past Purchases</th>
@@ -5969,7 +6008,7 @@ function App() {
                           <td className="customersCompactCell">{item.phone}</td>
                           <td className="customersCompactCell">{item.city}</td>
                           <td className="customersCompactCell" style={{ maxWidth: '200px', whiteSpace: 'normal' }}>
-                            {item.landmark ? `${item.landmark}${item.pincode ? ` - ${item.pincode}` : ''}` : <span className="customerEmptyChip">—</span>}
+                            {item.area ? `${item.area}` : <span className="customerEmptyChip">—</span>}
                           </td>
                           
                           {activeDynamicFields.map((field) => {
