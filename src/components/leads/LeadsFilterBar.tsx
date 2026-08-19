@@ -126,7 +126,7 @@ export function LeadsFilterBar({ filters, onChange, salesmen, cities }: LeadsFil
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginLeft: '12px' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>Next Follow-up Date:</span>
           <select
             value={filters.nextFollowupDateRange || 'all'}

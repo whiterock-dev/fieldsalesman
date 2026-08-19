@@ -190,7 +190,7 @@ export const LeadsPage = React.memo(function LeadsPage({
   )
 
   return (
-    <section className="panel" style={{ padding: '24px 32px', backgroundColor: '#f8fafc', minHeight: '100%' }}>
+    <section className="panel" style={{ padding: 'clamp(16px, 4vw, 32px)', backgroundColor: '#f8fafc', minHeight: '100%' }}>
       <LeadsFilterBar 
         filters={filters} 
         onChange={setFilters} 
@@ -198,7 +198,7 @@ export const LeadsPage = React.memo(function LeadsPage({
         cities={cities}
       />
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="4"></circle></svg>
@@ -217,8 +217,9 @@ export const LeadsPage = React.memo(function LeadsPage({
       </div>
 
       <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-        <table className="dataTable" style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
-          <thead>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="dataTable" style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse', minWidth: '800px' }}>
+            <thead>
             <tr style={{ backgroundColor: '#f8fafc', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>
               <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: 600 }}>Customer</th>
               <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: 600 }}>Status</th>
@@ -300,6 +301,7 @@ export const LeadsPage = React.memo(function LeadsPage({
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {isAddOpen && (

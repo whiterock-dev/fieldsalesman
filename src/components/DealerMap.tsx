@@ -76,7 +76,8 @@ type CustomerPoint = {
   salesmanName?: string
   assignedSalesmanId?: string
   pincode?: string
-  landmark?: string
+  area?: string
+  state?: string
   phone?: string
   lastVisitDate?: string
 }
@@ -285,7 +286,7 @@ export function DealerMap({
                   <br />
                 </span>
               ) : null}
-              {c.landmark ? <>{c.landmark}<br /></> : null}
+              {c.area ? <>{c.area}{c.state ? `, ${c.state}` : ''}<br /></> : null}
               {c.city}{c.pincode ? ` - ${c.pincode}` : ''}
               <br />
               {c.phone ? <span style={{ fontSize: '0.9em' }}>Phone: {c.phone}<br /></span> : null}
