@@ -190,6 +190,8 @@ type DealerMapProps = {
   center?: [number, number]
   zoom?: number
   className?: string
+  onVisitCustomer?: (customerId: string) => void
+  canVisitCustomer?: (assignedSalesmanId?: string) => boolean
 }
 
 function salesmanNameForId(salesmen: SalesmanRef[] | undefined, id: string | undefined) {
@@ -204,6 +206,8 @@ export function DealerMap({
   center = [20.5937, 78.9629],
   zoom = 5,
   className = '',
+  onVisitCustomer,
+  canVisitCustomer,
 }: DealerMapProps) {
   const colors = useMemo(() => salesmanColorMap(salesmen ?? []), [salesmen])
 
@@ -304,10 +308,21 @@ export function DealerMap({
                   href={`https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lng}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ display: 'inline-block', width: '100%', textAlign: 'center', padding: '6px 12px', fontSize: '0.9em', background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '4px', textDecoration: 'none', fontWeight: 600, boxSizing: 'border-box' }}
+                  style={{ display: 'inline-block', width: '100%', textAlign: 'center', padding: '6px 12px', fontSize: '0.9em', background: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '4px', textDecoration: 'none', fontWeight: 600, boxSizing: 'border-box', marginBottom: '8px' }}
                 >
                   Get Directions
                 </a>
+                {onVisitCustomer && canVisitCustomer?.(c.assignedSalesmanId) ? (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      onVisitCustomer(c.id)
+                    }}
+                    style={{ display: 'inline-block', width: '100%', textAlign: 'center', padding: '6px 12px', fontSize: '0.9em', background: '#10b981', color: '#ffffff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, boxSizing: 'border-box' }}
+                  >
+                    Visit
+                  </button>
+                ) : null}
               </div>
             </Popup>
           </Marker>
