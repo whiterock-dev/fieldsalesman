@@ -4360,6 +4360,19 @@ function App() {
                 }))}
                 livePoints={mapLivePoints}
                 salesmen={mapVisibleSalesmen}
+                onVisitCustomer={(customerId) => {
+                  const cust = filteredMapCustomers.find((c) => c.id === customerId)
+                  if (cust) {
+                    setVisitCustomerSearch(`${cust.name} (${cust.city})`)
+                  }
+                  setSelectedCustomerId(customerId)
+                  setActiveView('add_visit')
+                  syncNavToLocation('add_visit')
+                }}
+                canVisitCustomer={(assignedSalesmanId) => {
+                  if (role !== 'salesman' && role !== 'super_salesman') return false
+                  return assignedSalesmanId === activeSalesmanId
+                }}
               />
             </Suspense>
           </section>
