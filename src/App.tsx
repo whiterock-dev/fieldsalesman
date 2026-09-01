@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { lookup as pincodeLookup } from 'india-pincode-lookup'
+import { lookupPincode as postPincodeLookup } from 'india-post-pincode'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { LoginScreen } from './components/LoginScreen'
@@ -1065,7 +1066,7 @@ function App() {
         // Find areas (officeNames)
         const areas = Array.from(new Set(results.map((r: any) => r.officeName).filter(Boolean))) as string[]
         setQuickLeadAreaOptions(areas)
-        if (areas.length > 0 && !quickLeadArea) setQuickLeadArea(areas[0])
+        setQuickLeadArea(prev => prev || (areas.length > 0 ? areas[0] : ''))
         setQuickLeadState(results[0].stateName || '')
 
         // Find the best match, fallback to districtName or taluk
@@ -1084,16 +1085,36 @@ function App() {
           }
         }
       } else {
-        setQuickLeadAreaOptions([])
-        setQuickLeadCityId('')
-        setQuickLeadCityName('')
+        // Fallback to india-post-pincode
+        const postResult = postPincodeLookup(parseInt(quickLeadPincode.trim(), 10))
+        if (postResult) {
+          setQuickLeadAreaOptions([])
+          setQuickLeadState(postResult.state || '')
+          
+          const resolvedName = postResult.district
+          if (resolvedName) {
+            const existingCity = cities.find(c => c.name.toLowerCase() === resolvedName.toLowerCase())
+            if (existingCity) {
+              setQuickLeadCityId(existingCity.id)
+              setQuickLeadCityName(existingCity.name)
+            } else {
+              setQuickLeadCityId('')
+              setQuickLeadCityName(resolvedName)
+            }
+          }
+        } else {
+          setQuickLeadAreaOptions([])
+          setQuickLeadState('')
+          // Do not clear cityId or cityName so user can manually select it
+        }
       }
     } else if (selectedCustomerId === 'new' && quickLeadPincode.trim().length < 6) {
       setQuickLeadAreaOptions([])
       setQuickLeadCityId('')
       setQuickLeadCityName('')
+      setQuickLeadState('')
     }
-  }, [quickLeadPincode, cities, selectedCustomerId, quickLeadArea])
+  }, [quickLeadPincode, cities, selectedCustomerId])
 
   useEffect(() => {
     if (!supabase || !authSession?.user) return

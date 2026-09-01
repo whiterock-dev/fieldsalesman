@@ -15,6 +15,7 @@
     "@supabase/supabase-js": "^2.99.2",
     "firebase": "^12.16.0",
     "india-pincode-lookup": "^1.0.3",
+    "india-post-pincode": "^1.0.0",
     "leaflet": "^1.9.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

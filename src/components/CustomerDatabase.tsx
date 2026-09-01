@@ -17,6 +17,7 @@ import { OrderHistoryDialog } from './orders/OrderHistoryDialog'
 import { getProductMasterList, formatDDMMYYYY } from './orders/ordersApi'
 import { CustomerLeadsDialog } from './leads/CustomerLeadsDialog'
 import { lookup as pincodeLookup } from 'india-pincode-lookup'
+import { lookupPincode as postPincodeLookup } from 'india-post-pincode'
 
 /* ───────────── Local types (mirrors App.tsx – avoids circular imports) ───────────── */
 
@@ -1056,7 +1057,25 @@ export function CustomerDatabase({
                               next.area = areas[0]
                             }
                           } else {
-                            setEditAreaOptions([])
+                            const postResult = postPincodeLookup(parseInt(val, 10))
+                            if (postResult) {
+                              setEditAreaOptions([])
+                              next.state = postResult.state || ''
+                              
+                              const resolvedName = postResult.district
+                              if (resolvedName) {
+                                const existingCity = cities.find(c => c.name.toLowerCase() === resolvedName.toLowerCase())
+                                if (existingCity) {
+                                  next.cityId = existingCity.id
+                                  next.city = existingCity.name
+                                } else {
+                                  next.cityId = ''
+                                  next.city = resolvedName
+                                }
+                              }
+                            } else {
+                              setEditAreaOptions([])
+                            }
                           }
                         } else if (val.length < 6) {
                           setEditAreaOptions([])
