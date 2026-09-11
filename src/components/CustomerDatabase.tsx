@@ -425,7 +425,7 @@ export function CustomerDatabase({
   /* ── CSV Template & Import ── */
   const handleDownloadTemplate = useCallback(() => {
     const headers = [
-      'Customer Name', 'Mobile Number', 'City', 'Pincode', 'Area', 'State',
+      'Customer Name', 'Category', 'Mobile Number', 'City', 'Pincode', 'Area', 'State',
       ...activeDynamicFields.map(f => f.label)
     ]
     exportToCsv('customer_import_template', headers, [])
@@ -459,6 +459,19 @@ export function CustomerDatabase({
           const existing = customers.find(c => String(c.phone || '').replace(/\D/g, '').slice(-10) === phone)
           const dynamicFieldsData: Record<string, string> = {}
           let rowInvalid = false
+
+          // Validate Category
+          const rawCategory = row['Category']?.trim().toUpperCase()
+          let parsedCategory: 'A' | 'B' | 'C' | 'D' | 'E' | null = null
+          if (rawCategory) {
+            if (['A', 'B', 'C', 'D', 'E'].includes(rawCategory)) {
+              parsedCategory = rawCategory as 'A' | 'B' | 'C' | 'D' | 'E'
+            } else {
+              rowInvalid = true
+              skippedFieldCount++
+            }
+          }
+
           for (const f of activeDynamicFields) {
             const rawVal = row[f.label]?.trim()
             if (!rawVal) continue
@@ -485,6 +498,7 @@ export function CustomerDatabase({
             const newArea = row['Area'] || existing.area
             const newState = row['State'] || existing.state
             const newWhatsapp = existing.whatsapp || phone
+            const newCategory = rawCategory ? parsedCategory : existing.category
             const newDynamicFields = { ...(existing.dynamicFields || {}), ...dynamicFieldsData }
 
             // Track changes for audit log
@@ -495,6 +509,7 @@ export function CustomerDatabase({
             if (newArea !== existing.area) changedFields['Area'] = { old: existing.area, new: newArea }
             if (newState !== existing.state) changedFields['State'] = { old: existing.state, new: newState }
             if (newWhatsapp !== existing.whatsapp) changedFields['WhatsApp'] = { old: existing.whatsapp, new: newWhatsapp }
+            if (newCategory !== existing.category) changedFields['Category'] = { old: existing.category || '—', new: newCategory || '—' }
 
             for (const f of activeDynamicFields) {
               const oldVal = existing.dynamicFields?.[f.key] ?? ''
@@ -522,6 +537,7 @@ export function CustomerDatabase({
               state: newState,
               whatsapp: newWhatsapp,
               assigned_salesman_id: existing.assignedSalesmanId,
+              category: newCategory,
               lat: existing.lat,
               lng: existing.lng,
               dynamic_fields: newDynamicFields,
@@ -538,6 +554,7 @@ export function CustomerDatabase({
               area: row['Area'] || '',
               state: row['State'] || '',
               whatsapp: phone,
+              category: parsedCategory,
               assigned_salesman_id: activeSalesmanId || currentUserId,
               lat: 0,
               lng: 0,
@@ -558,7 +575,7 @@ export function CustomerDatabase({
           if (auditErr) console.warn('CSV bulk audit write failed:', auditErr)
         }
 
-        const skippedNote = skippedFieldCount > 0 ? ` (${skippedFieldCount} row${skippedFieldCount > 1 ? 's' : ''} dropped due to invalid dropdown values)` : ''
+        const skippedNote = skippedFieldCount > 0 ? ` (${skippedFieldCount} row${skippedFieldCount > 1 ? 's' : ''} dropped due to invalid Category or dropdown values)` : ''
         setCsvMessage(`Successfully imported! Added: ${newCount}, Updated: ${updateCount}.${skippedNote}`)
         setTimeout(() => {
           setCsvUploadOpen(false)
