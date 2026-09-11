@@ -397,7 +397,7 @@ export function CustomerDatabase({
   /* ── CSV export ── */
   const handleExportCsv = useCallback(() => {
     const headers = [
-      'Customer Name', 'Mobile Number', 'City', 'Pincode', 'Area', 'State', 'Salesman',
+      'Customer Name', 'Category', 'Mobile Number', 'City', 'Pincode', 'Area', 'State', 'Salesman',
       ...activeDynamicFields.map(f => f.label),
       'Achievement',
       'Past Purchase History',
@@ -406,6 +406,7 @@ export function CustomerDatabase({
     ]
     const rows = filtered.map(c => [
       c.name,
+      c.category || '—',
       c.phone,
       c.city,
       c.pincode,

@@ -198,7 +198,7 @@ type NavId =
   | 'admin_leads'
   | 'field_leads'
 
-const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) => boolean }[] = [
+const NAV_ITEMS: { id: NavId; label: string | ((r: Role) => string); section: string; show: (r: Role) => boolean }[] = [
   { id: 'dashboard', label: 'Dashboard', section: 'Overview', show: (r) => r !== 'salesman' },
   { id: 'map', label: 'Map', section: 'Overview', show: () => true },
   {
@@ -214,7 +214,7 @@ const NAV_ITEMS: { id: NavId; label: string; section: string; show: (r: Role) =>
   { id: 'salesman_overdue', label: 'Overdue Follow-ups', section: 'Field', show: (r) => r === 'salesman' },
   { id: 'admin_overdue', label: 'Overdue Follow-ups', section: 'Admin', show: (r) => r !== 'salesman' },
   { id: 'admin_meetings', label: 'Meeting Responses', section: 'Admin', show: () => true },
-  { id: 'admin_kpi', label: 'KPI Table', section: 'Admin', show: (r) => r !== 'salesman' },
+  { id: 'admin_kpi', label: (r) => (r === 'owner' || r === 'sub_admin' ? 'KPI and Summary' : 'KPI Table'), section: 'Admin', show: (r) => r !== 'salesman' },
   { id: 'admin_customers', label: 'Customer Database', section: 'Admin', show: (r) => r === 'owner' || r === 'sub_admin' || r === 'super_salesman' },
   { id: 'admin_orders', label: 'Customer Orders', section: 'Admin', show: (r) => r === 'owner' || r === 'sub_admin' || r === 'super_salesman' },
   { id: 'admin_leads', label: 'Lead Management', section: 'Admin', show: (r) => r === 'owner' || r === 'sub_admin' || r === 'super_salesman' },
@@ -668,6 +668,9 @@ function App() {
   const [kpiCustomStartDate, setKpiCustomStartDate] = useState('')
   const [kpiCustomEndDate, setKpiCustomEndDate] = useState('')
   const [kpiSalesmanFilter, setKpiSalesmanFilter] = useState('all')
+  const [kpiActiveTab, setKpiActiveTab] = useState<'kpi_table' | 'salesmen_summary'>('kpi_table')
+  const [summarySortColumn, setSummarySortColumn] = useState('totalVisits')
+  const [summarySortDir, setSummarySortDir] = useState<'asc' | 'desc'>('desc')
   const [activeView, setActiveView] = useState<NavId>(parseNavFromLocation)
   const [inviteSourceReady, setInviteSourceReady] = useState(() => !supabaseEnabled)
   const watchIdRef = useRef<number | null>(null)
@@ -1810,6 +1813,103 @@ function App() {
     })
   }, [kpiDateRangeType, kpiCustomStartDate, kpiCustomEndDate, kpiRows, kpiSalesmanFilter])
 
+  const salesmenSummaryRows = useMemo(() => {
+    const relevantSalesmen = salesmen.filter(s => kpiSalesmanFilter === 'all' || s.id === kpiSalesmanFilter)
+    
+    const rows = relevantSalesmen.map(s => {
+      const salesmanRows = filteredKpiRows.filter(r => r.salesmanId === s.id)
+      
+      let pendingOnboarding = 0
+      let existing = 0
+      let activeDays = 0
+      
+      for (const r of salesmanRows) {
+        pendingOnboarding += r.firstTimeVisits
+        existing += r.existingDealerVisits
+        if (r.visitCount > 0) {
+          activeDays += 1
+        }
+      }
+      
+      const totalVisits = pendingOnboarding + existing
+      let pctStr = '—'
+      if (existing > 0) {
+        pctStr = `${Math.round((pendingOnboarding / existing) * 100)}%`
+      }
+      
+      return {
+        salesmanId: s.id,
+        salesmanName: s.name,
+        pendingOnboarding,
+        existing,
+        totalVisits,
+        activeDays,
+        pctStr,
+        pctValue: existing > 0 ? (pendingOnboarding / existing) : -1
+      }
+    })
+
+    rows.sort((a, b) => {
+      let valA: string | number = a.totalVisits
+      let valB: string | number = b.totalVisits
+      if (summarySortColumn === 'salesmanName') {
+        valA = a.salesmanName.toLowerCase()
+        valB = b.salesmanName.toLowerCase()
+      } else if (summarySortColumn === 'pendingOnboarding') {
+        valA = a.pendingOnboarding
+        valB = b.pendingOnboarding
+      } else if (summarySortColumn === 'existing') {
+        valA = a.existing
+        valB = b.existing
+      } else if (summarySortColumn === 'totalVisits') {
+        valA = a.totalVisits
+        valB = b.totalVisits
+      } else if (summarySortColumn === 'activeDays') {
+        valA = a.activeDays
+        valB = b.activeDays
+      } else if (summarySortColumn === 'pctStr') {
+        valA = a.pctValue
+        valB = b.pctValue
+      }
+      
+      if (valA < valB) return summarySortDir === 'asc' ? -1 : 1
+      if (valA > valB) return summarySortDir === 'asc' ? 1 : -1
+      return 0
+    })
+    return rows
+  }, [filteredKpiRows, salesmen, kpiSalesmanFilter, summarySortColumn, summarySortDir])
+
+  const handleExportSalesmenSummary = useCallback(() => {
+    const headers = [
+      'Salesman', 'Pending Onboarding', 'Existing', 'Onboarding vs Existing (%)', 'Total Visits', 'Active Days'
+    ]
+    const csvRows = salesmenSummaryRows.map(r => [
+      r.salesmanName,
+      r.pendingOnboarding.toString(),
+      r.existing.toString(),
+      r.pctStr,
+      r.totalVisits.toString(),
+      r.activeDays.toString()
+    ])
+    
+    const totalPending = salesmenSummaryRows.reduce((sum, r) => sum + r.pendingOnboarding, 0)
+    const totalExisting = salesmenSummaryRows.reduce((sum, r) => sum + r.existing, 0)
+    const totalVisits = salesmenSummaryRows.reduce((sum, r) => sum + r.totalVisits, 0)
+    const totalActiveDays = salesmenSummaryRows.reduce((sum, r) => sum + r.activeDays, 0)
+    const totalPctStr = totalExisting > 0 ? `${Math.round((totalPending / totalExisting) * 100)}%` : '—'
+    
+    csvRows.push([
+      'Team Total',
+      totalPending.toString(),
+      totalExisting.toString(),
+      totalPctStr,
+      totalVisits.toString(),
+      totalActiveDays.toString()
+    ])
+
+    exportToCsv('salesmen_summary', headers, csvRows)
+  }, [salesmenSummaryRows])
+
   const dedupedCustomers = useMemo(() => {
     const seen = new Map<string, Customer>()
     for (const c of customers) {
@@ -2226,10 +2326,10 @@ function App() {
     return [...sections.entries()]
   }, [role])
 
-  const activeViewLabel = useMemo(
-    () => NAV_ITEMS.find((item) => item.id === activeView)?.label ?? activeView,
-    [activeView],
-  )
+  const activeViewLabel = useMemo(() => {
+    const label = NAV_ITEMS.find((item) => item.id === activeView)?.label ?? activeView
+    return typeof label === 'function' ? label(role) : label
+  }, [activeView, role])
 
   const stopVisitCamera = useCallback(() => {
     visitCameraStreamRef.current?.getTracks().forEach((track) => track.stop())
@@ -5521,10 +5621,63 @@ function App() {
             ) : null}
           </section>
         )
-      case 'admin_kpi':
+      case 'admin_kpi': {
+        const teamTotalPending = salesmenSummaryRows.reduce((sum, r) => sum + r.pendingOnboarding, 0)
+        const teamTotalExisting = salesmenSummaryRows.reduce((sum, r) => sum + r.existing, 0)
+        const teamTotalVisits = salesmenSummaryRows.reduce((sum, r) => sum + r.totalVisits, 0)
+        const teamTotalActiveDays = salesmenSummaryRows.reduce((sum, r) => sum + r.activeDays, 0)
+        const teamTotalPctStr = teamTotalExisting > 0 ? `${Math.round((teamTotalPending / teamTotalExisting) * 100)}%` : '—'
+
+        const toggleSummarySort = (col: string) => {
+          if (summarySortColumn === col) {
+            setSummarySortDir(prev => prev === 'asc' ? 'desc' : 'asc')
+          } else {
+            setSummarySortColumn(col)
+            setSummarySortDir('desc')
+          }
+        }
+        
+        const SortIcon = ({ col }: { col: string }) => {
+          if (summarySortColumn !== col) return <span style={{ opacity: 0.3, marginLeft: 4 }}>↕</span>
+          return <span style={{ marginLeft: 4 }}>{summarySortDir === 'asc' ? '↑' : '↓'}</span>
+        }
+
         return (
           <section className="panel">
-            <h2>KPI table</h2>
+            <div className="rowBetween" style={{ alignItems: 'center', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
+                <h2 style={{ margin: 0 }}>KPI & Summary</h2>
+                <div className="tabs" style={{ display: 'flex', gap: '1rem' }}>
+                  <button
+                    type="button"
+                    className={`tabBtn ${kpiActiveTab === 'kpi_table' ? 'active' : ''}`}
+                    onClick={() => setKpiActiveTab('kpi_table')}
+                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: kpiActiveTab === 'kpi_table' ? '2px solid var(--accent)' : '2px solid transparent', cursor: 'pointer', fontWeight: kpiActiveTab === 'kpi_table' ? 'bold' : 'normal', color: 'var(--text)' }}
+                  >
+                    KPI Table
+                  </button>
+                  {(role === 'owner' || role === 'sub_admin') && (
+                    <button
+                      type="button"
+                      className={`tabBtn ${kpiActiveTab === 'salesmen_summary' ? 'active' : ''}`}
+                      onClick={() => setKpiActiveTab('salesmen_summary')}
+                      style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: kpiActiveTab === 'salesmen_summary' ? '2px solid var(--accent)' : '2px solid transparent', cursor: 'pointer', fontWeight: kpiActiveTab === 'salesmen_summary' ? 'bold' : 'normal', color: 'var(--text)' }}
+                    >
+                      Salesmen Summary
+                    </button>
+                  )}
+                </div>
+              </div>
+              {kpiActiveTab === 'salesmen_summary' && (
+                <button type="button" className="secondary" onClick={handleExportSalesmenSummary}>
+                  <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: 6, verticalAlign: 'text-bottom' }}>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Export CSV
+                </button>
+              )}
+            </div>
+            
             <article className="card">
               <div className="rowBetween">
                 <h3>Filters</h3>
@@ -5579,46 +5732,116 @@ function App() {
                 </div>
               </div>
               <div className="scrollArea">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Salesman</th>
-                      <th>Total Visits</th>
-                      <th>Pending on-boarding (New Visit)</th>
-                      <th>Existing Dealer Visits</th>
-                      <th>First meeting</th>
-                      <th>Last meeting</th>
-                      <th>Total working hrs</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredKpiRows.length === 0 ? (
+                {kpiActiveTab === 'kpi_table' ? (
+                  <table>
+                    <thead>
                       <tr>
-                        <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
-                          No KPI data available for selected filters.
-                        </td>
+                        <th>Date</th>
+                        <th>Salesman</th>
+                        <th>Total Visits</th>
+                        <th>Pending on-boarding (New Visit)</th>
+                        <th>Existing Dealer Visits</th>
+                        <th>First meeting</th>
+                        <th>Last meeting</th>
+                        <th>Total working hrs</th>
                       </tr>
-                    ) : (
-                      filteredKpiRows.map((item) => (
-                        <tr key={`${item.salesmanId}-${item.date}`}>
-                          <td>{formatDate(item.date)}</td>
-                          <td>{item.salesmanName}</td>
-                          <td>{item.visitCount}</td>
-                          <td>{item.firstTimeVisits}</td>
-                          <td>{item.existingDealerVisits}</td>
-                          <td>{item.firstVisitTime}</td>
-                          <td>{item.lastVisitTime}</td>
-                          <td>{item.totalWorkingHours}</td>
+                    </thead>
+                    <tbody>
+                      {filteredKpiRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
+                            No KPI data available for selected filters.
+                          </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        filteredKpiRows.map((item) => (
+                          <tr key={`${item.salesmanId}-${item.date}`}>
+                            <td>{formatDate(item.date)}</td>
+                            <td>{item.salesmanName}</td>
+                            <td>{item.visitCount}</td>
+                            <td>{item.firstTimeVisits}</td>
+                            <td>{item.existingDealerVisits}</td>
+                            <td>{item.firstVisitTime}</td>
+                            <td>{item.lastVisitTime}</td>
+                            <td>{item.totalWorkingHours}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th onClick={() => toggleSummarySort('salesmanName')} style={{ cursor: 'pointer' }}>
+                          Salesman <SortIcon col="salesmanName" />
+                        </th>
+                        <th onClick={() => toggleSummarySort('pendingOnboarding')} style={{ cursor: 'pointer' }}>
+                          Pending Onboarding <SortIcon col="pendingOnboarding" />
+                        </th>
+                        <th onClick={() => toggleSummarySort('existing')} style={{ cursor: 'pointer' }}>
+                          Existing <SortIcon col="existing" />
+                        </th>
+                        <th onClick={() => toggleSummarySort('pctStr')} style={{ cursor: 'pointer' }}>
+                          Onboarding vs Existing (%) <SortIcon col="pctStr" />
+                        </th>
+                        <th onClick={() => toggleSummarySort('totalVisits')} style={{ cursor: 'pointer' }}>
+                          Total Visits <SortIcon col="totalVisits" />
+                        </th>
+                        <th onClick={() => toggleSummarySort('activeDays')} style={{ cursor: 'pointer' }}>
+                          Active Days <SortIcon col="activeDays" />
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {salesmenSummaryRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
+                            No salesmen available for selected filters.
+                          </td>
+                        </tr>
+                      ) : (
+                        <>
+                          {salesmenSummaryRows.map((item) => (
+                            <tr key={item.salesmanId}>
+                              <td>
+                                <button 
+                                  type="button" 
+                                  className="linkBtn" 
+                                  onClick={() => {
+                                    setKpiSalesmanFilter(item.salesmanId)
+                                    setKpiActiveTab('kpi_table')
+                                  }}
+                                  style={{ border: 'none', background: 'none', padding: 0, color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline' }}
+                                >
+                                  {item.salesmanName}
+                                </button>
+                              </td>
+                              <td>{item.pendingOnboarding}</td>
+                              <td>{item.existing}</td>
+                              <td>{item.pctStr}</td>
+                              <td>{item.totalVisits}</td>
+                              <td>{item.activeDays}</td>
+                            </tr>
+                          ))}
+                          <tr style={{ fontWeight: 'bold', backgroundColor: 'var(--bg2)' }}>
+                            <td>Team Total</td>
+                            <td>{teamTotalPending}</td>
+                            <td>{teamTotalExisting}</td>
+                            <td>{teamTotalPctStr}</td>
+                            <td>{teamTotalVisits}</td>
+                            <td>{teamTotalActiveDays}</td>
+                          </tr>
+                        </>
+                      )}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </article>
           </section>
         )
+      }
       case 'field_followups':
         return (
           <section className="panel">
@@ -6476,7 +6699,7 @@ function App() {
                     setMobileNavOpen(false)
                   }}
                 >
-                  {item.label}
+                  {typeof item.label === 'function' ? item.label(role) : item.label}
                   {(item.id === 'admin_leads' || item.id === 'field_leads') && lostLeadsActionCount > 0 && (
                     <span style={{ marginLeft: '8px', backgroundColor: '#ef4444', color: '#fff', fontSize: '11px', fontWeight: 700, padding: '2px 6px', borderRadius: '12px' }}>
                       {lostLeadsActionCount}
