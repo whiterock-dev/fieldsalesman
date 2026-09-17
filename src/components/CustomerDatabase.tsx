@@ -16,6 +16,7 @@ import type { CityMaster } from '../App'
 import { OrderHistoryDialog } from './orders/OrderHistoryDialog'
 import { getProductMasterList, formatDDMMYYYY } from './orders/ordersApi'
 import { CustomerLeadsDialog } from './leads/CustomerLeadsDialog'
+import { BulkUpdateCustomerTypeModal } from './BulkUpdateCustomerTypeModal'
 import { lookup as pincodeLookup } from 'india-pincode-lookup'
 import { lookupPincode as postPincodeLookup } from 'india-post-pincode'
 
@@ -63,6 +64,7 @@ export type CustomerDatabaseProps = {
   cities: CityMaster[]
   customers: CustomerRecord[]
   salesmen: SalesmanInfo[]
+  activeSalesmen: SalesmanInfo[]
   formFields: DynamicField[]
   profileNameById: Map<string, string>
   role: Role
@@ -132,6 +134,7 @@ export function CustomerDatabase({
   cities,
   customers,
   salesmen,
+  activeSalesmen,
   formFields,
   profileNameById,
   role,
@@ -221,6 +224,7 @@ export function CustomerDatabase({
 
   /* ── csv upload state ── */
   const [csvUploadOpen, setCsvUploadOpen] = useState(false)
+  const [bulkUpdateTypeOpen, setBulkUpdateTypeOpen] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [csvMessage, setCsvMessage] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -642,11 +646,10 @@ export function CustomerDatabase({
 
       const newSalesmanName = bulkAssignSalesmanId ? (profileNameById.get(bulkAssignSalesmanId) || bulkAssignSalesmanId) : 'Unassigned'
 
-      // Sync related records to the new salesman so they don't show up under the old salesman
+      // Sync only PENDING followups to the new salesman so they can complete them.
+      // We intentionally do NOT update past visits, meetings, or closed followups so the history remains credited to the previous salesman.
       if (bulkAssignSalesmanId) {
-        await supabase.from('followups').update({ salesman_id: bulkAssignSalesmanId }).in('customer_id', ids);
-        await supabase.from('meeting_responses').update({ salesman_id: bulkAssignSalesmanId, salesman_name: newSalesmanName }).in('customer_id', ids);
-        await supabase.from('visits').update({ salesman_id: bulkAssignSalesmanId }).in('customer_id', ids);
+        await supabase.from('followups').update({ salesman_id: bulkAssignSalesmanId }).in('customer_id', ids).eq('status', 'pending');
       }
 
       // Audit logs
@@ -761,6 +764,14 @@ export function CustomerDatabase({
             </svg>
             Upload CSV
           </button>
+          {customerTypeField && (
+            <button type="button" className="secondary cdExportBtn" onClick={() => setBulkUpdateTypeOpen(true)}>
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: 6 }}>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              Bulk Update Type
+            </button>
+          )}
           <button type="button" className="secondary cdExportBtn" onClick={handleExportCsv}>
             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: 6 }}>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -1151,7 +1162,7 @@ export function CustomerDatabase({
                       onChange={e => setEditForm(p => ({ ...p, assignedSalesmanId: e.target.value }))}
                     >
                       <option value="">— Select —</option>
-                      {salesmen.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      {activeSalesmen.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                   </label>
                 )}
@@ -1314,7 +1325,7 @@ export function CustomerDatabase({
                   onChange={e => setBulkAssignSalesmanId(e.target.value)}
                 >
                   <option value="">— Unassigned —</option>
-                  {salesmen.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  {activeSalesmen.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </label>
             </div>
@@ -1387,6 +1398,24 @@ export function CustomerDatabase({
         productMasterList={productMasterList}
         onDataChanged={onDataChanged}
       />
+
+      {/* ── Bulk Update Customer Type Modal ── */}
+      {customerTypeField && bulkUpdateTypeOpen && (
+        <BulkUpdateCustomerTypeModal
+          isOpen={bulkUpdateTypeOpen}
+          onClose={() => setBulkUpdateTypeOpen(false)}
+          customers={customers.map(c => ({
+            id: c.id,
+            name: c.name,
+            phone: c.phone || '',
+            dynamicFields: c.dynamicFields
+          }))}
+          customerTypeFieldKey={customerTypeField.key}
+          customerTypeOptions={customerTypeField.options || []}
+          supabase={supabase!}
+          onDataChanged={onDataChanged}
+        />
+      )}
     </section>
   )
 }

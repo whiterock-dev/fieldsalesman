@@ -54,12 +54,12 @@ async function resolveVisitPhotoSrc(client: SupabaseClient, stored: string): Pro
   return data.signedUrl
 }
 
-type TeamProfile = { id: string; fullName: string; role: Role; email?: string; phone?: string }
+type TeamProfile = { id: string; fullName: string; role: Role; email?: string; phone?: string; isActive?: boolean }
 type VisitType = 'New lead' | 'Existing customer' | 'Follow-up' | 'Collection' | 'Complaint'
 type VisitStatus = 'synced' | 'queued'
 type FollowUpStatus = 'pending' | 'in_progress' | 'closed'
 
-type Salesman = { id: string; name: string }
+type Salesman = { id: string; name: string; isActive?: boolean }
 type Customer = {
   id: string
   name: string
@@ -374,7 +374,7 @@ function AdminCitiesPanel({
 
   const handleToggle = async (id: string, currentStatus: boolean, cityName: string) => {
     const action = currentStatus ? 'DISABLE' : 'ENABLE'
-    if (!confirm(`Are you sure you want to ${action} the city: ${cityName}?\n\nIf disabled, salesmen will no longer be able to select this city for new leads.`)) return
+    if (!confirm(`Are you sure you want to ${action} the city: ${cityName}?\n\nIf disabled, allSalesmen will no longer be able to select this city for new leads.`)) return
 
     setLoading(true)
     const { error } = await supabase!.from('city_master').update({ is_active: !currentStatus }).eq('id', id)
@@ -559,7 +559,7 @@ function kpiTimeLabel(iso: string) {
   return `${hours}:${minutes}`;
 }
 
-function kpiFromVisits(visits: VisitRecord[], salesmen: Salesman[]): KpiRow[] {
+function kpiFromVisits(visits: VisitRecord[], allSalesmen: Salesman[]): KpiRow[] {
   // Pre-compute earliest visit timestamp per customer across entire history
   const earliestVisitByCustomer = new Map<string, string>()
   for (const v of visits) {
@@ -580,7 +580,7 @@ function kpiFromVisits(visits: VisitRecord[], salesmen: Salesman[]): KpiRow[] {
     const sorted = rows.slice().sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
     const firstIso = sorted[0].capturedAt
     const lastIso = sorted[sorted.length - 1].capturedAt
-    const salesmanName = salesmen.find((s) => s.id === salesmanId)?.name ?? rows[0].salesmanName
+    const salesmanName = allSalesmen.find((s) => s.id === salesmanId)?.name ?? rows[0].salesmanName
 
     // Classify visits: first-time (pending on-boarding) vs existing dealer
     let firstTimeVisits = 0
@@ -668,7 +668,7 @@ function App() {
   const [kpiCustomStartDate, setKpiCustomStartDate] = useState('')
   const [kpiCustomEndDate, setKpiCustomEndDate] = useState('')
   const [kpiSalesmanFilter, setKpiSalesmanFilter] = useState('all')
-  const [kpiActiveTab, setKpiActiveTab] = useState<'kpi_table' | 'salesmen_summary'>('kpi_table')
+  const [kpiActiveTab, setKpiActiveTab] = useState<'kpi_table' | 'allSalesmen_summary'>('kpi_table')
   const [summarySortColumn, setSummarySortColumn] = useState('totalVisits')
   const [summarySortDir, setSummarySortDir] = useState<'asc' | 'desc'>('desc')
   const [activeView, setActiveView] = useState<NavId>(parseNavFromLocation)
@@ -715,7 +715,7 @@ function App() {
   const [meetingSearchFilterDebounced, setMeetingSearchFilterDebounced] = useState('')
   const [visitHistoryPage, setVisitHistoryPage] = useState(1)
   const [visitHistoryPageSize, setVisitHistoryPageSize] = useState(100)
-  
+
   useEffect(() => {
     setVisitHistoryPage(1)
   }, [visitHistoryDateFrom, visitHistoryDateTo, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter])
@@ -734,7 +734,7 @@ function App() {
   const [meetingPriorityFilter, setMeetingPriorityFilter] = useState<'all' | FollowUp['priority']>('all')
   const [meetingPage, setMeetingPage] = useState(1)
   const [meetingPageSize, setMeetingPageSize] = useState(100)
-  
+
   useEffect(() => {
     setMeetingPage(1)
   }, [meetingSearchFilterDebounced, meetingDateFilter, meetingSalesmanFilter, meetingCategoryFilter, meetingPriorityFilter])
@@ -788,7 +788,7 @@ function App() {
     return () => window.clearTimeout(timeoutId)
   }, [myCustomersNameFilter, salesmanFollowUpCustomerFilter, visitHistoryClientFilter, meetingSearchFilter])
 
-  const salesmen = useMemo(
+  const allSalesmen = useMemo(
     () =>
       teamProfiles
         .filter((p) => {
@@ -798,9 +798,10 @@ function App() {
           }
           return true
         })
-        .map((p) => ({ id: p.id, name: p.fullName })),
+        .map((p) => ({ id: p.id, name: p.isActive === false ? `${p.fullName} (Inactive)` : p.fullName, isActive: p.isActive !== false })),
     [teamProfiles, invitedUsers],
   )
+  const activeSalesmen = useMemo(() => allSalesmen.filter(s => s.isActive), [allSalesmen])
 
 
   const accessAllowed = useMemo(() => {
@@ -830,7 +831,6 @@ function App() {
   const addableTeamRoles = useMemo(() => addableRolesFor(role), [role])
   const canInviteTeam = addableTeamRoles.length > 0
   const canSeeTeamDirectory = role === 'owner' || role === 'sub_admin' || role === 'super_salesman'
-  const canRemoveInvites = role === 'owner'
   const canResetPasswords = role === 'owner' || role === 'sub_admin'
 
   const allowedNavIds = useMemo(() => NAV_ITEMS.filter((item) => item.show(role)).map((item) => item.id), [role])
@@ -898,23 +898,23 @@ function App() {
     if (role === 'salesman' || role === 'super_salesman') return uid
     /** Owner / sub-admin record visits under their own profile id (same as logged-in account). */
     if (role === 'owner' || role === 'sub_admin') return uid
-    return salesmen[0]?.id ?? uid
-  }, [role, salesmen, authSession?.user?.id])
+    return allSalesmen[0]?.id ?? uid
+  }, [role, allSalesmen, authSession?.user?.id])
 
   const activeSalesman = useMemo(() => {
-    const fromField = salesmen.find((item) => item.id === activeSalesmanId)
+    const fromField = allSalesmen.find((item) => item.id === activeSalesmanId)
     if (fromField) return fromField
     const selfProfile = teamProfiles.find((p) => p.id === activeSalesmanId)
     if (selfProfile) return { id: selfProfile.id, name: selfProfile.fullName }
     const uid = authSession?.user?.id ?? ''
     const email = authSession?.user?.email
-    if (activeSalesmanId && (activeSalesmanId === uid || !salesmen.length)) {
+    if (activeSalesmanId && (activeSalesmanId === uid || !allSalesmen.length)) {
       return { id: activeSalesmanId, name: email ?? 'You' }
     }
-    return salesmen[0] ?? { id: uid, name: email ?? '—' }
-  }, [activeSalesmanId, salesmen, teamProfiles, authSession?.user?.id, authSession?.user?.email])
+    return allSalesmen[0] ?? { id: uid, name: email ?? '—' }
+  }, [activeSalesmanId, allSalesmen, teamProfiles, authSession?.user?.id, authSession?.user?.email])
 
-  const mapColorBySalesmanId = useMemo(() => salesmanColorMap(salesmen), [salesmen])
+  const mapColorBySalesmanId = useMemo(() => salesmanColorMap(allSalesmen), [allSalesmen])
 
   useEffect(() => {
     if (!addableTeamRoles.length) return
@@ -1093,7 +1093,7 @@ function App() {
         if (postResult) {
           setQuickLeadAreaOptions([])
           setQuickLeadState(postResult.state || '')
-          
+
           const resolvedName = postResult.district
           if (resolvedName) {
             const existingCity = cities.find(c => c.name.toLowerCase() === resolvedName.toLowerCase())
@@ -1225,7 +1225,7 @@ function App() {
         { data: leadsData, error: leadsErr },
       ] = await Promise.all([
         sb.from('app_invites').select('email, role, added_at').order('added_at', { ascending: true }),
-        sb.from('profiles').select('id, full_name, role, email, phone'),
+        sb.from('profiles').select('id, full_name, role, email, phone, is_active'),
         fetchAllQuery(() => sb.from('customers').select('*, city_master:city_id(name)', { count: 'exact' }).is('is_deleted', false).order('created_at', { ascending: false })),
         fetchAllQuery(() => sb.from('followups').select('*').is('is_deleted', false).order('due_date', { ascending: true })),
         fetchAllQuery(() => sb.from('visits').select('*', { count: 'exact' }).is('is_deleted', false).order('captured_at', { ascending: false })),
@@ -1333,6 +1333,7 @@ function App() {
             role: (r.role as Role) ?? 'salesman',
             email: rawEmail && typeof rawEmail === 'string' ? normalizeEmail(rawEmail) : undefined,
             phone: rawPhone && typeof rawPhone === 'string' ? rawPhone : undefined,
+            isActive: Boolean((r as any).is_active ?? true),
           }
         }),
       )
@@ -1585,7 +1586,7 @@ function App() {
       .map((item) => {
         const customer = customerById.get(item.customerId)
         const lastVisit = latestVisitByCustomerId.get(item.customerId)
-        const salesmanName = salesmen.find((s) => s.id === item.salesmanId)?.name ?? 'Salesman'
+        const salesmanName = allSalesmen.find((s) => s.id === item.salesmanId)?.name ?? 'Salesman'
         return {
           ...item,
           salesmanName,
@@ -1654,7 +1655,7 @@ function App() {
   )
 
   const overdueSummaryStats = useMemo(() => {
-    const stats = salesmen.map(sm => {
+    const stats = allSalesmen.map(sm => {
       const smFollowUps = followUps.filter(f => f.salesmanId === sm.id && f.status !== 'closed' && !f.archived)
       const assigned = smFollowUps.length
       const dueToday = smFollowUps.filter(f => f.dueDate === todayIso).length
@@ -1671,7 +1672,7 @@ function App() {
       return overdueSummarySortDesc ? -diff : diff
     })
     return stats
-  }, [salesmen, followUps, todayIso, overdueSummarySortCol, overdueSummarySortDesc])
+  }, [allSalesmen, followUps, todayIso, overdueSummarySortCol, overdueSummarySortDesc])
   const followUpsDueTodayForSalesman = useMemo(
     () => pendingFollowUpsForSalesman.filter((item) => item.dueDate === todayIso),
     [pendingFollowUpsForSalesman, todayIso],
@@ -1779,7 +1780,7 @@ function App() {
     () => syncedVisits.filter((v) => v.capturedAt.slice(0, 10) === todayIso).length,
     [syncedVisits, todayIso],
   )
-  const kpiRows = useMemo(() => kpiFromVisits(visits, salesmen), [visits, salesmen])
+  const kpiRows = useMemo(() => kpiFromVisits(visits, allSalesmen), [visits, allSalesmen])
   const filteredKpiRows = useMemo(() => {
     const todayStr = new Date().toISOString().slice(0, 10)
 
@@ -1813,16 +1814,16 @@ function App() {
     })
   }, [kpiDateRangeType, kpiCustomStartDate, kpiCustomEndDate, kpiRows, kpiSalesmanFilter])
 
-  const salesmenSummaryRows = useMemo(() => {
-    const relevantSalesmen = salesmen.filter(s => kpiSalesmanFilter === 'all' || s.id === kpiSalesmanFilter)
-    
+  const allSalesmenSummaryRows = useMemo(() => {
+    const relevantSalesmen = allSalesmen.filter(s => kpiSalesmanFilter === 'all' || s.id === kpiSalesmanFilter)
+
     const rows = relevantSalesmen.map(s => {
       const salesmanRows = filteredKpiRows.filter(r => r.salesmanId === s.id)
-      
+
       let pendingOnboarding = 0
       let existing = 0
       let activeDays = 0
-      
+
       for (const r of salesmanRows) {
         pendingOnboarding += r.firstTimeVisits
         existing += r.existingDealerVisits
@@ -1830,13 +1831,13 @@ function App() {
           activeDays += 1
         }
       }
-      
+
       const totalVisits = pendingOnboarding + existing
       let pctStr = '—'
       if (existing > 0) {
         pctStr = `${Math.round((pendingOnboarding / existing) * 100)}%`
       }
-      
+
       return {
         salesmanId: s.id,
         salesmanName: s.name,
@@ -1871,19 +1872,19 @@ function App() {
         valA = a.pctValue
         valB = b.pctValue
       }
-      
+
       if (valA < valB) return summarySortDir === 'asc' ? -1 : 1
       if (valA > valB) return summarySortDir === 'asc' ? 1 : -1
       return 0
     })
     return rows
-  }, [filteredKpiRows, salesmen, kpiSalesmanFilter, summarySortColumn, summarySortDir])
+  }, [filteredKpiRows, allSalesmen, kpiSalesmanFilter, summarySortColumn, summarySortDir])
 
   const handleExportSalesmenSummary = useCallback(() => {
     const headers = [
       'Salesman', 'Pending Onboarding', 'Existing', 'Onboarding vs Existing (%)', 'Total Visits', 'Active Days'
     ]
-    const csvRows = salesmenSummaryRows.map(r => [
+    const csvRows = allSalesmenSummaryRows.map(r => [
       r.salesmanName,
       r.pendingOnboarding.toString(),
       r.existing.toString(),
@@ -1891,13 +1892,13 @@ function App() {
       r.totalVisits.toString(),
       r.activeDays.toString()
     ])
-    
-    const totalPending = salesmenSummaryRows.reduce((sum, r) => sum + r.pendingOnboarding, 0)
-    const totalExisting = salesmenSummaryRows.reduce((sum, r) => sum + r.existing, 0)
-    const totalVisits = salesmenSummaryRows.reduce((sum, r) => sum + r.totalVisits, 0)
-    const totalActiveDays = salesmenSummaryRows.reduce((sum, r) => sum + r.activeDays, 0)
+
+    const totalPending = allSalesmenSummaryRows.reduce((sum, r) => sum + r.pendingOnboarding, 0)
+    const totalExisting = allSalesmenSummaryRows.reduce((sum, r) => sum + r.existing, 0)
+    const totalVisits = allSalesmenSummaryRows.reduce((sum, r) => sum + r.totalVisits, 0)
+    const totalActiveDays = allSalesmenSummaryRows.reduce((sum, r) => sum + r.activeDays, 0)
     const totalPctStr = totalExisting > 0 ? `${Math.round((totalPending / totalExisting) * 100)}%` : '—'
-    
+
     csvRows.push([
       'Team Total',
       totalPending.toString(),
@@ -1907,8 +1908,8 @@ function App() {
       totalActiveDays.toString()
     ])
 
-    exportToCsv('salesmen_summary', headers, csvRows)
-  }, [salesmenSummaryRows])
+    exportToCsv('allSalesmen_summary', headers, csvRows)
+  }, [allSalesmenSummaryRows])
 
   const dedupedCustomers = useMemo(() => {
     const seen = new Map<string, Customer>()
@@ -2053,12 +2054,12 @@ function App() {
 
 
   const mapVisibleSalesmen = useMemo(() => {
-    if (role !== 'salesman') return salesmen
-    const mine = salesmen.find((item) => item.id === activeSalesman.id)
+    if (role !== 'salesman') return allSalesmen
+    const mine = allSalesmen.find((item) => item.id === activeSalesman.id)
     if (mine) return [mine]
     if (activeSalesman.id) return [{ id: activeSalesman.id, name: activeSalesman.name }]
     return []
-  }, [role, salesmen, activeSalesman.id, activeSalesman.name])
+  }, [role, allSalesmen, activeSalesman.id, activeSalesman.name])
 
   const visitHistoryRows = useMemo(() => {
     const rows = role === 'salesman' ? visits.filter((v) => v.salesmanId === activeSalesman.id) : visits
@@ -2106,13 +2107,13 @@ function App() {
         })
         : meetingResponses
     const seen = new Set<string>()
-    const activeNames = new Set(salesmen.map((s) => s.name.trim().toLowerCase()))
+    const activeNames = new Set(allSalesmen.map((s) => s.name.trim().toLowerCase()))
     for (const m of scopedRows) {
       const n = m.salesmanName.trim()
       if (n && (invitedUsers.length === 0 || activeNames.has(n.toLowerCase()))) seen.add(n)
     }
     return [...seen.values()].sort((a, b) => a.localeCompare(b))
-  }, [role, meetingResponses, visitById, myCustomerIds, myCustomerNames, salesmen, invitedUsers.length])
+  }, [role, meetingResponses, visitById, myCustomerIds, myCustomerNames, allSalesmen, invitedUsers.length])
   const filteredMeetingResponses = useMemo(
     () => {
       const roleScopedRows =
@@ -2671,7 +2672,7 @@ function App() {
     if (newLeadForm.dueDate < todayIso) return setMessage('Previous Follow-up date is not allowed. Please select today or a future date.')
     if (!activeSalesman) return setMessage('No active salesman context found.')
 
-    for (const field of activeDynamicFields) {
+    for (const field of activeDynamicFieldsForVisit) {
       if (field.required && !String(newLeadForm.dynamicData[field.key] ?? '').trim()) {
         return setMessage(`"${field.label}" is required.`)
       }
@@ -2741,8 +2742,8 @@ function App() {
       status: 'pending',
       archived: false,
       remarks: [
-        { 
-          date: new Date().toISOString(), 
+        {
+          date: new Date().toISOString(),
           note: newLeadForm.remarks.trim() || 'Follow-up from New Lead'
         }
       ],
@@ -2834,11 +2835,11 @@ function App() {
     if (updatedParam.dueDate < todayIso) {
       return setMessage('Previous Follow-up date is not allowed. Please select today or a future date.')
     }
-    
+
     const currentFollowUp = followUps.find(f => f.id === updatedParam.id)
     const currentRemarks = currentFollowUp && Array.isArray(currentFollowUp.remarks) ? currentFollowUp.remarks : []
-    const finalRemarks = updatedParam.newRemark?.trim() 
-      ? [{ date: new Date().toISOString(), note: `[Edited]: ${updatedParam.newRemark}` }, ...currentRemarks] 
+    const finalRemarks = updatedParam.newRemark?.trim()
+      ? [{ date: new Date().toISOString(), note: `[Edited]: ${updatedParam.newRemark}` }, ...currentRemarks]
       : currentRemarks
 
     const updated = {
@@ -3005,7 +3006,7 @@ function App() {
       city: quickLeadCityName,
       cityId: quickLeadCityId,
     }
-    
+
     if (selectedCustomerId !== 'new') {
       const selectedCustomer = customers.find((item) => item.id === selectedCustomerId)
       if (selectedCustomer) {
@@ -3541,23 +3542,23 @@ function App() {
     setInviteSuccessMessage(`Invited ${fullName} (${email}) as ${inviteRole.replace(/_/g, ' ')} (offline demo).`)
   }
 
-  const removeInvitedUser = (email: string) => {
-    if (role !== 'owner') return
-    const n = normalizeEmail(email)
-    if (supabase) {
-      void (async () => {
-        const { error } = await supabase.from('app_invites').delete().eq('email', n)
-        if (error) {
-          setMessage(`Could not remove invite: ${error.message}`)
-          return
-        }
-        setInvitedUsers((previous) => previous.filter((u) => normalizeEmail(u.email) !== n))
-        scheduleWorkspaceReloadRef.current?.()
-      })()
-      return
-    }
-    setInvitedUsers((previous) => previous.filter((u) => normalizeEmail(u.email) !== n))
-  }
+  // const removeInvitedUser = (email: string) => {
+  //   if (role !== 'owner') return
+  //   const n = normalizeEmail(email)
+  //   if (supabase) {
+  //     void (async () => {
+  //       const { error } = await supabase.from('app_invites').delete().eq('email', n)
+  //       if (error) {
+  //         setMessage(`Could not remove invite: ${error.message}`)
+  //         return
+  //       }
+  //       setInvitedUsers((previous) => previous.filter((u) => normalizeEmail(u.email) !== n))
+  //       scheduleWorkspaceReloadRef.current?.()
+  //     })()
+  //     return
+  //   }
+  //   setInvitedUsers((previous) => previous.filter((u) => normalizeEmail(u.email) !== n))
+  // }
 
   const addDynamicField = async () => {
     setMessage('')
@@ -3637,8 +3638,8 @@ function App() {
     if (!(role === 'owner' || role === 'sub_admin')) return
     setFormFields((previous) =>
       previous.map((item) =>
-        item.id === field.id ? { ...item, isDeleted: true, active: false } : item,
-      ),
+        item.key === field.key ? { ...item, isDeleted: true } : item
+      )
     )
     if (supabase && online) {
       const { error } = await supabase
@@ -3650,6 +3651,21 @@ function App() {
       } else {
         scheduleWorkspaceReloadRef.current?.()
       }
+    }
+  }
+
+  const toggleUserActive = async (profileId: string, currentStatus: boolean) => {
+    if (!supabase) return
+    if (!(role === 'owner' || role === 'sub_admin')) return
+
+    const action = currentStatus ? 'DEACTIVATE' : 'REACTIVATE'
+    if (!confirm(`Are you sure you want to ${action} this user?\n\nIf deactivated, they will not appear in assignment dropdowns or map filters, but their history will be preserved.`)) return
+
+    const { error } = await supabase.from('profiles').update({ is_active: !currentStatus }).eq('id', profileId)
+    if (error) {
+      alert(`Failed to update status: ${error.message}`)
+    } else {
+      setTeamProfiles((prev) => prev.map(p => p.id === profileId ? { ...p, isActive: !currentStatus } : p))
     }
   }
 
@@ -3688,7 +3704,7 @@ function App() {
       if (followUpDate && followUpDate < todayIso) {
         return failVisitSave('Previous Follow-up date is not allowed. Please select today or a future date.')
       }
-      for (const field of activeDynamicFields) {
+      for (const field of activeDynamicFieldsForVisit) {
         if (field.required && !String(dynamicData[field.key] ?? '').trim()) {
           return failVisitSave(`"${field.label}" is required.`)
         }
@@ -3991,6 +4007,10 @@ function App() {
         .sort((a, b) => a.order - b.order),
     [formFields],
   )
+  const activeDynamicFieldsForVisit = useMemo(
+    () => activeDynamicFields.filter(f => !['customer_type', 'customer type'].some(h => f.key.toLowerCase().includes(h) || f.label.toLowerCase().includes(h))),
+    [activeDynamicFields]
+  )
   const meetingRowsDetailed = useMemo(
     () => {
       let rows = filteredMeetingResponses.map((item) => {
@@ -4134,10 +4154,10 @@ function App() {
                     {quickLeadAreaOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                   </select>
                 ) : (
-                  <input 
+                  <input
                     placeholder="e.g. Near Station"
-                    value={quickLeadArea} 
-                    onChange={(event) => setQuickLeadArea(event.target.value)} 
+                    value={quickLeadArea}
+                    onChange={(event) => setQuickLeadArea(event.target.value)}
                   />
                 )}
               </label>
@@ -4187,13 +4207,13 @@ function App() {
               <option value="high">High</option>
             </select>
           </label>
-          {activeDynamicFields.length ? (
+          {activeDynamicFieldsForVisit.length ? (
             <div className="dynamic-fields-section">
               <p className="muted visitDynamicHeading">
                 <strong>Additional visit details</strong>
               </p>
               <div className="dynamic-fields-grid">
-                {activeDynamicFields.map((field) => {
+                {activeDynamicFieldsForVisit.map((field) => {
                   const value = dynamicData[field.key] ?? ''
                   const requiredMark = field.required ? ' *' : ''
                   return (
@@ -4381,7 +4401,7 @@ function App() {
                   <div className="dashboardMetricGrid">
                     <div className="dashboardMetricTile softLavender">
                       <p className="dashboardMetricLabel">Field salesmen</p>
-                      <p className="dashboardMetricValue">{salesmen.length}</p>
+                      <p className="dashboardMetricValue">{allSalesmen.length}</p>
                       <p className="dashboardMetricDesc">Active salesman/super-salesman profiles.</p>
                     </div>
                     <div className="dashboardMetricTile softSky">
@@ -4434,13 +4454,13 @@ function App() {
               Each salesman has a consistent color on customer pins and on recent visit dots (field salesmen only).
               Unassigned customers use gray. Live GPS pings are on the Live tracking screen, not here.
             </p>
-            {(role === 'owner' || role === 'sub_admin') && salesmen.length ? (
+            {(role === 'owner' || role === 'sub_admin') && allSalesmen.length ? (
               <div className="inlineFilters">
                 <label>
                   Field salesman
                   <select value={mapSalesmanFilter} onChange={(event) => setMapSalesmanFilter(event.target.value)}>
                     <option value="all">All field salesmen</option>
-                    {salesmen.map((item) => (
+                    {allSalesmen.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.name}
                       </option>
@@ -4594,7 +4614,7 @@ function App() {
                   Salesman
                   <select value={overdueSalesmanFilter} onChange={(event) => setOverdueSalesmanFilter(event.target.value)}>
                     <option value="all">All field salesmen</option>
-                    {salesmen.map((item) => (
+                    {allSalesmen.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.name}
                       </option>
@@ -5220,29 +5240,29 @@ function App() {
                           </td>
                           <td className="meetingCompactCell">
                             <div className="followupActions">
-                                {linkedFollowUp && linkedFollowUp.status !== 'closed' ? (
-                                  <>
-                                    <button type="button" onClick={() => setCompletingFollowUp({ ...linkedFollowUp, closingRemark: '' })}>
-                                      Complete
-                                    </button>
-                                    <button type="button" onClick={() => setExtendingFollowUp({ ...linkedFollowUp, newRemark: '', dueDate: '' })}>
-                                      Extend
-                                    </button>
-                                  </>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  className="secondary"
-                                  onClick={() => {
-                                    setEditingMeetingResponse({ id: item.id, response: item.response })
-                                  }}
-                                >
-                                  Edit Response
-                                </button>
-                              </div>
-                            </td>
-                          </tr>,
-                        ]
+                              {linkedFollowUp && linkedFollowUp.status !== 'closed' ? (
+                                <>
+                                  <button type="button" onClick={() => setCompletingFollowUp({ ...linkedFollowUp, closingRemark: '' })}>
+                                    Complete
+                                  </button>
+                                  <button type="button" onClick={() => setExtendingFollowUp({ ...linkedFollowUp, newRemark: '', dueDate: '' })}>
+                                    Extend
+                                  </button>
+                                </>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="secondary"
+                                onClick={() => {
+                                  setEditingMeetingResponse({ id: item.id, response: item.response })
+                                }}
+                              >
+                                Edit Response
+                              </button>
+                            </div>
+                          </td>
+                        </tr>,
+                      ]
 
                       return rows
                     })}
@@ -5437,65 +5457,7 @@ function App() {
 
             {canSeeTeamDirectory ? (
               <article className="card settingsCard">
-                <h3>Invited emails ({invitedUsers.length})</h3>
-                {/* <p className="muted">
-                  Only these invited emails can access the app. Admins assign the initial password when adding a user.
-                </p> */}
-                <div className="scrollAreaSettings settingsTableWrap">
-                  <table className="settingsTable">
-                    <thead>
-                      <tr>
-                        <th>Email</th>
-                        <th>Role</th>
-                        <th>Added</th>
-                        {(canRemoveInvites || canResetPasswords) ? <th className="settingsActionsCell2">Action</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {invitedUsers.length === 0 ? (
-                        <tr>
-                          <td colSpan={(canRemoveInvites || canResetPasswords) ? 4 : 3} className="muted">
-                            No invites yet. The first sign-in while this list is empty is added as <strong>owner</strong>.
-                            After that, owners add everyone (including more owners) here under Add user.
-                          </td>
-                        </tr>
-                      ) : (
-                        invitedUsers
-                          .slice()
-                          .sort((a, b) => a.email.localeCompare(b.email))
-                          .map((u) => (
-                            <tr key={u.email}>
-                              <td className="settingsEmailCell">{u.email}</td>
-                              <td>
-                                <span className="roleBadge">{u.role.replace(/_/g, ' ')}</span>
-                              </td>
-                              <td className="muted settingsDateCell">{formatDateTime(u.addedAt)}</td>
-                              {(canRemoveInvites || canResetPasswords) ? (
-                                <td className="settingsActionsCell">
-                                  {canResetPasswords && resettableRolesFor(role).includes(u.role) ? (
-                                    <button type="button" className="secondary" onClick={() => openResetPasswordModal(u.email, u.role)}>
-                                      Reset Password
-                                    </button>
-                                  ) : null}
-                                  {canRemoveInvites ? (
-                                    <button type="button" className="secondary danger" onClick={() => removeInvitedUser(u.email)}>
-                                      Remove
-                                    </button>
-                                  ) : null}
-                                </td>
-                              ) : null}
-                            </tr>
-                          ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </article>
-            ) : null}
-
-            {canSeeTeamDirectory ? (
-              <article className="card settingsCard">
-                <h3>Profiles (synced)</h3>
+                <h3>Team Directory</h3>
                 {/* <p className="muted">Live roles from Supabase <code>profiles</code> (used for visits and permissions).</p> */}
                 <div className="scrollAreaSettings settingsTableWrap">
                   <table className="settingsTable">
@@ -5506,12 +5468,13 @@ function App() {
                         <th>Phone</th>
                         <th>Role</th>
                         <th>User id</th>
+                        {(role === 'owner' || role === 'sub_admin') && <th>Action</th>}
                       </tr>
                     </thead>
                     <tbody>
                       {teamProfiles.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="muted">
+                          <td colSpan={6} className="muted">
                             No profiles loaded yet. Data loads from Supabase after sign-in.
                           </td>
                         </tr>
@@ -5530,6 +5493,71 @@ function App() {
                               <td className="muted idCell" title={p.id}>
                                 {p.id.slice(0, 8)}…
                               </td>
+                              {(role === 'owner' || role === 'sub_admin') && (
+                                <td>
+                                  <button
+                                    type="button"
+                                    className={`secondary ${p.isActive === false ? 'reactivateBtn' : 'deactivateBtn'}`}
+                                    onClick={() => toggleUserActive(p.id, p.isActive !== false)}
+                                    style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem', borderColor: p.isActive === false ? 'var(--accent)' : '#ef4444', color: p.isActive === false ? 'var(--accent)' : '#ef4444' }}
+                                  >
+                                    {p.isActive === false ? 'Reactivate' : 'Deactivate'}
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            ) : null}
+
+            {canSeeTeamDirectory ? (
+              <article className="card settingsCard">
+                <h3>Invited emails ({invitedUsers.length})</h3>
+                {/* <p className="muted">
+                  Only these invited emails can access the app. Admins assign the initial password when adding a user.
+                </p> */}
+                <div className="scrollAreaSettings settingsTableWrap">
+                  <table className="settingsTable">
+                    <thead>
+                      <tr>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Added</th>
+                        {canResetPasswords ? <th className="settingsActionsCell2">Action</th> : null}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invitedUsers.length === 0 ? (
+                        <tr>
+                          <td colSpan={canResetPasswords ? 4 : 3} className="muted">
+                            No invites yet. The first sign-in while this list is empty is added as <strong>owner</strong>.
+                            After that, owners add everyone (including more owners) here under Add user.
+                          </td>
+                        </tr>
+                      ) : (
+                        invitedUsers
+                          .slice()
+                          .sort((a, b) => a.email.localeCompare(b.email))
+                          .map((u) => (
+                            <tr key={u.email}>
+                              <td className="settingsEmailCell">{u.email}</td>
+                              <td>
+                                <span className="roleBadge">{u.role.replace(/_/g, ' ')}</span>
+                              </td>
+                              <td className="muted settingsDateCell">{formatDateTime(u.addedAt)}</td>
+                              {canResetPasswords ? (
+                                <td className="settingsActionsCell">
+                                  {resettableRolesFor(role).includes(u.role) ? (
+                                    <button type="button" className="secondary" onClick={() => openResetPasswordModal(u.email, u.role)}>
+                                      Reset Password
+                                    </button>
+                                  ) : null}
+                                </td>
+                              ) : null}
                             </tr>
                           ))
                       )}
@@ -5622,10 +5650,10 @@ function App() {
           </section>
         )
       case 'admin_kpi': {
-        const teamTotalPending = salesmenSummaryRows.reduce((sum, r) => sum + r.pendingOnboarding, 0)
-        const teamTotalExisting = salesmenSummaryRows.reduce((sum, r) => sum + r.existing, 0)
-        const teamTotalVisits = salesmenSummaryRows.reduce((sum, r) => sum + r.totalVisits, 0)
-        const teamTotalActiveDays = salesmenSummaryRows.reduce((sum, r) => sum + r.activeDays, 0)
+        const teamTotalPending = allSalesmenSummaryRows.reduce((sum, r) => sum + r.pendingOnboarding, 0)
+        const teamTotalExisting = allSalesmenSummaryRows.reduce((sum, r) => sum + r.existing, 0)
+        const teamTotalVisits = allSalesmenSummaryRows.reduce((sum, r) => sum + r.totalVisits, 0)
+        const teamTotalActiveDays = allSalesmenSummaryRows.reduce((sum, r) => sum + r.activeDays, 0)
         const teamTotalPctStr = teamTotalExisting > 0 ? `${Math.round((teamTotalPending / teamTotalExisting) * 100)}%` : '—'
 
         const toggleSummarySort = (col: string) => {
@@ -5636,7 +5664,7 @@ function App() {
             setSummarySortDir('desc')
           }
         }
-        
+
         const SortIcon = ({ col }: { col: string }) => {
           if (summarySortColumn !== col) return <span style={{ opacity: 0.3, marginLeft: 4 }}>↕</span>
           return <span style={{ marginLeft: 4 }}>{summarySortDir === 'asc' ? '↑' : '↓'}</span>
@@ -5659,16 +5687,16 @@ function App() {
                   {(role === 'owner' || role === 'sub_admin') && (
                     <button
                       type="button"
-                      className={`tabBtn ${kpiActiveTab === 'salesmen_summary' ? 'active' : ''}`}
-                      onClick={() => setKpiActiveTab('salesmen_summary')}
-                      style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: kpiActiveTab === 'salesmen_summary' ? '2px solid var(--accent)' : '2px solid transparent', cursor: 'pointer', fontWeight: kpiActiveTab === 'salesmen_summary' ? 'bold' : 'normal', color: 'var(--text)' }}
+                      className={`tabBtn ${kpiActiveTab === 'allSalesmen_summary' ? 'active' : ''}`}
+                      onClick={() => setKpiActiveTab('allSalesmen_summary')}
+                      style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: kpiActiveTab === 'allSalesmen_summary' ? '2px solid var(--accent)' : '2px solid transparent', cursor: 'pointer', fontWeight: kpiActiveTab === 'allSalesmen_summary' ? 'bold' : 'normal', color: 'var(--text)' }}
                     >
                       Salesmen Summary
                     </button>
                   )}
                 </div>
               </div>
-              {kpiActiveTab === 'salesmen_summary' && (
+              {kpiActiveTab === 'allSalesmen_summary' && (
                 <button type="button" className="secondary" onClick={handleExportSalesmenSummary}>
                   <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ marginRight: 6, verticalAlign: 'text-bottom' }}>
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -5677,7 +5705,7 @@ function App() {
                 </button>
               )}
             </div>
-            
+
             <article className="card">
               <div className="rowBetween">
                 <h3>Filters</h3>
@@ -5722,7 +5750,7 @@ function App() {
                     Salesman
                     <select value={kpiSalesmanFilter} onChange={(event) => setKpiSalesmanFilter(event.target.value)}>
                       <option value="all">All salesmen</option>
-                      {salesmen.map((item) => (
+                      {allSalesmen.map((item) => (
                         <option value={item.id} key={item.id}>
                           {item.name}
                         </option>
@@ -5794,7 +5822,7 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {salesmenSummaryRows.length === 0 ? (
+                      {allSalesmenSummaryRows.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
                             No salesmen available for selected filters.
@@ -5802,12 +5830,12 @@ function App() {
                         </tr>
                       ) : (
                         <>
-                          {salesmenSummaryRows.map((item) => (
+                          {allSalesmenSummaryRows.map((item) => (
                             <tr key={item.salesmanId}>
                               <td>
-                                <button 
-                                  type="button" 
-                                  className="linkBtn" 
+                                <button
+                                  type="button"
+                                  className="linkBtn"
                                   onClick={() => {
                                     setKpiSalesmanFilter(item.salesmanId)
                                     setKpiActiveTab('kpi_table')
@@ -5900,7 +5928,7 @@ function App() {
                       onChange={(event) => setSalesmanFollowUpSalesmanFilter(event.target.value)}
                     >
                       <option value="all">All salesmen</option>
-                      {salesmen.map((s) => (
+                      {allSalesmen.map((s) => (
                         <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </select>
@@ -5968,7 +5996,7 @@ function App() {
                     ) : (
                       filteredFollowUpsForSalesman.flatMap((item) => {
                         const customer = customers.find((entry) => entry.id === item.customerId)
-                        const salesmanName = salesmen.find((entry) => entry.id === item.salesmanId)?.name ?? 'Salesman'
+                        const salesmanName = allSalesmen.find((entry) => entry.id === item.salesmanId)?.name ?? 'Salesman'
                         const customerCity = customer?.city ?? 'Unknown city'
                         const customerPhone = customer?.phone ?? '—'
 
@@ -6155,7 +6183,8 @@ function App() {
             <CustomerDatabase
               cities={cities}
               customers={dedupedCustomers}
-              salesmen={salesmen}
+              salesmen={allSalesmen}
+              activeSalesmen={activeSalesmen}
               formFields={formFields}
               profileNameById={profileNameById}
               role={role}
@@ -6170,7 +6199,7 @@ function App() {
           <Suspense fallback={<section className="panel"><p>Loading customer orders…</p></section>}>
             <CustomerOrdersPage
               customers={dedupedCustomers}
-              salesmen={salesmen}
+              salesmen={allSalesmen}
               cities={cities}
               role={role}
               currentUserId={authSession?.user?.id ?? ''}
@@ -6184,7 +6213,7 @@ function App() {
           <Suspense fallback={<section className="panel"><p>Loading leads module…</p></section>}>
             <LeadsPage
               customers={dedupedCustomers}
-              salesmen={salesmen}
+              salesmen={allSalesmen}
               cities={cities}
               role={role}
               currentUserId={authSession?.user?.id ?? ''}
@@ -6267,7 +6296,7 @@ function App() {
                           <td className="customersCompactCell" style={{ maxWidth: '200px', whiteSpace: 'normal' }}>
                             {item.area ? `${item.area}` : <span className="customerEmptyChip">—</span>}
                           </td>
-                          
+
                           {activeDynamicFields.map((field) => {
                             const val = item.dynamicFields?.[field.key]
                             return (
@@ -6276,7 +6305,7 @@ function App() {
                               </td>
                             )
                           })}
-                          
+
                           <td className="customersCompactCell" style={{ whiteSpace: 'pre-wrap' }}>
                             {item.achievement || <span className="customerEmptyChip">—</span>}
                           </td>
@@ -6364,7 +6393,7 @@ function App() {
                       onChange={(event) => setVisitHistorySalesmanFilter(event.target.value)}
                     >
                       <option value="all">All</option>
-                      {salesmen.map((item) => (
+                      {allSalesmen.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.name}
                         </option>
@@ -6406,16 +6435,16 @@ function App() {
                     <option value="E">E</option>
                   </select>
                 </label>
-                  <label>
-                    City
-                    <div>
-                      <SearchableCityDropdown
-                        cities={cities}
-                        valueId={visitHistoryCityFilter}
-                        onChange={(val) => setVisitHistoryCityFilter(val)}
-                      />
-                    </div>
-                  </label>
+                <label>
+                  City
+                  <div>
+                    <SearchableCityDropdown
+                      cities={cities}
+                      valueId={visitHistoryCityFilter}
+                      onChange={(val) => setVisitHistoryCityFilter(val)}
+                    />
+                  </div>
+                </label>
               </div>
               <div className="scrollArea visitsTableWrap">
                 <table className="visitsTable">
@@ -6791,7 +6820,7 @@ function App() {
               </h2>
               <p className="muted" style={{ margin: 0 }}>Provide a final closing remark to mark this as complete.</p>
             </div>
-            
+
             <div className="modalBody" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               <label style={{ display: 'block' }}>
                 <span style={{ fontWeight: 500 }}>Closing Remark</span>
@@ -6803,7 +6832,7 @@ function App() {
                 />
               </label>
             </div>
-            
+
             <div className="modalActions" style={{ margin: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
               <button type="button" className="secondary" onClick={() => setCompletingFollowUp(null)}>Cancel</button>
               <button type="button" onClick={() => void completeFollowUp(completingFollowUp)} style={{ color: 'white' }}>Complete</button>
@@ -6822,7 +6851,7 @@ function App() {
               </h2>
               <p className="muted" style={{ margin: 0 }}>Update the date and append your new interaction notes.</p>
             </div>
-            
+
             <div className="modalBody" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <label>
@@ -6859,7 +6888,7 @@ function App() {
                 <textarea placeholder="Note what was discussed today..." value={extendingFollowUp.newRemark || ''} onChange={(e) => setExtendingFollowUp({ ...extendingFollowUp, newRemark: e.target.value })} style={{ width: '100%', marginTop: '0.5rem', minHeight: '80px' }} />
               </label>
             </div>
-            
+
             <div className="modalActions" style={{ margin: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
               <button type="button" className="secondary" onClick={() => setExtendingFollowUp(null)}>Cancel</button>
               <button type="button" onClick={() => void extendFollowUp(extendingFollowUp)} style={{ color: 'white' }}>Extend</button>
@@ -6878,7 +6907,7 @@ function App() {
               </h2>
               <p className="muted" style={{ margin: 0 }}>Update details without closing or extending.</p>
             </div>
-            
+
             <div className="modalBody" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <label>
@@ -6914,7 +6943,7 @@ function App() {
                 <textarea placeholder="Update your notes..." value={editingFollowUp.newRemark || ''} onChange={(e) => setEditingFollowUp({ ...editingFollowUp, newRemark: e.target.value })} style={{ width: '100%', marginTop: '0.5rem', minHeight: '80px' }} />
               </label>
             </div>
-            
+
             <div className="modalActions" style={{ margin: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
               <button type="button" className="secondary" onClick={() => setEditingFollowUp(null)}>Cancel</button>
               <button type="button" onClick={() => void saveFollowUpEdit(editingFollowUp)} style={{ backgroundColor: 'var(--text-main)', color: 'var(--text-main)' }}>Save Changes</button>
@@ -7125,7 +7154,7 @@ function App() {
                   </select>
                 </label>
 
-                {activeDynamicFields.map((field) => (
+                {activeDynamicFieldsForVisit.map((field) => (
                   <label key={field.id}>
                     {field.label} {field.required ? '*' : ''}
                     {field.type === 'textarea' ? (
