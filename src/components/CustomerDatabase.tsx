@@ -33,6 +33,7 @@ type CustomerRecord = {
   city: string
   cityId: string | null
   tags: string[]
+  isInteriorDesigner?: boolean
   assignedSalesmanId: string
   lat: number
   lng: number
@@ -48,7 +49,7 @@ type DynamicField = {
   id: string
   label: string
   key: string
-  type: 'text' | 'textarea' | 'number' | 'date' | 'select'
+  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'boolean'
   required: boolean
   options: string[]
   order: number
@@ -173,6 +174,7 @@ export function CustomerDatabase({
   const [stateFilterVal, setStateFilterVal] = useState('all')
   const [customerTypeFilterVal, setCustomerTypeFilterVal] = useState('all')
   const [customerCategoryFilter, setCustomerCategoryFilter] = useState('all')
+  const [interiorDesignerFilter, setInteriorDesignerFilter] = useState(false)
 
   /* debounce search */
   useEffect(() => {
@@ -262,9 +264,10 @@ export function CustomerDatabase({
       if (stateFilterVal !== 'all' && stateField && dynamicVal(c, stateField.key) !== stateFilterVal) return false
       if (customerTypeFilterVal !== 'all' && customerTypeField && dynamicVal(c, customerTypeField.key) !== customerTypeFilterVal) return false
       if (customerCategoryFilter !== 'all' && c.category !== customerCategoryFilter) return false
+      if (interiorDesignerFilter && !c.isInteriorDesigner) return false
       return true
     })
-  }, [scopedCustomers, searchDebounced, salesmanFilter, cityFilterId, stateFilterVal, customerTypeFilterVal, customerCategoryFilter, stateField, customerTypeField, firmField, cities])
+  }, [scopedCustomers, searchDebounced, salesmanFilter, cityFilterId, stateFilterVal, customerTypeFilterVal, customerCategoryFilter, interiorDesignerFilter, stateField, customerTypeField, firmField, cities])
 
   /* ── open edit modal ── */
   const openEdit = useCallback((c: CustomerRecord) => {
@@ -489,6 +492,8 @@ export function CustomerDatabase({
                 skippedFieldCount++
                 break
               }
+            } else if (f.type === 'boolean') {
+              dynamicFieldsData[f.key] = ['yes', 'true', '1'].includes(rawVal.toLowerCase()) ? 'true' : 'false'
             } else {
               dynamicFieldsData[f.key] = rawVal
             }
@@ -854,6 +859,21 @@ export function CustomerDatabase({
             </select>
           </label>
 
+          <label className="cdFilterItem" style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+            <span className="cdFilterLabel">Interior Designer</span>
+            <button
+              type="button"
+              className={`switchToggle${interiorDesignerFilter ? ' isOn' : ''}`}
+              role="switch"
+              aria-checked={interiorDesignerFilter}
+              onClick={() => setInteriorDesignerFilter(!interiorDesignerFilter)}
+              style={{ height: '36px', padding: '0 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '6px', justifyContent: 'center' }}
+            >
+              <span className="switchTrack" aria-hidden><span className="switchThumb" /></span>
+              <span style={{ fontSize: '0.85rem' }}>{interiorDesignerFilter ? 'Yes' : 'All'}</span>
+            </button>
+          </label>
+
         </div>
         <p className="cdFilterCount">{filtered.length} of {scopedCustomers.length} records</p>
       </article>
@@ -888,6 +908,7 @@ export function CustomerDatabase({
                   <th>Pincode & Area</th>
                   {showSalesmanFilter && <th>Salesman</th>}
                   {activeDynamicFields.map(f => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
+                  <th>Interior Designer</th>
                   <th className="cdWrapHead">Achievement</th>
                   <th className="cdWrapHead">Past Purchase History</th>
                   <th className="cdWrapHead">Last Purchase Date</th>
@@ -944,6 +965,13 @@ export function CustomerDatabase({
                         {dynamicVal(c, f.key) || '—'}
                       </td>
                     ))}
+                    <td className="cdCompactCell">
+                      {c.isInteriorDesigner ? (
+                        <span className="badge" style={{ backgroundColor: 'var(--accent)', color: '#fff', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                          Yes
+                        </span>
+                      ) : '—'}
+                    </td>
                     <td className="cdCompactCell" style={{ whiteSpace: 'pre-wrap', minWidth: '120px', fontSize: '0.8rem' }}>
                       {c.achievement || '—'}
                     </td>
@@ -1189,6 +1217,14 @@ export function CustomerDatabase({
                       <label key={field.id}>
                         {field.label}
                         <textarea rows={2} value={val} onChange={e => update(e.target.value)} />
+                      </label>
+                    )
+                  }
+                  if (field.type === 'boolean') {
+                    return (
+                      <label key={field.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input type="checkbox" checked={val === 'true'} onChange={e => update(e.target.checked ? 'true' : 'false')} style={{ width: 'auto', margin: 0, transform: 'scale(1.2)' }} />
+                        {field.label}
                       </label>
                     )
                   }

@@ -80,6 +80,7 @@ type Customer = {
   totalPurchaseValue?: number
   lastOrderDate?: string | null
   achievement?: string
+  isInteriorDesigner?: boolean
 }
 export type CityMaster = {
   id: string
@@ -140,6 +141,7 @@ type VisitSession = {
     state: string
     city: string
     cityId?: string
+    isInteriorDesigner?: boolean
   }
 }
 type MeetingResponse = {
@@ -159,7 +161,7 @@ type FormField = {
   id: string
   label: string
   key: string
-  type: 'text' | 'textarea' | 'number' | 'date' | 'select'
+  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'boolean'
   required: boolean
   options: string[]
   order: number
@@ -260,7 +262,7 @@ function syncNavToLocation(view: NavId) {
 }
 
 /** Max reported GPS uncertainty allowed for existing-customer visit flows. */
-const GPS_THRESHOLD_METERS = 350;
+const GPS_THRESHOLD_METERS = 300;
 /** New leads have no prior map pin — keep a slightly tighter GPS expectation. */
 const GPS_THRESHOLD_NEW_LEAD_METERS = 150
 /** Max distance from customer map pin for existing-customer visits. */
@@ -647,6 +649,7 @@ function App() {
   const [quickLeadAreaOptions, setQuickLeadAreaOptions] = useState<string[]>([])
   const [quickLeadCityId, setQuickLeadCityId] = useState('')
   const [quickLeadCityName, setQuickLeadCityName] = useState('')
+  const [quickLeadIsInteriorDesigner, setQuickLeadIsInteriorDesigner] = useState(false)
   const [visitCustomerSearch, setVisitCustomerSearch] = useState('')
   const [notes, setNotes] = useState('')
   const [nextAction, setNextAction] = useState('')
@@ -711,6 +714,7 @@ function App() {
   const [visitHistoryClientFilterDebounced, setVisitHistoryClientFilterDebounced] = useState('')
   const [visitHistoryCityFilter, setVisitHistoryCityFilter] = useState('')
   const [visitHistoryCategoryFilter, setVisitHistoryCategoryFilter] = useState('all')
+  const [visitHistoryInteriorDesignerFilter, setVisitHistoryInteriorDesignerFilter] = useState(false)
   const [meetingSearchFilter, setMeetingSearchFilter] = useState('')
   const [meetingSearchFilterDebounced, setMeetingSearchFilterDebounced] = useState('')
   const [visitHistoryPage, setVisitHistoryPage] = useState(1)
@@ -755,6 +759,7 @@ function App() {
   const [myCustomersNameFilter, setMyCustomersNameFilter] = useState('')
   const [myCustomersNameFilterDebounced, setMyCustomersNameFilterDebounced] = useState('')
   const [myCustomersCityFilter, setMyCustomersCityFilter] = useState('')
+  const [myCustomersInteriorDesignerFilter, setMyCustomersInteriorDesignerFilter] = useState(false)
   const [editingFollowUp, setEditingFollowUp] = useState<(FollowUp & { newRemark?: string }) | null>(null)
   const [extendingFollowUp, setExtendingFollowUp] = useState<(FollowUp & { newRemark?: string }) | null>(null)
   const [completingFollowUp, setCompletingFollowUp] = useState<FollowUp | null>(null)
@@ -1358,6 +1363,7 @@ function App() {
         totalPurchaseValue: Number((r as any).total_purchase_value ?? 0),
         lastOrderDate: ((r as any).last_order_date as string) ?? null,
         achievement: (r.achievement as string) ?? '',
+        isInteriorDesigner: Boolean((r as Record<string, unknown>).is_interior_designer),
       }))
       setCustomers(customersMapped)
 
@@ -1950,9 +1956,10 @@ function App() {
     return myCustomers.filter((item) => {
       const searchOk = q ? (item.name.toLowerCase().includes(q) || item.phone.toLowerCase().includes(q)) : true
       const cityOk = myCustomersCityFilter ? item.cityId === myCustomersCityFilter : true
-      return searchOk && cityOk
+      const interiorOk = !myCustomersInteriorDesignerFilter || !!item.isInteriorDesigner
+      return searchOk && cityOk && interiorOk
     })
-  }, [myCustomers, myCustomersNameFilterDebounced, myCustomersCityFilter])
+  }, [myCustomers, myCustomersNameFilterDebounced, myCustomersCityFilter, myCustomersInteriorDesignerFilter])
 
   const filteredCustomerSuggestions = useMemo(() => {
     const q = visitCustomerSearch.trim().toLowerCase()
@@ -2085,11 +2092,12 @@ function App() {
         matchesSearch &&
         (!visitHistoryCityFilter || cityId === visitHistoryCityFilter) &&
         (visitHistoryPriorityFilter === 'all' || v.priority === visitHistoryPriorityFilter) &&
-        (visitHistoryCategoryFilter === 'all' || customer?.category === visitHistoryCategoryFilter)
+        (visitHistoryCategoryFilter === 'all' || customer?.category === visitHistoryCategoryFilter) &&
+        (!visitHistoryInteriorDesignerFilter || !!customer?.isInteriorDesigner)
       )
     })
     return filtered;
-  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFrom, visitHistoryDateTo, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter])
+  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFrom, visitHistoryDateTo, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter, visitHistoryInteriorDesignerFilter])
   const selectedVisitClientVisits = useMemo(() => {
     if (!selectedVisitClientId) return []
     return visitHistoryRows
@@ -3005,6 +3013,7 @@ function App() {
       state: quickLeadState.trim() || '',
       city: quickLeadCityName,
       cityId: quickLeadCityId,
+      isInteriorDesigner: quickLeadIsInteriorDesigner,
     }
 
     if (selectedCustomerId !== 'new') {
@@ -3018,6 +3027,7 @@ function App() {
           state: selectedCustomer.state || '',
           city: selectedCustomer.city || '',
           cityId: selectedCustomer.cityId || '',
+          isInteriorDesigner: selectedCustomer.isInteriorDesigner || false,
         }
       }
     }
@@ -3786,6 +3796,7 @@ function App() {
             assignedSalesmanId: activeSalesman.id,
             lat: session.startGeo.lat,
             lng: session.startGeo.lng,
+            isInteriorDesigner: ql.isInteriorDesigner,
           }
           customerName = newCustomer.name
           customerId = newCustomer.id
@@ -3807,6 +3818,7 @@ function App() {
               assigned_salesman_id: newCustomer.assignedSalesmanId,
               lat: newCustomer.lat,
               lng: newCustomer.lng,
+              is_interior_designer: newCustomer.isInteriorDesigner,
             })
             if (error) return failVisitSave(`Customer save failed: ${error.message}`)
           }
@@ -4161,6 +4173,10 @@ function App() {
                   />
                 )}
               </label>
+              <label style={{ alignSelf: 'start', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input type="checkbox" checked={quickLeadIsInteriorDesigner} onChange={(e) => setQuickLeadIsInteriorDesigner(e.target.checked)} style={{ margin: 0 }} />
+                Is Interior Designer?
+              </label>
 
             </>
           ) : null}
@@ -4183,6 +4199,12 @@ function App() {
               <strong>State:</strong> {visitSession.quickLead.state}
               <br />
               <strong>City:</strong> {visitSession.quickLead.city}
+              {visitSession.quickLead.isInteriorDesigner && (
+                <>
+                  <br />
+                  <strong>Interior Designer:</strong> <span className="badge" style={{ backgroundColor: 'var(--accent)', color: '#fff', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>Yes</span>
+                </>
+              )}
             </p>
           </div>
           <label>
@@ -4216,6 +4238,22 @@ function App() {
                 {activeDynamicFieldsForVisit.map((field) => {
                   const value = dynamicData[field.key] ?? ''
                   const requiredMark = field.required ? ' *' : ''
+                  if (field.type === 'boolean') {
+                    return (
+                      <label key={field.id} style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '1rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={value === 'true'}
+                          onChange={(event) =>
+                            setDynamicData((prev) => ({ ...prev, [field.key]: event.target.checked ? 'true' : 'false' }))
+                          }
+                          style={{ width: 'auto', margin: 0, transform: 'scale(1.2)' }}
+                        />
+                        <span>{field.label}{requiredMark}</span>
+                      </label>
+                    )
+                  }
+
                   return (
                     <label key={field.id}>
                       {field.label}
@@ -4999,6 +5037,7 @@ function App() {
                       <option value="number">Number</option>
                       <option value="date">Date</option>
                       <option value="select">Select</option>
+                      <option value="boolean">Checkbox (Yes/No)</option>
                     </select>
                   </label>
                   <label>
@@ -6229,23 +6268,42 @@ function App() {
               <h2>My Customers </h2>
             </div>
             <article className="card">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem', fontSize: '0.85rem', zIndex: 5, position: 'relative' }}>
-                <label className="myCustomersSearchWrap" style={{ margin: 0, width: '250px' }}>
+              <div className="cdFilterBar" style={{ margin: 0, padding: '1rem', borderBottom: '1px solid var(--border)', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                <label className="cdFilterItem cdFilterCity" style={{ width: '250px' }}>
+                  <span className="cdFilterLabel">Search</span>
                   <input
                     className="myCustomersSearchInput"
+                    style={{ width: '100%', marginTop: '0.25rem', padding: '0.4rem 0.6rem', fontSize: '0.85rem', border: '1px solid var(--border)', borderRadius: '6px' }}
                     value={myCustomersNameFilter}
                     onChange={(event) => setMyCustomersNameFilter(event.target.value)}
                     placeholder="Search by name or phone"
                   />
                 </label>
-                <div style={{ width: '250px' }}>
-                  <SearchableCityDropdown
-                    cities={myCustomerCities}
-                    valueId={myCustomersCityFilter}
-                    onChange={(val) => setMyCustomersCityFilter(val)}
-                    placeholder="All cities"
-                  />
-                </div>
+                <label className="cdFilterItem cdFilterCity" style={{ width: '250px' }}>
+                  <span className="cdFilterLabel">City</span>
+                  <div style={{ marginTop: '0.25rem' }}>
+                    <SearchableCityDropdown
+                      cities={myCustomerCities}
+                      valueId={myCustomersCityFilter}
+                      onChange={(val) => setMyCustomersCityFilter(val)}
+                      placeholder="All cities"
+                    />
+                  </div>
+                </label>
+                <label className="cdFilterItem" style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <span className="cdFilterLabel">Interior Designer</span>
+                  <button
+                    type="button"
+                    className={`switchToggle${myCustomersInteriorDesignerFilter ? ' isOn' : ''}`}
+                    role="switch"
+                    aria-checked={myCustomersInteriorDesignerFilter}
+                    onClick={() => setMyCustomersInteriorDesignerFilter(!myCustomersInteriorDesignerFilter)}
+                    style={{ height: '36px', padding: '0 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '6px', justifyContent: 'center' }}
+                  >
+                    <span className="switchTrack" aria-hidden><span className="switchThumb" /></span>
+                    <span style={{ fontSize: '0.85rem' }}>{myCustomersInteriorDesignerFilter ? 'Yes' : 'All'}</span>
+                  </button>
+                </label>
               </div>
               <div className="customersTableWrap">
                 <table className="customersTable">
@@ -6257,6 +6315,7 @@ function App() {
                       <th>City</th>
                       <th>Pincode & Area</th>
                       {activeDynamicFields.map((f) => <th key={f.id} className="dynamicFieldCol">{f.label}</th>)}
+                      <th>Interior Designer</th>
                       <th>Achievement</th>
                       <th>Past Purchases</th>
                       <th>Last Purchase</th>
@@ -6305,6 +6364,14 @@ function App() {
                               </td>
                             )
                           })}
+
+                          <td className="customersCompactCell">
+                            {item.isInteriorDesigner ? (
+                              <span className="badge" style={{ backgroundColor: 'var(--accent)', color: '#fff', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                Yes
+                              </span>
+                            ) : <span className="customerEmptyChip">—</span>}
+                          </td>
 
                           <td className="customersCompactCell" style={{ whiteSpace: 'pre-wrap' }}>
                             {item.achievement || <span className="customerEmptyChip">—</span>}
@@ -6435,6 +6502,20 @@ function App() {
                     <option value="E">E</option>
                   </select>
                 </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-color)' }}>Interior Designer</span>
+                  <button
+                    type="button"
+                    className={`switchToggle${visitHistoryInteriorDesignerFilter ? ' isOn' : ''}`}
+                    role="switch"
+                    aria-checked={visitHistoryInteriorDesignerFilter}
+                    onClick={() => setVisitHistoryInteriorDesignerFilter(!visitHistoryInteriorDesignerFilter)}
+                    style={{ height: '36px', padding: '0 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '6px', justifyContent: 'center', width: 'fit-content' }}
+                  >
+                    <span className="switchTrack" aria-hidden><span className="switchThumb" /></span>
+                    <span style={{ fontSize: '0.85rem' }}>{visitHistoryInteriorDesignerFilter ? 'Yes' : 'All'}</span>
+                  </button>
+                </label>
                 <label>
                   City
                   <div>
@@ -6457,6 +6538,7 @@ function App() {
                       <th>Category</th>
                       <th>City</th>
                       <th>Type</th>
+                      <th>Interior Designer</th>
                       <th>Priority</th>
                       <th>GPS</th>
                       <th>Status</th>
@@ -6493,6 +6575,13 @@ function App() {
                             </td>
                             <td>{customer?.city ?? '—'}</td>
                             <td>{visit.visitType}</td>
+                            <td>
+                              {customer?.isInteriorDesigner ? (
+                                <span className="badge" style={{ backgroundColor: 'var(--accent)', color: '#fff', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                  Yes
+                                </span>
+                              ) : '—'}
+                            </td>
                             <td>
                               {visit.priority ? (
                                 <span className={`followupPill followupPill--${visit.priority}`}>
