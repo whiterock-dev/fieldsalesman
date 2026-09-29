@@ -1,4 +1,4 @@
-﻿import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { lookup as pincodeLookup } from 'india-pincode-lookup'
 import { lookupPincode as postPincodeLookup } from 'india-post-pincode'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
@@ -203,8 +203,9 @@ type NavId =
   | 'admin_leads'
   | 'field_leads'
 
-const NAV_ITEMS: { id: NavId; label: string | ((r: Role) => string); show: (r: Role) => boolean }[] = [
+const NAV_ITEMS: { id: NavId; label: string | ((r: Role) => string); show: (r: Role) => boolean; hideFromSidebar?: boolean }[] = [
   { id: 'dashboard', label: 'Dashboard', show: (r) => r !== 'salesman' },
+  { id: 'map', label: 'Map', show: (r) => r !== 'salesman', hideFromSidebar: true },
   { id: 'add_visit', label: 'Add visit', show: (r) => r === 'salesman' || r === 'super_salesman' },
   { id: 'field_followups', label: 'Pending Follow-ups', show: (r) => r === 'salesman' || r === 'super_salesman' },
   { id: 'field_tracking', label: 'Live Tracking', show: (r) => r === 'super_salesman' },
@@ -2253,7 +2254,7 @@ function App() {
   }
 
   const visibleNavItems = useMemo(() => {
-    return NAV_ITEMS.filter((item) => item.show(role))
+    return NAV_ITEMS.filter((item) => item.show(role) && !item.hideFromSidebar)
   }, [role])
 
   const activeViewLabel = useMemo(() => {
