@@ -205,7 +205,7 @@ type NavId =
 
 const NAV_ITEMS: { id: NavId; label: string | ((r: Role) => string); show: (r: Role) => boolean; hideFromSidebar?: boolean }[] = [
   { id: 'dashboard', label: 'Dashboard', show: (r) => r !== 'salesman' },
-  { id: 'map', label: 'Map', show: (r) => r !== 'salesman', hideFromSidebar: true },
+  { id: 'map', label: 'Map', show: () => true},
   { id: 'add_visit', label: 'Add visit', show: (r) => r === 'salesman' || r === 'super_salesman' },
   { id: 'field_followups', label: 'Pending Follow-ups', show: (r) => r === 'salesman' || r === 'super_salesman' },
   { id: 'field_tracking', label: 'Live Tracking', show: (r) => r === 'super_salesman' },
