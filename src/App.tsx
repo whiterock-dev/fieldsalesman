@@ -161,6 +161,13 @@ type EditingMeetingResponse = {
   id: string
   response: string
 }
+type EditingFormField = {
+  id: string
+  label: string
+  type: FormField['type']
+  required: boolean
+  options: string
+}
 type FormField = {
   id: string
   label: string
@@ -748,6 +755,7 @@ function App() {
   const [completingFollowUp, setCompletingFollowUp] = useState<FollowUp | null>(null)
   const [duplicateFollowUpWarning, setDuplicateFollowUpWarning] = useState<FollowUp | null>(null)
   const [editingMeetingResponse, setEditingMeetingResponse] = useState<EditingMeetingResponse | null>(null)
+  const [editingFormField, setEditingFormField] = useState<EditingFormField | null>(null)
   const [archivingFollowUpId, setArchivingFollowUpId] = useState<string | null>(null)
 
   const [showNewLeadModal, setShowNewLeadModal] = useState(false)
@@ -3586,6 +3594,33 @@ function App() {
     }
   }
 
+  const saveFormFieldEdit = async (updated: EditingFormField) => {
+    const label = updated.label.trim()
+    if (!label) { setMessage('Field label is required.'); return }
+    const options =
+      updated.type === 'select'
+        ? updated.options.split(',').map((o) => o.trim()).filter(Boolean)
+        : []
+    if (updated.type === 'select' && options.length < 2) {
+      setMessage('Select fields need at least 2 options (comma separated).')
+      return
+    }
+    setFormFields((prev) =>
+      prev.map((f) =>
+        f.id === updated.id ? { ...f, label, type: updated.type, required: updated.required, options } : f,
+      ),
+    )
+    setEditingFormField(null)
+    if (supabase && online) {
+      const { error } = await supabase
+        .from('form_fields')
+        .update({ label, type: updated.type, required: updated.required, options })
+        .eq('id', updated.id)
+      if (error) setMessage(`Could not save field: ${error.message}`)
+      else scheduleWorkspaceReloadRef.current?.()
+    }
+  }
+
   const toggleUserActive = async (profileId: string, currentStatus: boolean) => {
     if (!supabase) return
     if (!(role === 'owner' || role === 'sub_admin')) return
@@ -6020,7 +6055,7 @@ function App() {
               <article className="card">
                 <h3>Dynamic form fields</h3>
                 <p className="muted">
-                  Add or delete dynamic visit fields. Existing fields are intentionally non-editable for safety.
+                  Add, edit, or delete dynamic visit fields.
                 </p>
                 <div className="dynamic-fields-admin-form">
                   <label>
@@ -6096,13 +6131,22 @@ function App() {
                             <td>{field.required ? 'Yes' : 'No'}</td>
                             <td>{field.options.length ? field.options.join(', ') : '—'}</td>
                             <td>
-                              <button
-                                type="button"
-                                className="secondary danger"
-                                onClick={() => void softDeleteDynamicField(field)}
-                              >
-                                Delete
-                              </button>
+                              <div style={{ display: 'flex', gap: '6px' }}>
+                                <button
+                                  type="button"
+                                  className="secondary"
+                                  onClick={() => setEditingFormField({ id: field.id, label: field.label, type: field.type, required: field.required, options: field.options.join(', ') })}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="secondary danger"
+                                  onClick={() => void softDeleteDynamicField(field)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -6822,6 +6866,70 @@ function App() {
             <div className="modalActions" style={{ marginTop: '2rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
               <button type="button" className="secondary" onClick={() => setEditingMeetingResponse(null)}>Cancel</button>
               <button type="button" onClick={() => { void saveMeetingResponseEdit(editingMeetingResponse); setEditingMeetingResponse(null); }} style={{ backgroundColor: '#2563eb', color: 'white' }}>Save Response</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editingFormField ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" onClick={() => setEditingFormField(null)}>
+          <div className="modalCard" style={{ maxWidth: '540px', width: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
+              <h2 style={{ margin: 0, color: 'var(--text-main)' }}>Edit Dynamic Field</h2>
+            </div>
+            <div className="modalBody" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+              <label style={{ display: 'block' }}>
+                <span style={{ fontWeight: 500 }}>Field Label</span>
+                <input
+                  type="text"
+                  value={editingFormField.label}
+                  onChange={(e) => setEditingFormField({ ...editingFormField, label: e.target.value })}
+                  style={{ width: '100%', marginTop: '0.5rem' }}
+                  autoFocus
+                />
+              </label>
+              <label style={{ display: 'block' }}>
+                <span style={{ fontWeight: 500 }}>Type</span>
+                <select
+                  value={editingFormField.type}
+                  onChange={(e) => setEditingFormField({ ...editingFormField, type: e.target.value as FormField['type'] })}
+                  style={{ width: '100%', marginTop: '0.5rem' }}
+                >
+                  <option value="text">Text</option>
+                  <option value="textarea">Textarea</option>
+                  <option value="number">Number</option>
+                  <option value="date">Date</option>
+                  <option value="select">Select</option>
+                  <option value="boolean">Checkbox (Yes/No)</option>
+                </select>
+              </label>
+              <label style={{ display: 'block' }}>
+                <span style={{ fontWeight: 500 }}>Required</span>
+                <select
+                  value={editingFormField.required ? 'yes' : 'no'}
+                  onChange={(e) => setEditingFormField({ ...editingFormField, required: e.target.value === 'yes' })}
+                  style={{ width: '100%', marginTop: '0.5rem' }}
+                >
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
+              </label>
+              {editingFormField.type === 'select' && (
+                <label style={{ display: 'block' }}>
+                  <span style={{ fontWeight: 500 }}>Options <span className="muted" style={{ fontWeight: 400 }}>(comma separated)</span></span>
+                  <input
+                    type="text"
+                    value={editingFormField.options}
+                    onChange={(e) => setEditingFormField({ ...editingFormField, options: e.target.value })}
+                    placeholder="Option A, Option B, Option C"
+                    style={{ width: '100%', marginTop: '0.5rem' }}
+                  />
+                </label>
+              )}
+            </div>
+            <div className="modalActions" style={{ marginTop: '2rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button type="button" className="secondary" onClick={() => setEditingFormField(null)}>Cancel</button>
+              <button type="button" onClick={() => void saveFormFieldEdit(editingFormField)} style={{ backgroundColor: '#2563eb', color: 'white' }}>Save Changes</button>
             </div>
           </div>
         </div>
