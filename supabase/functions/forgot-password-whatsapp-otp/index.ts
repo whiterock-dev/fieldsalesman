@@ -5,7 +5,14 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
+import { createClient } from '@supabase/supabase-js'
+
+// Tell the IDE's TypeScript server about the Deno global so it doesn't throw errors.
+// This is ignored at runtime by the actual Deno engine.
+declare const Deno: {
+  env: { get(key: string): string | undefined }
+  serve(handler: (req: Request) => Response | Promise<Response>): void
+}
 
 type ForgotIntent = 'sendOtp' | 'verifyOtp' | 'resetPassword'
 
@@ -14,9 +21,9 @@ const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const API_URL = Deno.env.get('ZA11_API_URL') || 'https://app.11za.in/apis/template/sendTemplate'
-const ORIGIN_WEBSITE = Deno.env.get('ZA11_ORIGIN_WEBSITE') || 'https://whiterock.co.in/'
-const OTP_TEMPLATE = Deno.env.get('ZA11_OTP_TEMPLATE') || 'otp_verification'
+const API_URL = Deno.env.get('ZA11_API_URL') || ''
+const ORIGIN_WEBSITE = Deno.env.get('ZA11_ORIGIN_WEBSITE') || ''
+const OTP_TEMPLATE = Deno.env.get('ZA11_OTP_TEMPLATE') || ''
 
 function json(body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
