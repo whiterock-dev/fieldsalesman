@@ -238,10 +238,10 @@ export function CustomerDatabase({
     return [...new Set(scopedCustomers.map(c => dynamicVal(c, stateField.key)).filter(Boolean))].sort()
   }, [scopedCustomers, stateField])
 
-  const uniqueCustomerTypes = useMemo(() => {
-    if (!customerTypeField) return []
-    return [...new Set(scopedCustomers.map(c => dynamicVal(c, customerTypeField.key)).filter(Boolean))].sort()
-  }, [scopedCustomers, customerTypeField])
+  const customerTypeOptions = useMemo(
+    () => customerTypeField?.options ?? [],
+    [customerTypeField],
+  )
 
   /* ── filtered data ── */
   const filtered = useMemo(() => {
@@ -839,10 +839,10 @@ export function CustomerDatabase({
 
           {customerTypeField && (
             <label className="cdFilterItem">
-              <span className="cdFilterLabel">Customer Type</span>
+              <span className="cdFilterLabel">{customerTypeField.label}</span>
               <select value={customerTypeFilterVal} onChange={e => setCustomerTypeFilterVal(e.target.value)}>
                 <option value="all">All</option>
-                {uniqueCustomerTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                {customerTypeOptions.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </label>
           )}
