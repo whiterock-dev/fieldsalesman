@@ -258,47 +258,42 @@ export function BulkUpdateCustomerTypeModal({
                 <div>Issues: <strong style={{ color: issuesCount > 0 ? '#dc2626' : '#555' }}>{issuesCount}</strong></div>
               </div>
 
-              {issuesCount > 0 && (
-                <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: '#fef2f2', color: '#991b1b', borderRadius: '8px' }}>
-                  <strong>Warning:</strong> {issuesCount} rows will be skipped due to validation errors (Duplicates, Not Found, or Invalid Type).
-                </div>
-              )}
+              {issuesCount > 0 && (() => {
+                const errorRows = parsedRows.filter(r => r.status !== 'valid')
+                return (
+                  <div style={{ marginBottom: '1rem', border: '1px solid #fca5a5', borderRadius: '8px', overflow: 'hidden' }}>
+                    <div style={{ padding: '0.6rem 1rem', backgroundColor: '#fef2f2', color: '#991b1b', fontWeight: 600, fontSize: '0.875rem' }}>
+                      {issuesCount} row{issuesCount > 1 ? 's' : ''} will be skipped
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#fff5f5', textAlign: 'left' }}>
+                          <th style={{ padding: '6px 8px', borderBottom: '1px solid #fca5a5', color: '#7f1d1d' }}>Mobile</th>
+                          <th style={{ padding: '6px 8px', borderBottom: '1px solid #fca5a5', color: '#7f1d1d' }}>Customer</th>
+                          <th style={{ padding: '6px 8px', borderBottom: '1px solid #fca5a5', color: '#7f1d1d' }}>New Type</th>
+                          <th style={{ padding: '6px 8px', borderBottom: '1px solid #fca5a5', color: '#7f1d1d' }}>Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {errorRows.map((row, idx) => (
+                          <tr key={idx} style={{ borderBottom: '1px solid #fee2e2' }}>
+                            <td style={{ padding: '6px 8px' }}>{row.mobile}</td>
+                            <td style={{ padding: '6px 8px' }}>{row.customerName || '—'}</td>
+                            <td style={{ padding: '6px 8px' }}>{row.newType || '—'}</td>
+                            <td style={{ padding: '6px 8px' }}>
+                              {row.status === 'not_found' && <span style={{ color: '#dc2626' }}>Phone not found</span>}
+                              {row.status === 'duplicate_in_db' && <span style={{ color: '#dc2626' }}>Multiple matches</span>}
+                              {row.status === 'invalid_type' && <span style={{ color: '#ea580c' }}>Invalid type</span>}
+                              {row.status === 'missing_data' && <span style={{ color: '#dc2626' }}>Missing data</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              })()}
 
-              <table className="cdTable" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#f1f5f9', textAlign: 'left' }}>
-                    <th style={{ padding: '8px', borderBottom: '1px solid #cbd5e1' }}>Mobile</th>
-                    <th style={{ padding: '8px', borderBottom: '1px solid #cbd5e1' }}>Customer</th>
-                    <th style={{ padding: '8px', borderBottom: '1px solid #cbd5e1' }}>New Type</th>
-                    <th style={{ padding: '8px', borderBottom: '1px solid #cbd5e1' }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {parsedRows.slice(0, 50).map((row, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: row.status !== 'valid' ? '#fef2f2' : 'transparent' }}>
-                      <td style={{ padding: '8px' }}>{row.mobile}</td>
-                      <td style={{ padding: '8px' }}>{row.customerName || '-'}</td>
-                      <td style={{ padding: '8px' }}>{row.newType}</td>
-                      <td style={{ padding: '8px' }}>
-                        {row.status === 'valid' && <span style={{ color: '#16a34a' }}>Valid</span>}
-                        {row.status === 'not_found' && <span style={{ color: '#dc2626' }}>Not Found</span>}
-                        {row.status === 'duplicate_in_db' && <span style={{ color: '#dc2626' }}>Multiple in DB</span>}
-                        {row.status === 'invalid_type' && (
-                          <span style={{ color: '#ea580c' }} title={`Must be one of: ${customerTypeOptions.join(', ')}`}>
-                            Invalid Type
-                          </span>
-                        )}
-                        {row.status === 'missing_data' && <span style={{ color: '#dc2626' }}>Missing Data</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {parsedRows.length > 50 && (
-                <div style={{ textAlign: 'center', padding: '8px', color: '#64748b' }}>
-                  Showing first 50 rows...
-                </div>
-              )}
             </div>
           )}
 

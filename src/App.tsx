@@ -188,8 +188,10 @@ type KpiRow = {
   firstVisitTime: string
   lastVisitTime: string
   visitCount: number
-  firstTimeVisits: number
-  existingDealerVisits: number
+  newVisits: number
+  pendingOnboardingVisits: number
+  existingCustomerVisits: number
+  inactiveDealerVisits: number
 }
 type NavId =
   | 'dashboard'
@@ -562,16 +564,12 @@ function kpiTimeLabel(iso: string) {
   return `${hours}:${minutes}`;
 }
 
-function kpiFromVisits(visits: VisitRecord[], allSalesmen: Salesman[]): KpiRow[] {
-  // Pre-compute earliest visit timestamp per customer across entire history
-  const earliestVisitByCustomer = new Map<string, string>()
-  for (const v of visits) {
-    const existing = earliestVisitByCustomer.get(v.customerId)
-    if (!existing || v.capturedAt < existing) {
-      earliestVisitByCustomer.set(v.customerId, v.capturedAt)
-    }
-  }
-
+function kpiFromVisits(
+  visits: VisitRecord[],
+  allSalesmen: Salesman[],
+  customerTypeByCustomerId: Map<string, string>,
+  ctFieldKey: string,
+): KpiRow[] {
   const grouped = new Map<string, VisitRecord[]>()
   for (const visit of visits) {
     const key = `${visit.salesmanId}-${dateString(visit.capturedAt)}`
@@ -585,17 +583,22 @@ function kpiFromVisits(visits: VisitRecord[], allSalesmen: Salesman[]): KpiRow[]
     const lastIso = sorted[sorted.length - 1].capturedAt
     const salesmanName = allSalesmen.find((s) => s.id === salesmanId)?.name ?? rows[0].salesmanName
 
-    // Classify visits: first-time (pending on-boarding) vs existing dealer
-    let firstTimeVisits = 0
-    let existingDealerVisits = 0
+    let newVisits = 0
+    let pendingOnboardingVisits = 0
+    let existingCustomerVisits = 0
+    let inactiveDealerVisits = 0
     for (const visit of sorted) {
-      const earliest = earliestVisitByCustomer.get(visit.customerId)
-      // If this visit's capturedAt matches the earliest known visit for the customer,
-      // it is a first-time visit (pending on-boarding / new dealer)
-      if (earliest && visit.capturedAt <= earliest) {
-        firstTimeVisits++
-      } else {
-        existingDealerVisits++
+      // Use snapshot stored in visit at save time; fall back to live value for old visits
+      const snapshot = ctFieldKey ? (visit.dynamicFields?.[ctFieldKey] ?? '') : ''
+      const ct = (snapshot || customerTypeByCustomerId.get(visit.customerId) || '').toLowerCase().trim()
+      if (ct === 'new') {
+        newVisits++
+      } else if (ct.includes('pending')) {
+        pendingOnboardingVisits++
+      } else if (ct.includes('inactive')) {
+        inactiveDealerVisits++
+      } else if (ct.includes('existing')) {
+        existingCustomerVisits++
       }
     }
 
@@ -607,8 +610,10 @@ function kpiFromVisits(visits: VisitRecord[], allSalesmen: Salesman[]): KpiRow[]
       firstVisitTime: kpiTimeLabel(firstIso),
       lastVisitTime: kpiTimeLabel(lastIso),
       visitCount: sorted.length,
-      firstTimeVisits,
-      existingDealerVisits,
+      newVisits,
+      pendingOnboardingVisits,
+      existingCustomerVisits,
+      inactiveDealerVisits,
     }
   }).sort((a, b) => b.date.localeCompare(a.date))
 }
@@ -640,6 +645,7 @@ function App() {
   const [lostLeadsActionCount, setLostLeadsActionCount] = useState(0)
 
   const scheduleWorkspaceReloadRef = useRef<(() => void) | null>(null)
+  const loadDomainEpochRef = useRef(0)
   const [online, setOnline] = useState<boolean>(navigator.onLine)
   const [geo, setGeo] = useState<{ lat: number; lng: number; accuracy: number; capturedAt: string } | null>(null)
   const [selectedCustomerId, setSelectedCustomerId] = useState('new')
@@ -680,6 +686,10 @@ function App() {
   const [inviteSourceReady, setInviteSourceReady] = useState(() => !supabaseEnabled)
   const watchIdRef = useRef<number | null>(null)
   const lastResolvedUserIdRef = useRef<string | null>(null)
+  // Tracks which user id we've already synced auth metadata → profiles for.
+  // Prevents the profile-bootstrap effect from re-running (and overwriting admin edits)
+  // whenever invitedUsers changes mid-session.
+  const lastSyncedProfileUserIdRef = useRef<string | null>(null)
   const visitLocationTimeoutRef = useRef<number | null>(null)
   const locationRequestIdRef = useRef(0)
   const visitCameraStreamRef = useRef<MediaStream | null>(null)
@@ -707,6 +717,9 @@ function App() {
   const [resetMessage, setResetMessage] = useState('')
   const [resetMessageIsError, setResetMessageIsError] = useState(false)
   const [resetSuccess, setResetSuccess] = useState(false)
+  const [editTeamMember, setEditTeamMember] = useState<{ email: string; profileId?: string; name: string; phone: string; role: Role } | null>(null)
+  const [editTeamBusy, setEditTeamBusy] = useState(false)
+  const [editTeamError, setEditTeamError] = useState('')
   const [resetSavedPassword, setResetSavedPassword] = useState('')
   const [visitHistoryDateFrom, setVisitHistoryDateFrom] = useState('')
   const [visitHistoryDateTo, setVisitHistoryDateTo] = useState('')
@@ -716,13 +729,14 @@ function App() {
   const [visitHistoryClientFilterDebounced, setVisitHistoryClientFilterDebounced] = useState('')
   const [visitHistoryCityFilter, setVisitHistoryCityFilter] = useState('')
   const [visitHistoryCategoryFilter, setVisitHistoryCategoryFilter] = useState('all')
-  const [visitHistoryInteriorDesignerFilter, setVisitHistoryInteriorDesignerFilter] = useState(false)
+  const [visitHistoryInteriorDesignerFilter, setVisitHistoryInteriorDesignerFilter] = useState<'all' | 'yes' | 'no'>('all')
+  const [visitHistoryCustomerTypeFilter, setVisitHistoryCustomerTypeFilter] = useState('all')
   const [visitHistoryPage, setVisitHistoryPage] = useState(1)
   const [visitHistoryPageSize, setVisitHistoryPageSize] = useState(100)
 
   useEffect(() => {
     setVisitHistoryPage(1)
-  }, [visitHistoryDateFrom, visitHistoryDateTo, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter])
+  }, [visitHistoryDateFrom, visitHistoryDateTo, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter, visitHistoryCustomerTypeFilter])
   const [selectedVisitClientId, setSelectedVisitClientId] = useState<string | null>(null)
   const [selectedVisitHistoryRowId, setSelectedVisitHistoryRowId] = useState<string | null>(null)
   const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
@@ -1116,12 +1130,15 @@ function App() {
 
   useEffect(() => {
     if (!supabase || !authSession?.user) return
+    const uid = authSession.user.id
+    // Only sync once per login session. This prevents the effect from overwriting
+    // admin-edited name/phone whenever invitedUsers updates (e.g. after a team edit).
+    if (lastSyncedProfileUserIdRef.current === uid) return
     const matched = findInviteForEmail(invitedUsers, authSession.user.email)
     if (!matched) return
     const displayName =
       (authSession.user.user_metadata?.full_name as string | undefined) || authSession.user.email || 'User'
     const accountPhone = String((authSession.user.user_metadata?.phone as string | undefined) ?? '').trim()
-    const uid = authSession.user.id
     void (async () => {
       const accountEmail = normalizeEmail(authSession.user.email ?? '')
       const { data: existing } = await supabase.from('profiles').select('id').eq('id', uid).maybeSingle()
@@ -1138,6 +1155,8 @@ function App() {
           .eq('id', uid)
         if (error) console.warn('Profile name update:', error.message)
       }
+      // Mark this user as synced so further invitedUsers changes don't retrigger the write.
+      lastSyncedProfileUserIdRef.current = uid
     })()
   }, [authSession?.user, authSession?.user?.id, authSession?.user?.email, invitedUsers])
 
@@ -1194,6 +1213,7 @@ function App() {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
     const loadDomain = async () => {
+      const myEpoch = ++loadDomainEpochRef.current
       const fetchAllQuery = async (queryFactory: () => any) => {
         const allRows: any[] = []
         let offset = 0
@@ -1230,7 +1250,7 @@ function App() {
         sb.from('city_master').select('*').order('name', { ascending: true }),
         fetchAllQuery(() => sb.from('leads').select('status, salesman_id, admin_review_remarks, admin_review_read').eq('status', 'lost')),
       ])
-      if (closed) return
+      if (closed || loadDomainEpochRef.current !== myEpoch) return
       if (invitesErr) console.warn('app_invites:', invitesErr.message)
       if (profilesErr) console.warn('profiles:', profilesErr.message)
       if (customersErr) console.warn('customers:', customersErr.message)
@@ -1770,7 +1790,16 @@ function App() {
     [syncedVisits, todayIso],
   )
   */
-  const kpiRows = useMemo(() => kpiFromVisits(visits, allSalesmen), [visits, allSalesmen])
+  const kpiRows = useMemo(() => {
+    const ctFieldKey = formFields.find(f =>
+      f.active && !f.isDeleted &&
+      ['customer_type', 'customer type'].some(h => f.key.toLowerCase().includes(h) || f.label.toLowerCase().includes(h))
+    )?.key ?? ''
+    const customerTypeByCustomerId = new Map<string, string>(
+      customers.map(c => [c.id, ctFieldKey ? (c.dynamicFields?.[ctFieldKey] ?? '') : ''])
+    )
+    return kpiFromVisits(visits, allSalesmen, customerTypeByCustomerId, ctFieldKey)
+  }, [visits, allSalesmen, customers, formFields])
   const filteredKpiRows = useMemo(() => {
     const todayStr = new Date().toISOString().slice(0, 10)
 
@@ -1810,33 +1839,31 @@ function App() {
     const rows = relevantSalesmen.map(s => {
       const salesmanRows = filteredKpiRows.filter(r => r.salesmanId === s.id)
 
+      let newCustomers = 0
       let pendingOnboarding = 0
-      let existing = 0
+      let existingCustomer = 0
+      let inactiveDealer = 0
+      let totalVisits = 0
       let activeDays = 0
 
       for (const r of salesmanRows) {
-        pendingOnboarding += r.firstTimeVisits
-        existing += r.existingDealerVisits
-        if (r.visitCount > 0) {
-          activeDays += 1
-        }
-      }
-
-      const totalVisits = pendingOnboarding + existing
-      let pctStr = '—'
-      if (existing > 0) {
-        pctStr = `${Math.round((pendingOnboarding / existing) * 100)}%`
+        newCustomers += r.newVisits
+        pendingOnboarding += r.pendingOnboardingVisits
+        existingCustomer += r.existingCustomerVisits
+        inactiveDealer += r.inactiveDealerVisits
+        totalVisits += r.visitCount
+        if (r.visitCount > 0) activeDays += 1
       }
 
       return {
         salesmanId: s.id,
         salesmanName: s.name,
+        newCustomers,
         pendingOnboarding,
-        existing,
+        existingCustomer,
+        inactiveDealer,
         totalVisits,
         activeDays,
-        pctStr,
-        pctValue: existing > 0 ? (pendingOnboarding / existing) : -1
       }
     })
 
@@ -1846,21 +1873,24 @@ function App() {
       if (summarySortColumn === 'salesmanName') {
         valA = a.salesmanName.toLowerCase()
         valB = b.salesmanName.toLowerCase()
+      } else if (summarySortColumn === 'newCustomers') {
+        valA = a.newCustomers
+        valB = b.newCustomers
       } else if (summarySortColumn === 'pendingOnboarding') {
         valA = a.pendingOnboarding
         valB = b.pendingOnboarding
-      } else if (summarySortColumn === 'existing') {
-        valA = a.existing
-        valB = b.existing
+      } else if (summarySortColumn === 'existingCustomer') {
+        valA = a.existingCustomer
+        valB = b.existingCustomer
+      } else if (summarySortColumn === 'inactiveDealer') {
+        valA = a.inactiveDealer
+        valB = b.inactiveDealer
       } else if (summarySortColumn === 'totalVisits') {
         valA = a.totalVisits
         valB = b.totalVisits
       } else if (summarySortColumn === 'activeDays') {
         valA = a.activeDays
         valB = b.activeDays
-      } else if (summarySortColumn === 'pctStr') {
-        valA = a.pctValue
-        valB = b.pctValue
       }
 
       if (valA < valB) return summarySortDir === 'asc' ? -1 : 1
@@ -1872,28 +1902,31 @@ function App() {
 
   const handleExportSalesmenSummary = useCallback(() => {
     const headers = [
-      'Salesman', 'Pending Onboarding', 'Existing', 'Onboarding vs Existing (%)', 'Total Visits', 'Active Days'
+      'Salesman', 'New', 'Pending Onboarding', 'Existing Customer', 'Inactive Dealer', 'Total Visits', 'Active Days'
     ]
     const csvRows = allSalesmenSummaryRows.map(r => [
       r.salesmanName,
+      r.newCustomers.toString(),
       r.pendingOnboarding.toString(),
-      r.existing.toString(),
-      r.pctStr,
+      r.existingCustomer.toString(),
+      r.inactiveDealer.toString(),
       r.totalVisits.toString(),
       r.activeDays.toString()
     ])
 
+    const totalNew = allSalesmenSummaryRows.reduce((sum, r) => sum + r.newCustomers, 0)
     const totalPending = allSalesmenSummaryRows.reduce((sum, r) => sum + r.pendingOnboarding, 0)
-    const totalExisting = allSalesmenSummaryRows.reduce((sum, r) => sum + r.existing, 0)
+    const totalExisting = allSalesmenSummaryRows.reduce((sum, r) => sum + r.existingCustomer, 0)
+    const totalInactive = allSalesmenSummaryRows.reduce((sum, r) => sum + r.inactiveDealer, 0)
     const totalVisits = allSalesmenSummaryRows.reduce((sum, r) => sum + r.totalVisits, 0)
     const totalActiveDays = allSalesmenSummaryRows.reduce((sum, r) => sum + r.activeDays, 0)
-    const totalPctStr = totalExisting > 0 ? `${Math.round((totalPending / totalExisting) * 100)}%` : '—'
 
     csvRows.push([
       'Team Total',
+      totalNew.toString(),
       totalPending.toString(),
       totalExisting.toString(),
-      totalPctStr,
+      totalInactive.toString(),
       totalVisits.toString(),
       totalActiveDays.toString()
     ])
@@ -2055,6 +2088,10 @@ function App() {
       seen.add(v.id)
       out.push(v)
     }
+    const ctField = formFields.find(f =>
+      f.active && !f.isDeleted &&
+      ['customer_type', 'customer type'].some(h => f.key.toLowerCase().includes(h) || f.label.toLowerCase().includes(h))
+    )
     const filtered = out.filter((v) => {
       const d = v.capturedAt.slice(0, 10)
       const customer = customerById.get(v.customerId)
@@ -2071,11 +2108,12 @@ function App() {
         (!visitHistoryCityFilter || cityId === visitHistoryCityFilter) &&
         (visitHistoryPriorityFilter === 'all' || v.priority === visitHistoryPriorityFilter) &&
         (visitHistoryCategoryFilter === 'all' || customer?.category === visitHistoryCategoryFilter) &&
-        (!visitHistoryInteriorDesignerFilter || !!customer?.isInteriorDesigner)
+        (visitHistoryInteriorDesignerFilter === 'all' || (visitHistoryInteriorDesignerFilter === 'yes' ? !!customer?.isInteriorDesigner : !customer?.isInteriorDesigner)) &&
+        (visitHistoryCustomerTypeFilter === 'all' || !ctField || (customer?.dynamicFields?.[ctField.key] ?? '') === visitHistoryCustomerTypeFilter)
       )
     })
     return filtered;
-  }, [role, visits, activeSalesman.id, customerById, visitHistoryDateFrom, visitHistoryDateTo, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter, visitHistoryInteriorDesignerFilter])
+  }, [role, visits, activeSalesman.id, customerById, formFields, visitHistoryDateFrom, visitHistoryDateTo, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter, visitHistoryInteriorDesignerFilter, visitHistoryCustomerTypeFilter])
   const selectedVisitClientVisits = useMemo(() => {
     if (!selectedVisitClientId) return []
     return visitHistoryRows
@@ -2091,6 +2129,9 @@ function App() {
       const exportDynamicFields = formFields
         .filter((field) => field.active && !field.isDeleted)
         .sort((a, b) => a.order - b.order)
+      const exportCtField = exportDynamicFields.find(f =>
+        ['customer_type', 'customer type'].some(h => f.key.toLowerCase().includes(h) || f.label.toLowerCase().includes(h))
+      )
       const headers = [
         'Arrived',
         'Ended',
@@ -2098,7 +2139,7 @@ function App() {
         'Customer',
         'Phone',
         'City',
-        'Type',
+        'Customer Type',
         'GPS',
         'Status',
         'Notes',
@@ -2169,7 +2210,8 @@ function App() {
           matchesSearch &&
           (!visitHistoryCityFilter || cityId === visitHistoryCityFilter) &&
           (visitHistoryPriorityFilter === 'all' || v.priority === visitHistoryPriorityFilter) &&
-          (visitHistoryCategoryFilter === 'all' || customer?.category === visitHistoryCategoryFilter)
+          (visitHistoryCategoryFilter === 'all' || customer?.category === visitHistoryCategoryFilter) &&
+          (visitHistoryCustomerTypeFilter === 'all' || !exportCtField || (customer?.dynamicFields?.[exportCtField.key] ?? '') === visitHistoryCustomerTypeFilter)
         )
       })
       const rows = filteredVisits.map((visit) => {
@@ -2187,7 +2229,7 @@ function App() {
           visit.customerName,
           customer?.phone || customer?.whatsapp || '—',
           customer?.city ?? '—',
-          visit.visitType,
+          exportCtField ? (customer?.dynamicFields?.[exportCtField.key] || '—') : '—',
           `${visit.lat.toFixed(4)}, ${visit.lng.toFixed(4)} (±${Math.round(visit.accuracy)}m)`,
           visit.status,
           meetingResp?.response || visit.notes || '—',
@@ -2984,9 +3026,11 @@ function App() {
       }
     } else {
       for (const field of formFields) {
-        if (field.active && !field.isDeleted) {
-          initialDynamic[field.key] = ''
-        }
+        if (!field.active || field.isDeleted) continue
+        const isCustomerTypeField = ['customer_type', 'customer type'].some(
+          h => field.key.toLowerCase().includes(h) || field.label.toLowerCase().includes(h)
+        )
+        initialDynamic[field.key] = isCustomerTypeField ? 'New' : ''
       }
     }
     setDynamicData(initialDynamic)
@@ -3636,6 +3680,73 @@ function App() {
     }
   }
 
+  const openEditTeamMember = (item: { email: string; profile: TeamProfile | null; inviteRole: Role | null }) => {
+    setEditTeamMember({
+      email: item.email,
+      profileId: item.profile?.id,
+      name: item.profile?.fullName ?? '',
+      phone: item.profile?.phone ?? '',
+      role: (item.profile?.role ?? item.inviteRole ?? 'salesman') as Role,
+    })
+    setEditTeamError('')
+  }
+
+  const saveTeamMemberEdit = async () => {
+    if (!supabase || !editTeamMember || editTeamBusy) return
+    setEditTeamBusy(true)
+    setEditTeamError('')
+    try {
+      const { email, profileId, name, phone, role: newRole } = editTeamMember
+
+      if (profileId) {
+        // Update auth.users.user_metadata so the target user's own profile-sync effect
+        // reads the new name/phone the next time it runs (e.g. after they log out and back in).
+        const { data: fnData } = await supabase.functions.invoke('update-team-member', {
+          body: { profileId, fullName: name.trim(), phone: phone.trim(), role: newRole, email: email.toLowerCase() },
+        })
+        if (fnData && !fnData.ok) throw new Error(fnData.error ?? 'Failed to update member via server.')
+      } else {
+        // No profile yet — only update the invite role
+        const { error: invErr } = await supabase
+          .from('app_invites')
+          .update({ role: newRole })
+          .eq('email', email.toLowerCase())
+        if (invErr) console.warn('invite role update:', invErr.message)
+      }
+
+      // Invalidate any in-flight loadDomain that started before this edit committed.
+      loadDomainEpochRef.current++
+
+      // Fetch fresh profiles directly — don't wait for the 3-second real-time reload
+      const { data: freshProfiles } = await supabase
+        .from('profiles')
+        .select('id, full_name, role, email, phone, is_active')
+      if (freshProfiles) {
+        setTeamProfiles(freshProfiles.map(r => {
+          const rawEmail = r.email as string | null
+          const rawPhone = r.phone as string | null
+          return {
+            id: r.id as string,
+            fullName: (r.full_name as string) ?? 'User',
+            role: (r.role as Role) ?? 'salesman',
+            email: rawEmail ? normalizeEmail(rawEmail) : undefined,
+            phone: rawPhone || undefined,
+            isActive: r.is_active !== false,
+          }
+        }))
+      }
+
+      setInvitedUsers(prev => prev.map(u =>
+        u.email.toLowerCase() === email.toLowerCase() ? { ...u, role: newRole } : u
+      ))
+      setEditTeamMember(null)
+    } catch (err) {
+      setEditTeamError(err instanceof Error ? err.message : 'Failed to update member.')
+    } finally {
+      setEditTeamBusy(false)
+    }
+  }
+
   const failVisitSave = (text: string) => {
     setMessage(text)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -3978,6 +4089,12 @@ function App() {
   )
   const activeDynamicFieldsForVisit = useMemo(
     () => activeDynamicFields.filter(f => !['customer_type', 'customer type'].some(h => f.key.toLowerCase().includes(h) || f.label.toLowerCase().includes(h))),
+    [activeDynamicFields]
+  )
+  const visitHistoryCustomerTypeField = useMemo(
+    () => activeDynamicFields.find(f =>
+      ['customer_type', 'customer type'].some(h => f.key.toLowerCase().includes(h) || f.label.toLowerCase().includes(h))
+    ),
     [activeDynamicFields]
   )
 
@@ -5141,7 +5258,12 @@ function App() {
                                       )}
                                     </td>
                                     {(role === 'owner' || role === 'sub_admin' || canResetPasswords) && (
-                                      <td className="settingsActionsCell" style={{ display: 'flex', gap: '0.5rem' }}>
+                                      <td className="settingsActionsCell" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                        {(role === 'owner' || role === 'sub_admin') && (!item.profile || item.profile.role !== 'owner') && (
+                                          <button type="button" className="secondary" onClick={() => openEditTeamMember(item)} style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem' }}>
+                                            Edit
+                                          </button>
+                                        )}
                                         {item.profile && (role === 'owner' || role === 'sub_admin') && item.profile.role !== 'owner' && (
                                           <button
                                             type="button"
@@ -5310,6 +5432,66 @@ function App() {
                 </div>
               </div>
             ) : null}
+            {editTeamMember ? (
+              <div className="modalOverlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget && !editTeamBusy) setEditTeamMember(null) }}>
+                <div className="modalCard" style={{ maxWidth: '420px' }} onClick={(e) => e.stopPropagation()}>
+                  <div className="modalHeader">
+                    <h2>Edit Team Member</h2>
+                    <button type="button" className="closeBtn" onClick={() => setEditTeamMember(null)} disabled={editTeamBusy}>&times;</button>
+                  </div>
+                  <div className="modalBody">
+                    <p className="muted" style={{ marginBottom: '1rem', fontSize: '0.875rem' }}>{editTeamMember.email}</p>
+                    {editTeamError && (
+                      <p style={{ color: '#dc2626', marginBottom: '1rem', fontSize: '0.875rem' }}>{editTeamError}</p>
+                    )}
+                    <div className="formGrid">
+                      {editTeamMember.profileId && (
+                        <>
+                          <label>
+                            Name
+                            <input
+                              type="text"
+                              value={editTeamMember.name}
+                              onChange={(e) => setEditTeamMember(prev => prev ? { ...prev, name: e.target.value } : prev)}
+                              disabled={editTeamBusy}
+                              placeholder="Full name"
+                            />
+                          </label>
+                          <label>
+                            Mobile Number
+                            <input
+                              type="tel"
+                              value={editTeamMember.phone}
+                              onChange={(e) => setEditTeamMember(prev => prev ? { ...prev, phone: e.target.value } : prev)}
+                              disabled={editTeamBusy}
+                              placeholder="10-digit mobile"
+                            />
+                          </label>
+                        </>
+                      )}
+                      <label>
+                        Role
+                        <select
+                          value={editTeamMember.role}
+                          onChange={(e) => setEditTeamMember(prev => prev ? { ...prev, role: e.target.value as Role } : prev)}
+                          disabled={editTeamBusy}
+                        >
+                          {addableRolesFor(role).filter(r => r !== 'owner').map(r => (
+                            <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                  <div className="modalFooter">
+                    <button type="button" className="secondary" onClick={() => setEditTeamMember(null)} disabled={editTeamBusy}>Cancel</button>
+                    <button type="button" className="primary" onClick={() => void saveTeamMemberEdit()} disabled={editTeamBusy}>
+                      {editTeamBusy ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
               </>
             ) : settingsTab === 'cities' && (role === 'owner' || role === 'super_salesman') ? (
               <AdminCitiesPanel cities={cities} setCities={setCities} onRefresh={() => scheduleWorkspaceReloadRef.current?.()} />
@@ -5317,11 +5499,12 @@ function App() {
           </section>
         )
       case 'admin_kpi': {
+        const teamTotalNew = allSalesmenSummaryRows.reduce((sum, r) => sum + r.newCustomers, 0)
         const teamTotalPending = allSalesmenSummaryRows.reduce((sum, r) => sum + r.pendingOnboarding, 0)
-        const teamTotalExisting = allSalesmenSummaryRows.reduce((sum, r) => sum + r.existing, 0)
+        const teamTotalExisting = allSalesmenSummaryRows.reduce((sum, r) => sum + r.existingCustomer, 0)
+        const teamTotalInactive = allSalesmenSummaryRows.reduce((sum, r) => sum + r.inactiveDealer, 0)
         const teamTotalVisits = allSalesmenSummaryRows.reduce((sum, r) => sum + r.totalVisits, 0)
         const teamTotalActiveDays = allSalesmenSummaryRows.reduce((sum, r) => sum + r.activeDays, 0)
-        const teamTotalPctStr = teamTotalExisting > 0 ? `${Math.round((teamTotalPending / teamTotalExisting) * 100)}%` : '—'
 
         const toggleSummarySort = (col: string) => {
           if (summarySortColumn === col) {
@@ -5351,7 +5534,7 @@ function App() {
                   >
                     KPI Table
                   </button>
-                  {(role === 'owner' || role === 'sub_admin') && (
+                  {(role === 'owner' || role === 'sub_admin' || role === 'super_salesman') && (
                     <button
                       type="button"
                       className={`tabBtn ${kpiActiveTab === 'allSalesmen_summary' ? 'active' : ''}`}
@@ -5434,17 +5617,19 @@ function App() {
                         <th>Date</th>
                         <th>Salesman</th>
                         <th>Total Visits</th>
-                        <th>Pending on-boarding (New Visit)</th>
-                        <th>Existing Dealer Visits</th>
-                        <th>First meeting</th>
-                        <th>Last meeting</th>
-                        <th>Total working hrs</th>
+                        <th>New</th>
+                        <th>Pending Onboarding</th>
+                        <th>Existing Customer</th>
+                        <th>Inactive Dealer</th>
+                        <th>First Meeting</th>
+                        <th>Last Meeting</th>
+                        <th>Total Working Hrs</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredKpiRows.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
+                          <td colSpan={10} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
                             No KPI data available for selected filters.
                           </td>
                         </tr>
@@ -5454,8 +5639,10 @@ function App() {
                             <td>{formatDate(item.date)}</td>
                             <td>{item.salesmanName}</td>
                             <td>{item.visitCount}</td>
-                            <td>{item.firstTimeVisits}</td>
-                            <td>{item.existingDealerVisits}</td>
+                            <td>{item.newVisits}</td>
+                            <td>{item.pendingOnboardingVisits}</td>
+                            <td>{item.existingCustomerVisits}</td>
+                            <td>{item.inactiveDealerVisits}</td>
                             <td>{item.firstVisitTime}</td>
                             <td>{item.lastVisitTime}</td>
                             <td>{item.totalWorkingHours}</td>
@@ -5471,14 +5658,17 @@ function App() {
                         <th onClick={() => toggleSummarySort('salesmanName')} style={{ cursor: 'pointer' }}>
                           Salesman <SortIcon col="salesmanName" />
                         </th>
+                        <th onClick={() => toggleSummarySort('newCustomers')} style={{ cursor: 'pointer' }}>
+                          New <SortIcon col="newCustomers" />
+                        </th>
                         <th onClick={() => toggleSummarySort('pendingOnboarding')} style={{ cursor: 'pointer' }}>
                           Pending Onboarding <SortIcon col="pendingOnboarding" />
                         </th>
-                        <th onClick={() => toggleSummarySort('existing')} style={{ cursor: 'pointer' }}>
-                          Existing <SortIcon col="existing" />
+                        <th onClick={() => toggleSummarySort('existingCustomer')} style={{ cursor: 'pointer' }}>
+                          Existing Customer <SortIcon col="existingCustomer" />
                         </th>
-                        <th onClick={() => toggleSummarySort('pctStr')} style={{ cursor: 'pointer' }}>
-                          Onboarding vs Existing (%) <SortIcon col="pctStr" />
+                        <th onClick={() => toggleSummarySort('inactiveDealer')} style={{ cursor: 'pointer' }}>
+                          Inactive Dealer <SortIcon col="inactiveDealer" />
                         </th>
                         <th onClick={() => toggleSummarySort('totalVisits')} style={{ cursor: 'pointer' }}>
                           Total Visits <SortIcon col="totalVisits" />
@@ -5491,7 +5681,7 @@ function App() {
                     <tbody>
                       {allSalesmenSummaryRows.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
+                          <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: '2rem' }}>
                             No salesmen available for selected filters.
                           </td>
                         </tr>
@@ -5512,18 +5702,20 @@ function App() {
                                   {item.salesmanName}
                                 </button>
                               </td>
+                              <td>{item.newCustomers}</td>
                               <td>{item.pendingOnboarding}</td>
-                              <td>{item.existing}</td>
-                              <td>{item.pctStr}</td>
+                              <td>{item.existingCustomer}</td>
+                              <td>{item.inactiveDealer}</td>
                               <td>{item.totalVisits}</td>
                               <td>{item.activeDays}</td>
                             </tr>
                           ))}
                           <tr style={{ fontWeight: 'bold', backgroundColor: 'var(--bg2)' }}>
                             <td>Team Total</td>
+                            <td>{teamTotalNew}</td>
                             <td>{teamTotalPending}</td>
                             <td>{teamTotalExisting}</td>
-                            <td>{teamTotalPctStr}</td>
+                            <td>{teamTotalInactive}</td>
                             <td>{teamTotalVisits}</td>
                             <td>{teamTotalActiveDays}</td>
                           </tr>
@@ -6172,27 +6364,31 @@ function App() {
                   </button>
                 ) : null}
               </div>
-              <div className="inlineFilters">
-                <label>
-                  Date from
+              <div className="inlineFilters" style={{ alignItems: 'flex-end', rowGap: '0.75rem', columnGap: '0.75rem' }}>
+                <label style={{ flex: '1 1 220px', minWidth: '200px', maxWidth: '320px' }}>
+                  Customer name / phone
                   <input
-                    type="date"
-                    value={visitHistoryDateFrom}
-                    onChange={(event) => setVisitHistoryDateFrom(event.target.value)}
+                    style={{ width: '100%' }}
+                    value={visitHistoryClientFilter}
+                    onChange={(event) => setVisitHistoryClientFilter(event.target.value)}
+                    placeholder="Name or phone…"
                   />
                 </label>
-                <label>
-                  Date to
-                  <input
-                    type="date"
-                    value={visitHistoryDateTo}
-                    onChange={(event) => setVisitHistoryDateTo(event.target.value)}
-                  />
+                <label style={{ flex: '1 1 150px', minWidth: '140px', maxWidth: '220px' }}>
+                  City
+                  <div style={{ marginTop: '0.1rem' }}>
+                    <SearchableCityDropdown
+                      cities={cities}
+                      valueId={visitHistoryCityFilter}
+                      onChange={(val) => setVisitHistoryCityFilter(val)}
+                    />
+                  </div>
                 </label>
                 {role !== 'salesman' ? (
-                  <label>
+                  <label style={{ flex: '1 1 140px', minWidth: '130px', maxWidth: '200px' }}>
                     Salesman
                     <select
+                      style={{ width: '100%' }}
                       value={visitHistorySalesmanFilter}
                       onChange={(event) => setVisitHistorySalesmanFilter(event.target.value)}
                     >
@@ -6205,17 +6401,25 @@ function App() {
                     </select>
                   </label>
                 ) : null}
-                <label>
-                  Customer name / phone
-                  <input
-                    value={visitHistoryClientFilter}
-                    onChange={(event) => setVisitHistoryClientFilter(event.target.value)}
-                    placeholder="Name or phone…"
-                  />
-                </label>
-                <label>
+                {visitHistoryCustomerTypeField?.options.length ? (
+                  <label style={{ flex: '1 1 130px', minWidth: '120px', maxWidth: '180px' }}>
+                    Customer Type
+                    <select
+                      style={{ width: '100%' }}
+                      value={visitHistoryCustomerTypeFilter}
+                      onChange={(event) => setVisitHistoryCustomerTypeFilter(event.target.value)}
+                    >
+                      <option value="all">All</option>
+                      {visitHistoryCustomerTypeField.options.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                <label style={{ flex: '0 0 100px' }}>
                   Priority
                   <select
+                    style={{ width: '100%' }}
                     value={visitHistoryPriorityFilter}
                     onChange={(event) => setVisitHistoryPriorityFilter(event.target.value as 'all' | FollowUp['priority'])}
                   >
@@ -6225,9 +6429,10 @@ function App() {
                     <option value="high">High</option>
                   </select>
                 </label>
-                <label>
+                <label style={{ flex: '0 0 88px' }}>
                   Category
                   <select
+                    style={{ width: '100%' }}
                     value={visitHistoryCategoryFilter}
                     onChange={(event) => setVisitHistoryCategoryFilter(event.target.value)}
                   >
@@ -6239,30 +6444,38 @@ function App() {
                     <option value="E">E</option>
                   </select>
                 </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-color)' }}>Interior Designer</span>
-                  <button
-                    type="button"
-                    className={`switchToggle${visitHistoryInteriorDesignerFilter ? ' isOn' : ''}`}
-                    role="switch"
-                    aria-checked={visitHistoryInteriorDesignerFilter}
-                    onClick={() => setVisitHistoryInteriorDesignerFilter(!visitHistoryInteriorDesignerFilter)}
-                    style={{ height: '36px', padding: '0 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '6px', justifyContent: 'center', width: 'fit-content' }}
+                <label style={{ flex: '0 0 120px' }}>
+                  Int. Designer
+                  <select
+                    style={{ width: '100%' }}
+                    value={visitHistoryInteriorDesignerFilter}
+                    onChange={(event) => setVisitHistoryInteriorDesignerFilter(event.target.value as 'all' | 'yes' | 'no')}
                   >
-                    <span className="switchTrack" aria-hidden><span className="switchThumb" /></span>
-                    <span style={{ fontSize: '0.85rem' }}>{visitHistoryInteriorDesignerFilter ? 'Yes' : 'All'}</span>
-                  </button>
+                    <option value="all">All</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
                 </label>
-                <label>
-                  City
-                  <div>
-                    <SearchableCityDropdown
-                      cities={cities}
-                      valueId={visitHistoryCityFilter}
-                      onChange={(val) => setVisitHistoryCityFilter(val)}
+                <div style={{ flexBasis: '100%', display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
+                  <label style={{ flex: '0 0 148px' }}>
+                    Date from
+                    <input
+                      style={{ width: '100%' }}
+                      type="date"
+                      value={visitHistoryDateFrom}
+                      onChange={(event) => setVisitHistoryDateFrom(event.target.value)}
                     />
-                  </div>
-                </label>
+                  </label>
+                  <label style={{ flex: '0 0 148px' }}>
+                    Date to
+                    <input
+                      style={{ width: '100%' }}
+                      type="date"
+                      value={visitHistoryDateTo}
+                      onChange={(event) => setVisitHistoryDateTo(event.target.value)}
+                    />
+                  </label>
+                </div>
               </div>
               <div className="scrollArea visitsTableWrap">
                 <table className="visitsTable">
@@ -6273,7 +6486,7 @@ function App() {
                       <th>Customer</th>
                       <th>Cat.</th>
                       <th>City</th>
-                      <th>Type</th>
+                      <th style={{ whiteSpace: 'nowrap' }}>Customer Type</th>
                       <th style={{ whiteSpace: 'nowrap' }}>Int. Des.</th>
                       <th>Priority</th>
                       <th>GPS</th>
@@ -6339,7 +6552,7 @@ function App() {
                               ) : '—'}
                             </td>
                             <td>{customer?.city ?? '—'}</td>
-                            <td>{visit.visitType}</td>
+                            <td>{visitHistoryCustomerTypeField ? (customer?.dynamicFields?.[visitHistoryCustomerTypeField.key] || '—') : '—'}</td>
                             <td style={{ textAlign: 'center' }}>
                               {customer?.isInteriorDesigner ? (
                                 <span className="badge" style={{ backgroundColor: 'var(--accent)', color: '#fff', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
@@ -6451,7 +6664,7 @@ function App() {
                                     <tr>
                                       <th style={{ whiteSpace: 'nowrap' }}>Visit Time</th>
                                       {role !== 'salesman' ? <th>Salesman</th> : null}
-                                      <th>Type</th>
+                                      <th style={{ whiteSpace: 'nowrap' }}>Customer Type</th>
                                       <th>Priority</th>
                                       <th>GPS</th>
                                       <th>Status</th>
@@ -6478,7 +6691,7 @@ function App() {
                                           </div>
                                         </td>
                                         {role !== 'salesman' ? <td>{clientVisit.salesmanName}</td> : null}
-                                        <td>{clientVisit.visitType}</td>
+                                        <td>{visitHistoryCustomerTypeField ? (selectedVisitClient?.dynamicFields?.[visitHistoryCustomerTypeField.key] || '—') : '—'}</td>
                                         <td>
                                           {clientVisit.priority ? (
                                             <span className={`followupPill followupPill--${clientVisit.priority}`}>
