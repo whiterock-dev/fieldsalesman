@@ -10,7 +10,6 @@ import { formatSignInError } from './lib/authMessages'
 import { clampTenDigitMobileInput, parseTenDigitMobile } from './lib/mobilePhone'
 import { isValidPassword, PASSWORD_POLICY_HINT } from './lib/passwordPolicy'
 import { supabase, supabaseEnabled } from './lib/supabase'
-import { colorForSalesmanId, salesmanColorMap } from './mapColors'
 import { googleMapsSearchUrl } from './lib/maps'
 import { formatDate, formatDateTime } from './lib/dateUtils'
 import { exportToCsv } from './lib/exportUtils'
@@ -739,6 +738,7 @@ function App() {
   }, [visitHistoryDateFrom, visitHistoryDateTo, visitHistorySalesmanFilter, visitHistoryClientFilterDebounced, visitHistoryCityFilter, visitHistoryPriorityFilter, visitHistoryCategoryFilter, visitHistoryCustomerTypeFilter])
   const [selectedVisitClientId, setSelectedVisitClientId] = useState<string | null>(null)
   const [selectedVisitHistoryRowId, setSelectedVisitHistoryRowId] = useState<string | null>(null)
+  const [mapSearchQuery, setMapSearchQuery] = useState('')
   const [mapSalesmanFilter, setMapSalesmanFilter] = useState('all')
   const [overdueSalesmanFilter, setOverdueSalesmanFilter] = useState('all')
   const [overdueCategoryFilter, setOverdueCategoryFilter] = useState('all')
@@ -922,8 +922,6 @@ function App() {
     }
     return allSalesmen[0] ?? { id: uid, name: email ?? '—' }
   }, [activeSalesmanId, allSalesmen, teamProfiles, authSession?.user?.id, authSession?.user?.email])
-
-  const mapColorBySalesmanId = useMemo(() => salesmanColorMap(allSalesmen), [allSalesmen])
 
   useEffect(() => {
     if (!addableTeamRoles.length) return
@@ -2055,6 +2053,14 @@ function App() {
     if (mapSalesmanFilter === 'all') return mapCustomers
     return mapCustomers.filter((c) => c.assignedSalesmanId === mapSalesmanFilter)
   }, [role, mapCustomers, mapSalesmanFilter])
+
+  const searchFilteredMapCustomers = useMemo(() => {
+    const q = mapSearchQuery.trim().toLowerCase()
+    if (!q) return filteredMapCustomers
+    return filteredMapCustomers.filter(
+      (c) => c.name.toLowerCase().includes(q) || (c.phone ?? '').toLowerCase().includes(q),
+    )
+  }, [filteredMapCustomers, mapSearchQuery])
 
   const mapLivePoints = useMemo(() => {
     const points = role === 'salesman' ? livePoints.filter((p) => p.salesmanId === activeSalesman.id) : livePoints
@@ -4557,41 +4563,33 @@ function App() {
           <section className="panel">
             <h2>Map</h2>
             <p className="muted">
-              Each salesman has a consistent color on customer pins and on recent visit dots (field salesmen only).
-              Unassigned customers use gray. Live GPS pings are on the Live tracking screen, not here.
+              Customer pins are colour-coded by customer type. Search by name or contact number to filter visible pins.
             </p>
-            {(role === 'owner' || role === 'sub_admin') && allSalesmen.length ? (
-              <div className="inlineFilters">
+            <div className="inlineFilters">
+              <label>
+                Search customers
+                <input
+                  type="search"
+                  placeholder="Name or phone…"
+                  value={mapSearchQuery}
+                  onChange={(e) => setMapSearchQuery(e.target.value)}
+                />
+              </label>
+              {(role === 'owner' || role === 'sub_admin') && allSalesmen.length ? (
                 <label>
                   Field salesman
-                  <select value={mapSalesmanFilter} onChange={(event) => setMapSalesmanFilter(event.target.value)}>
+                  <select value={mapSalesmanFilter} onChange={(e) => setMapSalesmanFilter(e.target.value)}>
                     <option value="all">All field salesmen</option>
                     {allSalesmen.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
+                      <option key={item.id} value={item.id}>{item.name}</option>
                     ))}
                   </select>
                 </label>
-              </div>
-            ) : null}
-            {mapVisibleSalesmen.length ? (
-              <div className="mapColorKey">
-                {mapVisibleSalesmen.map((s) => (
-                  <span key={s.id} className="mapColorKeyItem">
-                    <i
-                      className="mapColorSwatch"
-                      style={{ background: colorForSalesmanId(mapColorBySalesmanId, s.id) }}
-                      aria-hidden
-                    />
-                    {s.name}
-                  </span>
-                ))}
-              </div>
-            ) : null}
+              ) : null}
+            </div>
             <Suspense fallback={<p className="muted">Loading map...</p>}>
               <DealerMap
-                customers={filteredMapCustomers.map((c) => ({
+                customers={searchFilteredMapCustomers.map((c) => ({
                   id: c.id,
                   name: c.name,
                   city: c.city,
@@ -4604,6 +4602,9 @@ function App() {
                   assignedSalesmanId: c.assignedSalesmanId,
                   salesmanName: mapVisibleSalesmen.find((x) => x.id === c.assignedSalesmanId)?.name,
                   lastVisitDate: latestVisitByCustomerId.get(c.id)?.capturedAt,
+                  customerType: visitHistoryCustomerTypeField
+                    ? (c.dynamicFields?.[visitHistoryCustomerTypeField.key] ?? '')
+                    : undefined,
                 }))}
                 livePoints={mapLivePoints}
                 salesmen={mapVisibleSalesmen}
