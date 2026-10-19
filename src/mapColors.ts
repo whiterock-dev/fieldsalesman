@@ -37,7 +37,7 @@ export function colorForSalesmanId(map: Map<string, string>, salesmanId: string 
 }
 
 export const CUSTOMER_TYPE_COLORS = {
-  pending: '#F97316',
+  pending: '#EAB308',
   new: '#3B82F6',
   existing: '#22C55E',
   inactive: '#EF4444',
