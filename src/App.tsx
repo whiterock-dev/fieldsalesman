@@ -4575,7 +4575,7 @@ function App() {
                   onChange={(e) => setMapSearchQuery(e.target.value)}
                 />
               </label>
-              {(role === 'owner' || role === 'sub_admin') && allSalesmen.length ? (
+              {(role === 'owner' || role === 'sub_admin' || role === 'super_salesman') && allSalesmen.length ? (
                 <label>
                   Field salesman
                   <select value={mapSalesmanFilter} onChange={(e) => setMapSalesmanFilter(e.target.value)}>
