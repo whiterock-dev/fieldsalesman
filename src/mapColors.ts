@@ -35,3 +35,29 @@ export function colorForSalesmanId(map: Map<string, string>, salesmanId: string 
   if (!salesmanId) return UNASSIGNED_PIN_COLOR
   return map.get(salesmanId) ?? UNASSIGNED_PIN_COLOR
 }
+
+export const CUSTOMER_TYPE_COLORS = {
+  pending: '#F97316',
+  new: '#3B82F6',
+  existing: '#22C55E',
+  inactive: '#EF4444',
+  unknown: '#94A3B8',
+}
+
+export const CUSTOMER_TYPE_LEGEND: { label: string; color: string }[] = [
+  { label: 'Pending Onboarding', color: CUSTOMER_TYPE_COLORS.pending },
+  { label: 'New Customer', color: CUSTOMER_TYPE_COLORS.new },
+  { label: 'Existing Customer', color: CUSTOMER_TYPE_COLORS.existing },
+  { label: 'Inactive Customer', color: CUSTOMER_TYPE_COLORS.inactive },
+  { label: 'Unknown', color: CUSTOMER_TYPE_COLORS.unknown },
+]
+
+export function colorByCustomerType(type: string | undefined): string {
+  const t = (type ?? '').toLowerCase().trim()
+  if (!t) return CUSTOMER_TYPE_COLORS.unknown
+  if (t === 'new') return CUSTOMER_TYPE_COLORS.new
+  if (t.includes('pending')) return CUSTOMER_TYPE_COLORS.pending
+  if (t.includes('existing')) return CUSTOMER_TYPE_COLORS.existing
+  if (t.includes('inactive')) return CUSTOMER_TYPE_COLORS.inactive
+  return CUSTOMER_TYPE_COLORS.unknown
+}

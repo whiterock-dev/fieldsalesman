@@ -12,7 +12,7 @@ import 'leaflet/dist/leaflet.css'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
-import { colorForSalesmanId, salesmanColorMap, UNASSIGNED_PIN_COLOR } from '../mapColors'
+import { colorByCustomerType, colorForSalesmanId, CUSTOMER_TYPE_LEGEND, salesmanColorMap } from '../mapColors'
 import { formatDateTime } from '../lib/dateUtils'
 
 const DefaultIcon = L.icon({
@@ -80,6 +80,7 @@ type CustomerPoint = {
   state?: string
   phone?: string
   lastVisitDate?: string
+  customerType?: string
 }
 type LivePoint = { lat: number; lng: number; accuracy: number; time: string; salesmanId?: string }
 
@@ -279,10 +280,17 @@ export function DealerMap({
           <Marker
             key={`c-${c.id}`}
             position={[c.lat, c.lng]}
-            icon={coloredPinIcon(colorForSalesmanId(colors, c.assignedSalesmanId))}
+            icon={coloredPinIcon(colorByCustomerType(c.customerType))}
           >
             <Popup>
               <strong>{c.name}</strong>
+              <br />
+              {c.customerType ? (
+                <span style={{ fontSize: '0.85em', display: 'inline-flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: colorByCustomerType(c.customerType), flexShrink: 0, display: 'inline-block' }} />
+                  {c.customerType}
+                </span>
+              ) : null}
               <br />
               {myLiveLocation ? (
                 <span style={{ fontSize: '0.9em', color: '#059669', fontWeight: 600 }}>
@@ -362,13 +370,15 @@ export function DealerMap({
 
       </MapContainer>
       <div className="map-legend">
-        <span>
-          <i className="legend-pin dealer" style={{ background: UNASSIGNED_PIN_COLOR }} /> Customers (color = assigned
-          salesman)
-        </span>
+        {CUSTOMER_TYPE_LEGEND.map((item) => (
+          <span key={item.label}>
+            <i className="legend-pin dealer" style={{ background: item.color }} />
+            {item.label}
+          </span>
+        ))}
         {livePoints.length ? (
           <span>
-            <i className="legend-dot live" style={{ background: '#9333ea' }} /> Live ping (same color as that salesman)
+            <i className="legend-dot live" style={{ background: '#9333ea' }} /> Live GPS ping
           </span>
         ) : null}
       </div>
